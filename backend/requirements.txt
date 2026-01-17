@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pandas
+fastparquet
+chromadb
+openai
+groq
+requests
+pydantic
+python-multipart
+huggingface_hub
+python-dotenv
