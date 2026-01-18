@@ -7,7 +7,6 @@ import chromadb
 from chromadb.utils import embedding_functions
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from groq import Groq
 from contextlib import asynccontextmanager

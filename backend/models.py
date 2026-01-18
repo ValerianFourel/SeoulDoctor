@@ -1,3 +1,7 @@
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+
+
 # --- 4. MODELS ---
 class State(BaseModel):
     specialty: Optional[str] = None
