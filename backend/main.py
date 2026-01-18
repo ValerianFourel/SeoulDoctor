@@ -96,6 +96,47 @@ def haversine(lat1, lon1, lat2, lon2):
     a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2) * np.sin(dlambda/2)**2
     return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
+def safe_convert_to_python(value):
+    """Convert pandas/numpy types to native Python types for JSON serialization."""
+    if value is None:
+        return None
+    
+    # Handle numpy arrays and pandas Series BEFORE pd.isna()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    
+    if isinstance(value, pd.Series):
+        return value.tolist()
+    
+    # Handle NaN for scalars
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    
+    # Handle pandas NA for scalars
+    try:
+        if pd.isna(value):
+            return None
+    except (ValueError, TypeError):
+        pass
+    
+    # Handle numpy scalar types
+    if isinstance(value, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(value)
+    if isinstance(value, (np.floating, np.float64, np.float32)):
+        return float(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    
+    # Handle lists recursively
+    if isinstance(value, list):
+        return [safe_convert_to_python(item) for item in value]
+    
+    # Handle dicts recursively
+    if isinstance(value, dict):
+        return {k: safe_convert_to_python(v) for k, v in value.items()}
+    
+    return value
+
 def download_and_cache_parquet():
     """Download parquet from HuggingFace and cache locally."""
     if os.path.exists(LOCAL_PARQUET_PATH):
@@ -126,8 +167,6 @@ def fuzzy_match_location(user_text: str, df: pd.DataFrame) -> pd.DataFrame:
         return df
     
     user_lower = user_text.lower().strip()
-    
-    # Remove common suffixes for better matching
     user_clean = user_lower.replace('gu', '').replace('dong', '').replace('-', '').strip()
     
     print(f"🔍 Fuzzy matching location: '{user_text}'")
@@ -138,28 +177,23 @@ def fuzzy_match_location(user_text: str, df: pd.DataFrame) -> pd.DataFrame:
         for idx, row in df.iterrows():
             score = 0
             
-            # Match against file_district (roman characters)
+            # Match against file_district
             if 'file_district' in row.index and pd.notna(row['file_district']):
                 district = str(row['file_district']).lower().replace('-', '')
                 district_clean = district.replace('gu', '').strip()
                 
-                # Exact match
                 if user_clean in district_clean or district_clean in user_clean:
                     score += 10
-                # Partial match
                 elif any(word in district_clean for word in user_clean.split() if len(word) > 2):
                     score += 5
             
-            # Match against file_dong (Hangul)
+            # Match against file_dong
             if 'file_dong' in row.index and pd.notna(row['file_dong']):
                 dong = str(row['file_dong'])
                 
-                # Direct substring (works for Hangul too)
                 if user_text in dong or dong in user_text:
                     score += 10
-                # Check if user input is Hangul
                 elif any(ord(char) >= 0xAC00 and ord(char) <= 0xD7A3 for char in user_text):
-                    # User typed Hangul, try matching
                     if any(word in dong for word in user_text.split() if len(word) > 1):
                         score += 5
             
@@ -173,10 +207,8 @@ def fuzzy_match_location(user_text: str, df: pd.DataFrame) -> pd.DataFrame:
                 matched_rows.append((idx, score))
         
         if matched_rows:
-            # Sort by score and get indices
             matched_rows.sort(key=lambda x: x[1], reverse=True)
             matched_indices = [idx for idx, score in matched_rows]
-            
             result_df = df.loc[matched_indices]
             print(f"   ✅ Found {len(result_df)} facilities matching location")
             return result_df
@@ -188,65 +220,90 @@ def fuzzy_match_location(user_text: str, df: pd.DataFrame) -> pd.DataFrame:
         print(f"   ❌ Error in fuzzy matching: {e}, returning all facilities")
         return df
 
+def safe_convert_to_python(value):
+    """Convert pandas/numpy types to native Python types for JSON serialization."""
+    if value is None:
+        return None
+    
+    # Handle arrays FIRST
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    
+    if isinstance(value, pd.Series):
+        return value.tolist()
+    
+    # Handle NaN for scalars
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    
+    # Handle pandas NA
+    try:
+        if pd.isna(value):
+            return None
+    except (ValueError, TypeError):
+        pass
+    
+    # Handle numpy scalar types
+    if isinstance(value, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(value)
+    if isinstance(value, (np.floating, np.float64, np.float32)):
+        return float(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    
+    # Handle lists recursively
+    if isinstance(value, list):
+        return [safe_convert_to_python(item) for item in value]
+    
+    # Handle dicts recursively
+    if isinstance(value, dict):
+        return {k: safe_convert_to_python(v) for k, v in value.items()}
+    
+    return value
+
 def build_context_for_llm(df_subset: pd.DataFrame, n_results: int = 10) -> str:
-    """
-    Build rich context from filtered parquet data for LLM.
-    Uses both English (Summaries) and Korean (Summaries_Korean).
-    """
+    """Build rich context from filtered parquet data for LLM."""
     context_parts = []
     
     for idx, row in df_subset.head(n_results).iterrows():
         facility_info = []
         
-        # Basic info
         facility_info.append(f"Name: {row['name']}")
         facility_info.append(f"Category: {row['category']}")
         
-        # Location info
         if 'file_district' in row.index and pd.notna(row['file_district']):
             facility_info.append(f"District: {row['file_district']}")
         if 'file_dong' in row.index and pd.notna(row['file_dong']):
             facility_info.append(f"Neighborhood: {row['file_dong']}")
         
-        # Distance (if calculated)
         if 'distance_km' in row.index and pd.notna(row['distance_km']) and row['distance_km'] > 0:
             facility_info.append(f"Distance: {row['distance_km']:.1f}km away")
         
-        # English summary - avoid pd.isna on lists
+        # Handle Summaries (ndarray)
         if 'Summaries' in row.index:
             summaries = row['Summaries']
-            if isinstance(summaries, list) and len(summaries) > 0:
+            if isinstance(summaries, (list, np.ndarray)) and len(summaries) > 0:
                 facility_info.append(f"Summary (EN): {summaries[0]}")
         
-        # Korean summary - avoid pd.isna on lists
+        # Handle Summaries_Korean (ndarray)
         if 'Summaries_Korean' in row.index:
             summaries_kr = row['Summaries_Korean']
-            if isinstance(summaries_kr, list) and len(summaries_kr) > 0:
+            if isinstance(summaries_kr, (list, np.ndarray)) and len(summaries_kr) > 0:
                 facility_info.append(f"Summary (KR): {summaries_kr[0]}")
         
-        # Highlights - avoid pd.isna on lists
+        # Handle Key_Highlights (ndarray)
         if 'Key_Highlights' in row.index:
             highlights_data = row['Key_Highlights']
-            if isinstance(highlights_data, list) and len(highlights_data) > 0:
-                # Extract topic_en from each highlight dict
+            if isinstance(highlights_data, (list, np.ndarray)) and len(highlights_data) > 0:
                 topics = []
-                for h in highlights_data[:5]:  # Top 5 highlights
+                for h in highlights_data[:5]:
                     if isinstance(h, dict) and 'topic_en' in h:
                         topics.append(h['topic_en'])
                 if topics:
                     facility_info.append(f"Highlights: {', '.join(topics)}")
         
-        # English capability
         if 'has_english' in row.index and row['has_english']:
             facility_info.append(f"English Speaking: Yes")
-        
-        # Medical info - avoid pd.isna on dicts
-        if 'medical_info_parsed' in row.index:
-            medical_data = row['medical_info_parsed']
-            if isinstance(medical_data, dict) and len(medical_data) > 0:
-                medical_keys = list(medical_data.keys())[:3]  # First 3 keys
-                if medical_keys:
-                    facility_info.append(f"Medical Services: {', '.join(medical_keys)}")
         
         context_parts.append("\n".join(facility_info))
     
@@ -258,61 +315,66 @@ async def lifespan(app: FastAPI):
     global vector_db, df_facilities, df_filtered
     print("🚀 Booting SeoulMedBot Backend...")
 
-    # A. DOWNLOAD & CACHE PARQUET
     try:
         df_facilities = download_and_cache_parquet()
         print(f"✅ Loaded {len(df_facilities)} facilities from parquet")
         
-        # Show data structure
-        print(f"📊 Columns: {df_facilities.columns.tolist()[:10]}...")
-        
-        # CRITICAL FILTER: Only use facilities with Summaries
+        # FILTER: Only use facilities with Summaries
         df_filtered = df_facilities[df_facilities['Summaries'].notna()].copy()
         print(f"✅ Filtered to {len(df_filtered)} facilities with summaries")
         
-        # Show location data samples
+        # Show location data
         if 'file_district' in df_filtered.columns:
             unique_districts = df_filtered['file_district'].dropna().unique()
             print(f"📍 Districts ({len(unique_districts)}): {sorted(unique_districts)[:5]}...")
-        if 'file_dong' in df_filtered.columns:
-            unique_dongs = df_filtered['file_dong'].dropna().unique()
-            print(f"📍 Dongs ({len(unique_dongs)}): {list(unique_dongs)[:5]}...")
         
-        # Check for GPS coordinates
-        has_lat_lon = 'latitude' in df_filtered.columns and 'longitude' in df_filtered.columns
-        if has_lat_lon:
-            coords_count = df_filtered[df_filtered['latitude'].notna() & df_filtered['longitude'].notna()].shape[0]
+        # Check for GPS coordinates - NOTE: columns are 'lat' and 'lon' not 'latitude'/'longitude'
+        if 'lat' in df_filtered.columns and 'lon' in df_filtered.columns:
+            coords_count = df_filtered[
+                (df_filtered['lat'].notna()) & 
+                (df_filtered['lon'].notna())
+            ].shape[0]
             print(f"🌐 GPS coordinates available for {coords_count}/{len(df_filtered)} facilities")
+            if coords_count == 0:
+                print(f"   ⚠️ All lat/lon are null - will use text-based location matching only")
         else:
-            print(f"⚠️ No GPS coordinates in dataset - will use text-based location matching only")
+            print(f"⚠️ No lat/lon columns - will use text-based location matching only")
+        
         df_filtered['place_id'] = df_filtered['place_id'].fillna('').astype(str)        
     except Exception as e:
         print(f"❌ PARQUET LOAD ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         df_facilities = pd.DataFrame()
         df_filtered = pd.DataFrame()
 
-    # B. SETUP RAG (using filtered subset)
-    client = chromadb.PersistentClient(path=CHROMA_PATH)
+    # Setup RAG
+    client_chroma = chromadb.PersistentClient(path=CHROMA_PATH)
     openai_ef = embedding_functions.OpenAIEmbeddingFunction(
         api_key=OPENAI_API_KEY,
         model_name="text-embedding-3-small"
     )
 
     try:
-        vector_db = client.get_collection("seoul_med_v3", embedding_function=openai_ef)
+        vector_db = client_chroma.get_collection("seoul_med_v3", embedding_function=openai_ef)
         print("✅ Embeddings collection found.")
     except:
         print("⚠️ Creating new embeddings from filtered dataset...")
-        vector_db = client.create_collection("seoul_med_v3", embedding_function=openai_ef)
+        vector_db = client_chroma.create_collection("seoul_med_v3", embedding_function=openai_ef)
         
         ids, docs, metas = [], [], []
         for _, row in df_filtered.iterrows():
-            # Build semantic blob from English + Korean
-            summary_en = row['Summaries'][0] if isinstance(row['Summaries'], list) and row['Summaries'] else ""
-            summary_kr = row['Summaries_Korean'][0] if isinstance(row['Summaries_Korean'], list) and row['Summaries_Korean'] else ""
-            highlights = ", ".join([h.get('topic', '') for h in row['Key_Highlights']]) if isinstance(row['Key_Highlights'], list) else ""
+            summary_en = ""
+            summary_kr = ""
+            highlights = ""
             
-            # Combine English + Korean for better semantic search
+            if isinstance(row['Summaries'], (list, np.ndarray)) and len(row['Summaries']) > 0:
+                summary_en = str(row['Summaries'][0])
+            if isinstance(row['Summaries_Korean'], (list, np.ndarray)) and len(row['Summaries_Korean']) > 0:
+                summary_kr = str(row['Summaries_Korean'][0])
+            if isinstance(row['Key_Highlights'], (list, np.ndarray)) and len(row['Key_Highlights']) > 0:
+                highlights = ", ".join([h.get('topic', '') for h in row['Key_Highlights'] if isinstance(h, dict)])
+            
             text_blob = f"{row['name']} ({row['category']}). {summary_en} {summary_kr} {highlights}"
             
             ids.append(str(row['place_id']))
@@ -342,8 +404,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 class State(BaseModel):
     specialty: Optional[str] = None
     location: Optional[str] = None
-    latitude: Optional[float] = None   # Optional - for distance-based search
-    longitude: Optional[float] = None  # Optional - for distance-based search
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     willingness_to_travel: str = "Nearby"
     language_pref: str = "Korean is fine"
     keywords: List[str] = []
@@ -377,10 +439,6 @@ You are "SeoulMedBot". Extract medical intent into JSON.
 - If user writes in English (ANY English words) -> set `language_pref`="English Preferred"
 - If user writes in Korean (한글) -> set `language_pref`="Korean"
 - When responding in `response_text`, use the SAME language as the user's message
-- Examples:
-  - "Find a dentist" → language_pref="English Preferred", response in English
-  - "치과 찾아줘" → language_pref="Korean", response in Korean
-  - "Gangnam dentist" → language_pref="English Preferred", response in English
 
 **Notes:**
 - latitude/longitude are OPTIONAL - most queries will only have text location
@@ -405,7 +463,6 @@ You are a helpful Medical Concierge for Seoul.
 3. Use both English and Korean information to make your recommendation
 4. Explain WHY each facility is a good match (use Summary and Highlights)
 5. DO NOT include addresses, phone numbers, or hours
-6. Ask if they want detailed amenity information
 
 **Tone:** Warm, professional, helpful
 **Language:** Respond in {language}
@@ -415,7 +472,7 @@ You are a helpful Medical Concierge for Seoul.
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     
-    # --- STEP 1: EXTRACT INTENT (LLM) ---
+    # STEP 1: EXTRACT INTENT
     msgs = [
         {"role": "system", "content": EXTRACTION_PROMPT},
         {"role": "user", "content": f"State: {req.current_state.model_dump_json()}\nUser: {req.message}"}
@@ -437,178 +494,88 @@ async def chat_endpoint(req: ChatRequest):
     new_state = ai_data.get("state", {})
     response_text = ai_data.get("response_text", "")
     
-    # FALLBACK: Ensure language_pref is set
+    # Fallback language detection
     if not new_state.get("language_pref") or new_state.get("language_pref") == "Korean is fine":
-        # Detect from user message if LLM didn't set it properly
         user_message = req.message.lower()
-        # Check if message contains English letters (basic heuristic)
         has_english = any(char.isalpha() and ord(char) < 128 for char in user_message)
         has_korean = any(0xAC00 <= ord(char) <= 0xD7A3 for char in req.message)
         
         if has_english and not has_korean:
             new_state["language_pref"] = "English Preferred"
-            print("   🌐 Language detected: English (fallback)")
         elif has_korean:
             new_state["language_pref"] = "Korean"
-            print("   🌐 Language detected: Korean (fallback)")
         else:
-            new_state["language_pref"] = "Korean"  # Default to Korean
-            print("   🌐 Language default: Korean")
+            new_state["language_pref"] = "Korean"
     
-    print("\n--- 🧠 STATE ---")
-    print(json.dumps(new_state, indent=2))
-    print("---------------\n")
+    print(f"\n--- 🧠 STATE: {new_state.get('specialty')} in {new_state.get('location')} ---\n")
 
-    # --- STEP 2: FILTER PARQUET BY LOCATION ---
+    # STEP 2: SEARCH
     location_context = ""
+    results = []
     
     if new_state.get("ready_to_search"):
-        # Start with filtered dataset (Summaries not null)
         working_df = df_filtered.copy()
-        print(f"📊 Starting with {len(working_df)} facilities (with summaries)")
+        print(f"📊 Starting with {len(working_df)} facilities")
         
-        # LOCATION FILTERING - Two modes:
-        # MODE 1: GPS coordinates available (latitude + longitude)
-        # MODE 2: Text location only (fuzzy matching)
-        
-        has_coords = new_state.get("latitude") is not None and new_state.get("longitude") is not None
-        
-        if has_coords:
-            # MODE 1: Distance-based filtering with GPS
-            user_lat = new_state['latitude']
-            user_lon = new_state['longitude']
-            
-            print(f"📍 MODE 1: GPS-based search at ({user_lat}, {user_lon})")
-            
-            # Calculate distances for all facilities
-            working_df['distance_km'] = working_df.apply(
-                lambda row: haversine(user_lat, user_lon, row['latitude'], row['longitude']) 
-                if pd.notna(row.get('latitude')) and pd.notna(row.get('longitude')) 
-                else 999,  # Far distance for facilities without coords
-                axis=1
-            )
-            
-            # Filter by radius based on willingness to travel
-            radius_map = {
-                "Neighborhood": 2,
-                "Nearby": 5,
-                "City-wide": 10,
-                "Don't Care": 25
-            }
-            max_distance = radius_map.get(new_state.get("willingness_to_travel"), 5)
-            
-            before_count = len(working_df)
-            working_df = working_df[working_df['distance_km'] <= max_distance]
-            working_df = working_df.sort_values('distance_km')  # Closest first
-            
-            print(f"   Filtered by {max_distance}km radius: {before_count} → {len(working_df)} facilities")
-            location_context = f"within {max_distance}km"
-            
-        elif new_state.get("location"):
-            # MODE 2: Text-based fuzzy matching
-            print(f"📍 MODE 2: Text-based location search")
+        # LOCATION FILTERING - Only text-based (lat/lon are empty)
+        if new_state.get("location"):
+            print(f"📍 Text-based location search")
             working_df = fuzzy_match_location(new_state['location'], working_df)
             location_context = f"in {new_state['location']}"
-            working_df['distance_km'] = 0  # Placeholder
-            
+            working_df['distance_km'] = 0
         else:
-            # MODE 3: No location filter
-            print(f"📍 MODE 3: City-wide search (no location filter)")
+            print(f"📍 City-wide search")
             location_context = "across Seoul"
-            working_df['distance_km'] = 0  # Placeholder
+            working_df['distance_km'] = 0
         
-        # --- STEP 3: CATEGORY FILTER (Primary) ---
-        # Try to match specialty to Korean category first
+        # CATEGORY FILTER
         korean_category = None
         if new_state.get("specialty"):
             specialty_lower = new_state['specialty'].lower().strip()
             if specialty_lower in SPECIALTY_CATEGORY_MAP:
                 korean_category = SPECIALTY_CATEGORY_MAP[specialty_lower]
-                print(f"🏥 Specialty '{new_state['specialty']}' → Korean category '{korean_category}'")
+                print(f"🏥 Specialty '{new_state['specialty']}' → '{korean_category}'")
         
         if korean_category and 'category' in working_df.columns:
-            # Filter by exact Korean category match
             before_count = len(working_df)
             working_df = working_df[working_df['category'].str.contains(korean_category, na=False, case=False)]
-            print(f"   ✅ Category filter: {before_count} → {len(working_df)} facilities")
+            print(f"   ✅ Category filter: {before_count} → {len(working_df)}")
         
-        # --- STEP 4: SEMANTIC RANKING (RAG) - NOT filtering! ---
-        # Use RAG to RANK results by relevance, not to filter them out
+        # SEMANTIC RANKING (RAG)
         query_text = f"{new_state.get('specialty', '')} {' '.join(new_state.get('keywords', []))}"
         
         if len(query_text.strip()) > 2 and len(working_df) > 0:
             try:
-                print(f"🔍 RAG semantic ranking for: '{query_text}'")
-                
-                # Get available place_ids from working_df
-                available_ids = working_df['place_id'].tolist()
-                
-                # Query RAG with more results than we have
+                print(f"🔍 RAG ranking for: '{query_text}'")
                 n_rag_results = min(200, len(vector_db.get()['ids']))
                 rag_results = vector_db.query(query_texts=[query_text], n_results=n_rag_results)
                 
                 if rag_results and 'ids' in rag_results and len(rag_results['ids']) > 0:
-                    # Create ranking: place_id → rank (lower is better)
                     rag_ranking = {place_id: idx for idx, place_id in enumerate(rag_results['ids'][0])}
-                    
-                    # Add relevance_rank column (facilities not in RAG get high rank = low priority)
-                    working_df['relevance_rank'] = working_df['place_id'].apply(
-                        lambda pid: rag_ranking.get(pid, 9999)
-                    )
-                    
-                    # Sort by relevance (lowest rank = most relevant)
+                    working_df['relevance_rank'] = working_df['place_id'].apply(lambda pid: rag_ranking.get(pid, 9999))
                     working_df = working_df.sort_values('relevance_rank')
-                    
-                    # Count how many were actually ranked
-                    ranked_count = (working_df['relevance_rank'] < 9999).sum()
-                    print(f"   ✅ RAG ranked {ranked_count}/{len(working_df)} facilities by relevance")
+                    print(f"   ✅ RAG ranked {(working_df['relevance_rank'] < 9999).sum()}/{len(working_df)}")
                 else:
-                    print(f"   ⚠️ RAG returned no results, keeping original order")
                     working_df['relevance_rank'] = 9999
-                    
             except Exception as e:
-                print(f"   ⚠️ RAG error: {e}, keeping original order")
+                print(f"   ⚠️ RAG error: {e}")
                 working_df['relevance_rank'] = 9999
         else:
-            print(f"   ⏭️ Skipping RAG ranking (query too short or no results)")
             working_df['relevance_rank'] = 9999
         
-        # --- STEP 5: ENGLISH FILTER ---
+        # ENGLISH FILTER
         language_pref = new_state.get("language_pref", "Korean")
-        if "English" in language_pref:
-            if 'has_english' in working_df.columns:
-                before = len(working_df)
-                working_df = working_df[working_df['has_english'] == True]
-                print(f"🌐 English filter: {before} → {len(working_df)} facilities")
-            else:
-                print(f"   ⚠️ 'has_english' column not found, skipping English filter")
+        if "English" in language_pref and 'has_english' in working_df.columns:
+            before = len(working_df)
+            working_df = working_df[working_df['has_english'] == True]
+            print(f"🌐 English filter: {before} → {len(working_df)}")
         
-        # --- STEP 5.5: FINAL SORTING ---
-        # Combine distance and relevance for optimal ordering
+        # GENERATE RESPONSE
         if len(working_df) > 0:
-            if has_coords and 'distance_km' in working_df.columns:
-                # For GPS mode: Sort by distance primarily, relevance secondarily
-                working_df = working_df.sort_values(['distance_km', 'relevance_rank'])
-                print(f"   📊 Sorted by distance + relevance")
-            elif 'relevance_rank' in working_df.columns:
-                # For text mode: Sort by relevance
-                working_df = working_df.sort_values('relevance_rank')
-                print(f"   📊 Sorted by relevance")
-        
-        # --- STEP 6: BUILD CONTEXT FROM PARQUET ---
-        if len(working_df) > 0:
-            print(f"✅ Building context from {len(working_df)} filtered facilities")
+            print(f"✅ Building context from {len(working_df)} facilities")
             facilities_context = build_context_for_llm(working_df, n_results=10)
             
-            # --- STEP 7: GENERATE RECOMMENDATION (LLM) ---
-            # Determine response language based on user's language preference
-            language_pref = new_state.get("language_pref", "Korean")
-            if "English" in language_pref:
-                language = "English"
-            else:
-                language = "Korean"
-            
-            print(f"   🗣️ Generating response in: {language}")
+            language = "English" if "English" in language_pref else "Korean"
             
             gen_messages = [{
                 "role": "system",
@@ -628,65 +595,60 @@ async def chat_endpoint(req: ChatRequest):
             )
             response_text = gen_completion.choices[0].message.content
             
-            # Prepare results for frontend
-            results = []
+            # Prepare results - USE SAFE CONVERSION FOR ALL FIELDS
             for _, row in working_df.head(3).iterrows():
                 result = {
-                    "place_id": str(row['place_id']),
-                    "name": row['name'],
-                    "category": row['category'],
+                    "place_id": safe_convert_to_python(row['place_id']),
+                    "name": safe_convert_to_python(row['name']),
+                    "category": safe_convert_to_python(row['category']),
                 }
                 
-                # Add optional fields - check type instead of pd.notna for complex types
-                simple_fields = ['address', 'phone', 'business_hours', 'latitude', 'longitude', 'english_confidence_score']
+                # Simple fields
+                simple_fields = ['address', 'phone', 'business_hours', 'english_confidence_score']
                 for field in simple_fields:
                     if field in row.index and pd.notna(row[field]):
-                        result[field] = row[field]
+                        result[field] = safe_convert_to_python(row[field])
                 
-                # String fields with different names
+                # Location fields
                 if 'file_district' in row.index and pd.notna(row['file_district']):
-                    result['district'] = row['file_district']
+                    result['district'] = safe_convert_to_python(row['file_district'])
                 if 'file_dong' in row.index and pd.notna(row['file_dong']):
-                    result['dong'] = row['file_dong']
+                    result['dong'] = safe_convert_to_python(row['file_dong'])
                 
-                # Website (try website, fallback to url)
+                # Website
                 if 'website' in row.index and pd.notna(row['website']):
-                    result['website'] = row['website']
+                    result['website'] = safe_convert_to_python(row['website'])
                 elif 'url' in row.index and pd.notna(row['url']):
-                    result['website'] = row['url']
+                    result['website'] = safe_convert_to_python(row['url'])
                 
-                # Complex fields - check type instead of pd.notna
-                if 'Summaries' in row.index and isinstance(row['Summaries'], list):
-                    result['Summaries'] = row['Summaries']
+                # Complex fields - CRITICAL: use safe_convert_to_python for ndarrays
+                if 'Summaries' in row.index and isinstance(row['Summaries'], (list, np.ndarray)):
+                    result['Summaries'] = safe_convert_to_python(row['Summaries'])
                 
-                if 'Summaries_Korean' in row.index and isinstance(row['Summaries_Korean'], list):
-                    result['Summaries_Korean'] = row['Summaries_Korean']
+                if 'Summaries_Korean' in row.index and isinstance(row['Summaries_Korean'], (list, np.ndarray)):
+                    result['Summaries_Korean'] = safe_convert_to_python(row['Summaries_Korean'])
                 
-                if 'Key_Highlights' in row.index and isinstance(row['Key_Highlights'], list):
-                    result['Key_Highlights'] = row['Key_Highlights']
+                if 'Key_Highlights' in row.index and isinstance(row['Key_Highlights'], (list, np.ndarray)):
+                    result['Key_Highlights'] = safe_convert_to_python(row['Key_Highlights'])
                 
-                if 'amenities' in row.index and isinstance(row['amenities'], (list, dict)):
-                    result['amenities'] = row['amenities']
+                if 'amenities' in row.index:
+                    result['amenities'] = safe_convert_to_python(row['amenities'])
                 
                 if 'medical_info_parsed' in row.index and isinstance(row['medical_info_parsed'], dict):
-                    result['medical_info_parsed'] = row['medical_info_parsed']
+                    result['medical_info_parsed'] = safe_convert_to_python(row['medical_info_parsed'])
                 
-                # Boolean/numeric fields
-                result['has_english'] = bool(row['has_english']) if 'has_english' in row.index else False
-                result['distance_km'] = float(row['distance_km']) if 'distance_km' in row.index and pd.notna(row['distance_km']) else 0
-                result['relevance_rank'] = int(row['relevance_rank']) if 'relevance_rank' in row.index and pd.notna(row['relevance_rank']) else 9999
+                # Booleans and numbers
+                result['has_english'] = safe_convert_to_python(row.get('has_english', False))
+                result['distance_km'] = safe_convert_to_python(row.get('distance_km', 0))
+                result['relevance_rank'] = safe_convert_to_python(row.get('relevance_rank', 9999))
                 
                 results.append(result)
         else:
-            # No results found - respond in user's language
             language_pref = new_state.get("language_pref", "Korean")
             if "English" in language_pref:
                 response_text = "I couldn't find any facilities matching your criteria. Would you like to try a different specialty or area?"
             else:
                 response_text = "검색 조건에 맞는 시설을 찾을 수 없습니다. 다른 전문 분야나 지역을 시도해 보시겠어요?"
-            results = []
-    else:
-        results = []
 
     return {
         "response": response_text,
