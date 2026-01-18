@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import Footer from "../components/Footer";
+import { Analytics } from "@vercel/analytics/react";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "SeoulMedBot | AI Medical Concierge",
-  description: "Find the best English-speaking doctors in Seoul with AI assistance.",
+  title: "Seoul Medical Facility Finder | AI Medical Concierge",
+  description: "Find the best English-speaking medical facilities in Seoul with AI assistance. Search by specialty, location, and language capabilities.",
+  keywords: "Seoul medical facilities, English-speaking doctors Seoul, Korea healthcare, Seoul hospitals, medical concierge Seoul",
 };
 
 export default function RootLayout({
@@ -16,7 +19,18 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={inter.className}>{children}</body>
+      <body className={`${inter.className} flex flex-col min-h-screen`}>
+        {/* Main content area - takes up available space */}
+        <main className="flex-grow">
+          {children}
+        </main>
+        
+        {/* Footer appears on all pages */}
+        <Footer />
+        
+        {/* Vercel Analytics - tracks page views automatically */}
+        <Analytics />
+      </body>
     </html>
   );
 }
