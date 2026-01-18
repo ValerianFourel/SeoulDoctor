@@ -26,7 +26,7 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 HF_REPO_ID = "ValerianFourel/seoul-medical-facilities"
 HF_FILENAME = "facilities_metareviews_rag_ready.parquet"
 
-CHROMA_PATH = "/var/lib/chroma" if os.getenv("RENDER") else "./chroma_db"
+CHROMA_PATH = "./chroma_db"
 LOCAL_PARQUET_PATH = "./local_facilities_cache.parquet"
 
 # Defaults
@@ -285,9 +285,7 @@ async def lifespan(app: FastAPI):
             print(f"🌐 GPS coordinates available for {coords_count}/{len(df_filtered)} facilities")
         else:
             print(f"⚠️ No GPS coordinates in dataset - will use text-based location matching only")
-        
-        df_filtered['place_id'] = df_filtered['place_id'].astype(str)
-        
+        df_filtered['place_id'] = df_filtered['place_id'].fillna('').astype(str)        
     except Exception as e:
         print(f"❌ PARQUET LOAD ERROR: {e}")
         df_facilities = pd.DataFrame()
