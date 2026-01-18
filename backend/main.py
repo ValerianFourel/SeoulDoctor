@@ -13,7 +13,11 @@ from groq import Groq
 from contextlib import asynccontextmanager
 from huggingface_hub import hf_hub_download
 from dotenv import load_dotenv
-
+from specialties import SPECIALTY_CATEGORY_MAP
+from distance import haversine, fuzzy_match_location
+from models import ChatRequest,State
+from utils import safe_convert_to_python
+from prompt import EXTRACTION_PROMPT, GENERATION_PROMPT
 # --- 1. CONFIGURATION ---
 load_dotenv()
 
@@ -36,106 +40,6 @@ vector_db = None
 df_facilities = None  # Full dataset
 df_filtered = None    # Filtered subset (Summaries not null)
 
-# Medical specialty mapping: English → Korean category
-SPECIALTY_CATEGORY_MAP = {
-    # Dental
-    'dentist': '치과',
-    'dental': '치과',
-    'orthodontics': '치과',
-    
-    # Medical
-    'internal medicine': '내과',
-    'family medicine': '가정의학과',
-    'pediatrics': '소아청소년과',
-    'pediatrician': '소아청소년과',
-    'obstetrics': '산부인과',
-    'gynecology': '산부인과',
-    'ob/gyn': '산부인과',
-    'obgyn': '산부인과',
-    'dermatology': '피부과',
-    'ophthalmology': '안과',
-    'eye doctor': '안과',
-    'ent': '이비인후과',
-    'ear nose throat': '이비인후과',
-    'orthopedics': '정형외과',
-    'neurology': '신경과',
-    'psychiatry': '정신건강의학과',
-    'urology': '비뇨기과',
-    'general surgery': '외과',
-    'surgery': '외과',
-    'plastic surgery': '성형외과',
-    'radiology': '영상의학과',
-    'anesthesiology': '마취통증의학과',
-    'rehabilitation': '재활의학과',
-    'physical therapy': '재활의학과',
-    
-    # Specialized
-    'cardiology': '순환기내과',
-    'gastroenterology': '소화기내과',
-    'pulmonology': '호흡기내과',
-    'nephrology': '신장내과',
-    'endocrinology': '내분비내과',
-    'rheumatology': '류마티스내과',
-    'oncology': '종양내과',
-    'hematology': '혈액내과',
-    
-    # Other
-    'pharmacy': '약국',
-    'oriental medicine': '한의원',
-    'traditional medicine': '한의원',
-}
-
-# --- 2. HELPER FUNCTIONS ---
-
-def haversine(lat1, lon1, lat2, lon2):
-    """Calculate distance in km between two GPS coordinates."""
-    R = 6371  # Earth radius in km
-    phi1, phi2 = np.radians(lat1), np.radians(lat2)
-    dphi = np.radians(lat2 - lat1)
-    dlambda = np.radians(lon2 - lon1)
-    a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2) * np.sin(dlambda/2)**2
-    return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
-
-def safe_convert_to_python(value):
-    """Convert pandas/numpy types to native Python types for JSON serialization."""
-    if value is None:
-        return None
-    
-    # Handle numpy arrays and pandas Series BEFORE pd.isna()
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    
-    if isinstance(value, pd.Series):
-        return value.tolist()
-    
-    # Handle NaN for scalars
-    if isinstance(value, float) and np.isnan(value):
-        return None
-    
-    # Handle pandas NA for scalars
-    try:
-        if pd.isna(value):
-            return None
-    except (ValueError, TypeError):
-        pass
-    
-    # Handle numpy scalar types
-    if isinstance(value, (np.integer, np.int64, np.int32, np.int16, np.int8)):
-        return int(value)
-    if isinstance(value, (np.floating, np.float64, np.float32)):
-        return float(value)
-    if isinstance(value, np.bool_):
-        return bool(value)
-    
-    # Handle lists recursively
-    if isinstance(value, list):
-        return [safe_convert_to_python(item) for item in value]
-    
-    # Handle dicts recursively
-    if isinstance(value, dict):
-        return {k: safe_convert_to_python(v) for k, v in value.items()}
-    
-    return value
 
 def download_and_cache_parquet():
     """Download parquet from HuggingFace and cache locally."""
@@ -158,108 +62,7 @@ def download_and_cache_parquet():
     
     return df
 
-def fuzzy_match_location(user_text: str, df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Fuzzy match user's location text against file_district (roman) and file_dong (Hangul).
-    Returns filtered dataframe.
-    """
-    if not user_text or len(df) == 0:
-        return df
-    
-    user_lower = user_text.lower().strip()
-    user_clean = user_lower.replace('gu', '').replace('dong', '').replace('-', '').strip()
-    
-    print(f"🔍 Fuzzy matching location: '{user_text}'")
-    
-    matched_rows = []
-    
-    try:
-        for idx, row in df.iterrows():
-            score = 0
-            
-            # Match against file_district
-            if 'file_district' in row.index and pd.notna(row['file_district']):
-                district = str(row['file_district']).lower().replace('-', '')
-                district_clean = district.replace('gu', '').strip()
-                
-                if user_clean in district_clean or district_clean in user_clean:
-                    score += 10
-                elif any(word in district_clean for word in user_clean.split() if len(word) > 2):
-                    score += 5
-            
-            # Match against file_dong
-            if 'file_dong' in row.index and pd.notna(row['file_dong']):
-                dong = str(row['file_dong'])
-                
-                if user_text in dong or dong in user_text:
-                    score += 10
-                elif any(ord(char) >= 0xAC00 and ord(char) <= 0xD7A3 for char in user_text):
-                    if any(word in dong for word in user_text.split() if len(word) > 1):
-                        score += 5
-            
-            # Match against address
-            if 'address' in row.index and pd.notna(row['address']):
-                address = str(row['address']).lower()
-                if user_clean in address:
-                    score += 3
-            
-            if score > 0:
-                matched_rows.append((idx, score))
-        
-        if matched_rows:
-            matched_rows.sort(key=lambda x: x[1], reverse=True)
-            matched_indices = [idx for idx, score in matched_rows]
-            result_df = df.loc[matched_indices]
-            print(f"   ✅ Found {len(result_df)} facilities matching location")
-            return result_df
-        else:
-            print(f"   ⚠️ No location matches found, using all facilities")
-            return df
-            
-    except Exception as e:
-        print(f"   ❌ Error in fuzzy matching: {e}, returning all facilities")
-        return df
 
-def safe_convert_to_python(value):
-    """Convert pandas/numpy types to native Python types for JSON serialization."""
-    if value is None:
-        return None
-    
-    # Handle arrays FIRST
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    
-    if isinstance(value, pd.Series):
-        return value.tolist()
-    
-    # Handle NaN for scalars
-    if isinstance(value, float) and np.isnan(value):
-        return None
-    
-    # Handle pandas NA
-    try:
-        if pd.isna(value):
-            return None
-    except (ValueError, TypeError):
-        pass
-    
-    # Handle numpy scalar types
-    if isinstance(value, (np.integer, np.int64, np.int32, np.int16, np.int8)):
-        return int(value)
-    if isinstance(value, (np.floating, np.float64, np.float32)):
-        return float(value)
-    if isinstance(value, np.bool_):
-        return bool(value)
-    
-    # Handle lists recursively
-    if isinstance(value, list):
-        return [safe_convert_to_python(item) for item in value]
-    
-    # Handle dicts recursively
-    if isinstance(value, dict):
-        return {k: safe_convert_to_python(v) for k, v in value.items()}
-    
-    return value
 
 def build_context_for_llm(df_subset: pd.DataFrame, n_results: int = 10) -> str:
     """Build rich context from filtered parquet data for LLM."""
@@ -400,75 +203,8 @@ app = FastAPI(lifespan=lifespan)
 client = Groq(api_key=GROQ_API_KEY)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# --- 4. MODELS ---
-class State(BaseModel):
-    specialty: Optional[str] = None
-    location: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    willingness_to_travel: str = "Nearby"
-    language_pref: str = "Korean is fine"
-    keywords: List[str] = []
-    asked_for_location: bool = False
-    ready_to_search: bool = False
 
-class ChatRequest(BaseModel):
-    message: str
-    current_state: State
-
-# --- 5. SYSTEM PROMPTS ---
-
-EXTRACTION_PROMPT = """
-You are "SeoulMedBot". Extract medical intent into JSON.
-
-**State Variables:**
-1. `specialty`: Medical category (e.g., "Dentist", "Internal Medicine").
-2. `location`: User's text location (e.g., "Gangnam", "Geumcheon gu").
-3. `latitude`: Optional GPS latitude (float).
-4. `longitude`: Optional GPS longitude (float).
-5. `asked_for_location`: Boolean.
-6. `ready_to_search`: Boolean.
-7. `language_pref`: CRITICAL - Detect user's language!
-
-**Logic Rules:**
-- If specialty missing -> ask.
-- If location/latitude/longitude missing AND `asked_for_location` is false -> ask for location.
-- If location provided OR latitude/longitude provided -> set `ready_to_search`=true.
-
-**LANGUAGE DETECTION (CRITICAL):**
-- If user writes in English (ANY English words) -> set `language_pref`="English Preferred"
-- If user writes in Korean (한글) -> set `language_pref`="Korean"
-- When responding in `response_text`, use the SAME language as the user's message
-
-**Notes:**
-- latitude/longitude are OPTIONAL - most queries will only have text location
-- ALWAYS match the user's language in your response_text
-
-**Format:** { "state": {...}, "response_text": "..." }
-"""
-
-GENERATION_PROMPT = """
-You are a helpful Medical Concierge for Seoul.
-
-**User Query:** {user_query}
-**Location Context:** {location_context}
-**Language Preference:** {language}
-
-**Available Facilities (ranked by relevance):**
-{facilities_context}
-
-**Your Task:**
-1. Recommend the TOP 3 most relevant facilities from the list above
-2. The facilities are already ranked by semantic relevance to the user's query
-3. Use both English and Korean information to make your recommendation
-4. Explain WHY each facility is a good match (use Summary and Highlights)
-5. DO NOT include addresses, phone numbers, or hours
-
-**Tone:** Warm, professional, helpful
-**Language:** Respond in {language}
-"""
-
-# --- 6. CHAT ENDPOINT ---
+# --- 5. CHAT ENDPOINT ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     
