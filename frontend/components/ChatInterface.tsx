@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, MapPin, Sparkles, ChevronDown } from "lucide-react";
+import { Send, MapPin, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
 
 // --- TYPES ---
 type State = {
@@ -41,6 +41,7 @@ export default function ChatInterface() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [expandedFacilities, setExpandedFacilities] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const [travelRadius, setTravelRadius] = useState("Nearby"); 
@@ -57,6 +58,18 @@ export default function ChatInterface() {
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const toggleFacilityExpand = (placeId: string) => {
+    setExpandedFacilities(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(placeId)) {
+        newSet.delete(placeId);
+      } else {
+        newSet.add(placeId);
+      }
+      return newSet;
+    });
+  };
 
   const handleSendMessage = async (text: string, stateOverride?: Partial<State>) => {
     if (!text.trim()) return;
@@ -227,53 +240,79 @@ export default function ChatInterface() {
                     {/* Results Cards */}
                     {msg.results && msg.results.length > 0 && (
                       <div className="space-y-3">
-                        {msg.results.map((facility, facilityIdx) => (
-                          <div
-                            key={facility.place_id}
-                            className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all overflow-hidden group animate-fadeIn"
-                            style={{ animationDelay: `${facilityIdx * 100}ms` }}
-                          >
-                            <div className="p-4">
-                              <div className="flex justify-between items-start mb-2">
-                                <div className="flex-1">
-                                  <h3 className="font-bold text-slate-900 text-base mb-1">{facility.name}</h3>
-                                  <span className="inline-block px-2 py-1 bg-blue-50 text-blue-600 text-xs font-semibold rounded-md">
-                                    {facility.category}
-                                  </span>
+                        {msg.results.map((facility, facilityIdx) => {
+                          const isExpanded = expandedFacilities.has(facility.place_id);
+                          const summary = facility.Summaries?.[0] || "";
+                          const needsExpansion = summary.length > 150;
+
+                          return (
+                            <div
+                              key={facility.place_id}
+                              className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all overflow-hidden group animate-fadeIn"
+                              style={{ animationDelay: `${facilityIdx * 100}ms` }}
+                            >
+                              <div className="p-4">
+                                <div className="flex justify-between items-start mb-2">
+                                  <div className="flex-1">
+                                    <h3 className="font-bold text-slate-900 text-base mb-1">{facility.name}</h3>
+                                    <span className="inline-block px-2 py-1 bg-blue-50 text-blue-600 text-xs font-semibold rounded-md">
+                                      {facility.category}
+                                    </span>
+                                  </div>
+                                  {facility.english_confidence_score >= 4 && (
+                                    <span className="flex items-center gap-1 bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-full text-xs font-bold">
+                                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                                      English OK
+                                    </span>
+                                  )}
                                 </div>
-                                {facility.english_confidence_score >= 4 && (
-                                  <span className="flex items-center gap-1 bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-full text-xs font-bold">
-                                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
-                                    English OK
-                                  </span>
+
+                                {summary && (
+                                  <div className="my-3">
+                                    <p className={`text-sm text-slate-600 leading-relaxed ${
+                                      !isExpanded && needsExpansion ? 'line-clamp-2' : ''
+                                    }`}>
+                                      {summary}
+                                    </p>
+                                    {needsExpansion && (
+                                      <button
+                                        onClick={() => toggleFacilityExpand(facility.place_id)}
+                                        className="mt-2 flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors"
+                                      >
+                                        {isExpanded ? (
+                                          <>
+                                            Show less <ChevronUp size={14} />
+                                          </>
+                                        ) : (
+                                          <>
+                                            Read more <ChevronDown size={14} />
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
+                                  </div>
                                 )}
-                              </div>
 
-                              {facility.Summaries?.[0] && (
-                                <p className="text-sm text-slate-600 leading-relaxed my-3 line-clamp-2">
-                                  {facility.Summaries[0]}
-                                </p>
-                              )}
-
-                              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                                <div className="flex items-center gap-2 text-slate-500">
-                                  <MapPin size={14} className="text-blue-500" />
-                                  <span className="text-sm font-medium">
-                                    {facility.distance != null ? `${facility.distance.toFixed(1)} km away` : 'Distance N/A'}
-                                  </span>
+                                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                                  <div className="flex items-center gap-2 text-slate-500">
+                                    <MapPin size={14} className="text-blue-500" />
+                                    <span className="text-sm font-medium">
+                                      {facility.distance != null ? `${facility.distance.toFixed(1)} km away` : 'Distance N/A'}
+                                    </span>
+                                  </div>
+                                  <a 
+                                    href={`https://map.naver.com/v5/search/${encodeURIComponent(facility.name)}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all"
+                                  >
+                                    View Map
+                                  </a>
                                 </div>
-                                <a 
-                                  href={`https://map.naver.com/v5/search/${encodeURIComponent(facility.name)}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all"
-                                >
-                                  View Map
-                                </a>
                               </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

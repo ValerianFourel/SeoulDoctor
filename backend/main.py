@@ -368,17 +368,25 @@ You are "SeoulMedBot". Extract medical intent into JSON.
 4. `longitude`: Optional GPS longitude (float).
 5. `asked_for_location`: Boolean.
 6. `ready_to_search`: Boolean.
+7. `language_pref`: CRITICAL - Detect user's language!
 
 **Logic Rules:**
 - If specialty missing -> ask.
 - If location/latitude/longitude missing AND `asked_for_location` is false -> ask for location.
 - If location provided OR latitude/longitude provided -> set `ready_to_search`=true.
-- Detect Language: If user speaks English, set `language_pref`="English Preferred".
+
+**LANGUAGE DETECTION (CRITICAL):**
+- If user writes in English (ANY English words) -> set `language_pref`="English Preferred"
+- If user writes in Korean (한글) -> set `language_pref`="Korean"
+- When responding in `response_text`, use the SAME language as the user's message
+- Examples:
+  - "Find a dentist" → language_pref="English Preferred", response in English
+  - "치과 찾아줘" → language_pref="Korean", response in Korean
+  - "Gangnam dentist" → language_pref="English Preferred", response in English
 
 **Notes:**
 - latitude/longitude are OPTIONAL - most queries will only have text location
-- If user provides GPS coordinates, extract them
-- Don't ask for coordinates unless user mentions them
+- ALWAYS match the user's language in your response_text
 
 **Format:** { "state": {...}, "response_text": "..." }
 """
@@ -430,6 +438,24 @@ async def chat_endpoint(req: ChatRequest):
 
     new_state = ai_data.get("state", {})
     response_text = ai_data.get("response_text", "")
+    
+    # FALLBACK: Ensure language_pref is set
+    if not new_state.get("language_pref") or new_state.get("language_pref") == "Korean is fine":
+        # Detect from user message if LLM didn't set it properly
+        user_message = req.message.lower()
+        # Check if message contains English letters (basic heuristic)
+        has_english = any(char.isalpha() and ord(char) < 128 for char in user_message)
+        has_korean = any(0xAC00 <= ord(char) <= 0xD7A3 for char in req.message)
+        
+        if has_english and not has_korean:
+            new_state["language_pref"] = "English Preferred"
+            print("   🌐 Language detected: English (fallback)")
+        elif has_korean:
+            new_state["language_pref"] = "Korean"
+            print("   🌐 Language detected: Korean (fallback)")
+        else:
+            new_state["language_pref"] = "Korean"  # Default to Korean
+            print("   🌐 Language default: Korean")
     
     print("\n--- 🧠 STATE ---")
     print(json.dumps(new_state, indent=2))
@@ -550,7 +576,8 @@ async def chat_endpoint(req: ChatRequest):
             working_df['relevance_rank'] = 9999
         
         # --- STEP 5: ENGLISH FILTER ---
-        if new_state.get("language_pref") in ["English Preferred", "Must speak English"]:
+        language_pref = new_state.get("language_pref", "Korean")
+        if "English" in language_pref:
             if 'has_english' in working_df.columns:
                 before = len(working_df)
                 working_df = working_df[working_df['has_english'] == True]
@@ -576,7 +603,14 @@ async def chat_endpoint(req: ChatRequest):
             facilities_context = build_context_for_llm(working_df, n_results=10)
             
             # --- STEP 7: GENERATE RECOMMENDATION (LLM) ---
-            language = "English" if new_state.get("language_pref") == "English Preferred" else "Korean"
+            # Determine response language based on user's language preference
+            language_pref = new_state.get("language_pref", "Korean")
+            if "English" in language_pref:
+                language = "English"
+            else:
+                language = "Korean"
+            
+            print(f"   🗣️ Generating response in: {language}")
             
             gen_messages = [{
                 "role": "system",
@@ -646,7 +680,12 @@ async def chat_endpoint(req: ChatRequest):
                 
                 results.append(result)
         else:
-            response_text = "I couldn't find any facilities matching your criteria. Would you like to try a different specialty or area?"
+            # No results found - respond in user's language
+            language_pref = new_state.get("language_pref", "Korean")
+            if "English" in language_pref:
+                response_text = "I couldn't find any facilities matching your criteria. Would you like to try a different specialty or area?"
+            else:
+                response_text = "검색 조건에 맞는 시설을 찾을 수 없습니다. 다른 전문 분야나 지역을 시도해 보시겠어요?"
             results = []
     else:
         results = []
