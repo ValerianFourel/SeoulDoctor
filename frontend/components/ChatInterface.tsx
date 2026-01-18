@@ -55,9 +55,6 @@ export default function ChatInterface() {
     ready_to_search: false,
   });
 
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
 
   const toggleFacilityExpand = (placeId: string) => {
     setExpandedFacilities(prev => {
