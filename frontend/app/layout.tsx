@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "SeoulMedBot | Medical Concierge",
-  description: "Find the best English-speaking doctors in Seoul.",
+  title: "SeoulMedBot | AI Medical Concierge",
+  description: "Find the best English-speaking doctors in Seoul with AI assistance.",
 };
 
 export default function RootLayout({

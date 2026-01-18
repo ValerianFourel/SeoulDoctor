@@ -1,2 +1,6 @@
 **/.env
 frontend/node_modules/
+**/.next
+**/venv
+**/__pycache__
+**/chroma_db
