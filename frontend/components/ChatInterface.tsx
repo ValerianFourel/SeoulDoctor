@@ -258,7 +258,9 @@ export default function ChatInterface() {
                               <div className="flex items-center justify-between pt-3 border-t border-slate-100">
                                 <div className="flex items-center gap-2 text-slate-500">
                                   <MapPin size={14} className="text-blue-500" />
-                                  <span className="text-sm font-medium">{facility.distance.toFixed(1)} km away</span>
+                                  <span className="text-sm font-medium">
+                                    {facility.distance != null ? `${facility.distance.toFixed(1)} km away` : 'Distance N/A'}
+                                  </span>
                                 </div>
                                 <a 
                                   href={`https://map.naver.com/v5/search/${encodeURIComponent(facility.name)}`}

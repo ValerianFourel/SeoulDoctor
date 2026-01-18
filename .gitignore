@@ -4,3 +4,4 @@ frontend/node_modules/
 **/venv
 **/__pycache__
 **/chroma_db
+**/*.parquet
