@@ -4,6 +4,8 @@ import "./globals.css";
 import Footer from "../components/Footer";
 import HeaderMenu from "../components/HeaderMenu";
 import { Analytics } from "@vercel/analytics/react";
+import Script from "next/script"; // Import for AdSense
+import AdSlot from "../components/AdSlot"; // Import for Side Banners
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -38,19 +40,42 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.className} flex flex-col min-h-screen`}>
-        {/* Floating header menu button (top right) */}
+      <body className={`${inter.className} flex flex-col min-h-screen bg-gray-50`}>
+        {/* AdSense Script */}
+        <Script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2786202112029582"
+          crossOrigin="anonymous"
+          strategy="afterInteractive"
+        />
+
         <HeaderMenu />
         
-        {/* Main content area - takes up available space */}
-        <main className="flex-grow">
-          {children}
+        {/* Main Layout: 3 Columns on Desktop, 1 on Mobile */}
+        <main className="flex-grow flex justify-center w-full">
+          
+          {/* Left Ad Column (Hidden on Mobile) */}
+          <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-end pr-4 pt-6">
+            <div className="sticky top-24">
+              <AdSlot />
+            </div>
+          </aside>
+
+          {/* Center Content (Chat Interface) */}
+          <div className="w-full max-w-4xl flex flex-col bg-white shadow-sm min-h-[calc(100vh-64px)]">
+            {children}
+          </div>
+
+          {/* Right Ad Column (Hidden on Mobile) */}
+          <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-start pl-4 pt-6">
+            <div className="sticky top-24">
+              <AdSlot />
+            </div>
+          </aside>
+
         </main>
         
-        {/* Footer - 25% more compact */}
         <Footer />
-        
-        {/* Vercel Analytics - tracks page views automatically */}
         <Analytics />
       </body>
     </html>

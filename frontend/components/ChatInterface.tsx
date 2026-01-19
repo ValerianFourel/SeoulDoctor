@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Send, MapPin, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
+import AdSlot from "./AdSlot"; // <--- IMPORT ADDED
 
 // --- TYPES ---
 type State = {
@@ -338,9 +339,11 @@ export default function ChatInterface() {
         </div>
       </div>
 
-      {/* --- INPUT AREA --- */}
-      <div className="sticky bottom-0 backdrop-blur-xl bg-white/80 border-t border-slate-200/50">
+      {/* --- INPUT AREA & MOBILE AD --- */}
+      <div className="sticky bottom-0 backdrop-blur-xl bg-white/80 border-t border-slate-200/50 z-20">
         <div className="max-w-4xl mx-auto px-6 py-4">
+          
+          {/* Input Controls */}
           <div className="flex items-end gap-3">
             <button
               onClick={handleLocationClick}
@@ -373,9 +376,20 @@ export default function ChatInterface() {
               <Send size={20} />
             </button>
           </div>
+          
           <p className="text-xs text-slate-400 text-center mt-3">
             SeoulMedBot can make mistakes. Verify important medical information.
           </p>
+
+          {/* ▼▼▼ MOBILE ONLY AD SLOT ▼▼▼ */}
+          {/* Hidden on XL screens (1280px+) where side banners exist. Visible on Mobile/Tablet */}
+          <div className="block xl:hidden w-full mt-4 flex justify-center">
+             {/* Simple wrapper to contain the ad */}
+             <div className="overflow-hidden rounded-lg">
+                <AdSlot />
+             </div>
+          </div>
+          
         </div>
       </div>
     </div>
