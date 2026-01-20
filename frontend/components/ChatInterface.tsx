@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Send, MapPin, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
-import AdSlot from "./AdSlot"; // <--- IMPORT ADDED
+import AdSlot from "./AdSlot";
 
 // --- TYPES ---
 type State = {
@@ -32,6 +32,46 @@ type FacilityResult = {
 
 const TRAVEL_OPTIONS = ["Neighborhood", "Nearby", "City-wide", "Don't Care"];
 
+// --- HELPER FUNCTION FOR FORMATTING AI RESPONSES ---
+const formatAIResponse = (text: string): string => {
+  // First, remove ** markers and add newline after bold text
+  let formatted = text.replace(/\*\*([^*]+)\*\*/g, '$1\n');
+  
+  // Then, add newline before numbered lists (1. 2. 3. etc.)
+  formatted = formatted.replace(/(\d+\.)/g, '\n$1');
+  
+  return formatted;
+};
+
+// --- CATEGORY TRANSLATION HELPER ---
+const getCategoryEnglish = (koreanCategory: string): string => {
+  const categoryMap: Record<string, string> = {
+    '치과': 'Dentist',
+    '피부과': 'Dermatology',
+    '내과': 'Internal Medicine',
+    '소아과': 'Pediatrics',
+    '정형외과': 'Orthopedics',
+    '안과': 'Ophthalmology',
+    '이비인후과': 'ENT',
+    '산부인과': 'OB/GYN',
+    '성형외과': 'Plastic Surgery',
+    '신경과': 'Neurology',
+    '정신건강의학과': 'Psychiatry',
+    '가정의학과': 'Family Medicine',
+    '외과': 'Surgery',
+    '비뇨기과': 'Urology',
+  };
+
+  // Find matching category
+  for (const [korean, english] of Object.entries(categoryMap)) {
+    if (koreanCategory.includes(korean)) {
+      return english;
+    }
+  }
+  
+  return 'Medical Facility';
+};
+
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
     { 
@@ -51,7 +91,7 @@ export default function ChatInterface() {
     location: null,
     lat_lon: null,
     willingness_to_travel: "Nearby",
-    language_pref: "Korean is fine",
+    language_pref: "English",
     keywords: [],
     ready_to_search: false,
   });
@@ -232,7 +272,9 @@ export default function ChatInterface() {
                           : "bg-white border border-slate-200 text-slate-800 shadow-sm"
                       }`}
                     >
-                      <p className="text-sm leading-relaxed">{msg.content}</p>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                        {msg.role === "ai" ? formatAIResponse(msg.content) : msg.content}
+                      </p>
                     </div>
 
                     {/* Results Cards */}
@@ -242,6 +284,7 @@ export default function ChatInterface() {
                           const isExpanded = expandedFacilities.has(facility.place_id);
                           const summary = facility.Summaries?.[0] || "";
                           const needsExpansion = summary.length > 150;
+                          const categoryEnglish = getCategoryEnglish(facility.category);
 
                           return (
                             <div
@@ -252,10 +295,20 @@ export default function ChatInterface() {
                               <div className="p-4">
                                 <div className="flex justify-between items-start mb-2">
                                   <div className="flex-1">
-                                    <h3 className="font-bold text-slate-900 text-base mb-1">{facility.name}</h3>
-                                    <span className="inline-block px-2 py-1 bg-blue-50 text-blue-600 text-xs font-semibold rounded-md">
-                                      {facility.category}
-                                    </span>
+                                    {/* Korean Name */}
+                                    <h3 className="font-bold text-slate-900 text-base mb-1">
+                                      {facility.name}
+                                    </h3>
+                                    
+                                    {/* Category in Korean and English */}
+                                    <div className="flex flex-wrap gap-2 items-center">
+                                      <span className="inline-block px-2 py-1 bg-blue-50 text-blue-600 text-xs font-semibold rounded-md">
+                                        {facility.category}
+                                      </span>
+                                      <span className="inline-block px-2 py-1 bg-slate-50 text-slate-600 text-xs font-medium rounded-md">
+                                        {categoryEnglish}
+                                      </span>
+                                    </div>
                                   </div>
                                   {facility.english_confidence_score >= 4 && (
                                     <span className="flex items-center gap-1 bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-full text-xs font-bold">
@@ -382,9 +435,7 @@ export default function ChatInterface() {
           </p>
 
           {/* ▼▼▼ MOBILE ONLY AD SLOT ▼▼▼ */}
-          {/* Hidden on XL screens (1280px+) where side banners exist. Visible on Mobile/Tablet */}
           <div className="block xl:hidden w-full mt-4 flex justify-center">
-             {/* Simple wrapper to contain the ad */}
              <div className="overflow-hidden rounded-lg">
                 <AdSlot />
              </div>

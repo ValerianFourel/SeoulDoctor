@@ -4,8 +4,8 @@ import "./globals.css";
 import Footer from "../components/Footer";
 import HeaderMenu from "../components/HeaderMenu";
 import { Analytics } from "@vercel/analytics/react";
-import Script from "next/script"; // Import for AdSense
-import AdSlot from "../components/AdSlot"; // Import for Side Banners
+import Script from "next/script";
+import AdSlot from "../components/AdSlot";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -31,6 +31,9 @@ export const metadata: Metadata = {
     title: "Seoul Medical Facility Finder",
     description: "Find the best English-speaking medical facilities in Seoul with AI assistance",
   },
+  verification: {
+    google: 'your-google-site-verification-code', // Add if you have one from AdSense
+  },
 };
 
 export default function RootLayout({
@@ -40,18 +43,18 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.className} flex flex-col min-h-screen bg-gray-50`}>
-        {/* AdSense Script */}
+      <head>
+        {/* AdSense Script - Only ONE instance */}
         <Script
           async
           src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2786202112029582"
           crossOrigin="anonymous"
-          strategy="afterInteractive"
+          strategy="beforeInteractive"
         />
-
+      </head>
+      <body className={`${inter.className} flex flex-col min-h-screen bg-gray-50`}>
         <HeaderMenu />
         
-        {/* Main Layout: 3 Columns on Desktop, 1 on Mobile */}
         <main className="flex-grow flex justify-center w-full">
           
           {/* Left Ad Column (Hidden on Mobile) */}

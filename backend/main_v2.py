@@ -40,19 +40,17 @@ LOCAL_PARQUET_PATH = "./local_facilities_cache.parquet"
 # Defaults
 DEFAULT_LAT = 37.5219  # Yeouido
 DEFAULT_LON = 126.9243
-DEFAULT_MAX_DISTANCE = 5.0  # km - default search radius
-
 vector_db = None
 df_facilities = None  # Full dataset
 df_filtered = None    # Filtered subset (Summaries not null)
 
 
-# --- 2. ENHANCED KAKAO API FUNCTIONS ---
+# --- 2. KAKAO API FUNCTIONS ---
 
-def kakao_geocode(address: str) -> Optional[Dict[str, Any]]:
+def kakao_geocode(address: str) -> Optional[Tuple[float, float]]:
     """
-    Convert address to coordinates using Kakao API with full address standardization.
-    Returns dict with {lat, lon, address_korean, district, dong, address_type} or None.
+    Convert address to coordinates using Kakao API.
+    Returns (latitude, longitude) or None if not found.
     """
     if not KAKAO_REST_API_KEY:
         print("⚠️ KAKAO_REST_API_KEY not set - skipping geocoding")
@@ -69,31 +67,19 @@ def kakao_geocode(address: str) -> Optional[Dict[str, Any]]:
         
         if data.get('documents') and len(data['documents']) > 0:
             doc = data['documents'][0]
-            result = {}
             
             # Try road address first, then jibun address
             if doc.get('road_address'):
-                addr = doc['road_address']
-                result['lat'] = float(addr['y'])
-                result['lon'] = float(addr['x'])
-                result['address_korean'] = addr['address_name']
-                result['address_type'] = 'road'
-                result['district'] = addr.get('region_2depth_name', '')  # 구
-                result['dong'] = addr.get('region_3depth_name', '')      # 동
+                lat = float(doc['road_address']['y'])
+                lon = float(doc['road_address']['x'])
             elif doc.get('address'):
-                addr = doc['address']
-                result['lat'] = float(addr['y'])
-                result['lon'] = float(addr['x'])
-                result['address_korean'] = addr['address_name']
-                result['address_type'] = 'jibun'
-                result['district'] = addr.get('region_2depth_name', '')  # 구
-                result['dong'] = addr.get('region_3depth_name', '')      # 동
+                lat = float(doc['address']['y'])
+                lon = float(doc['address']['x'])
             else:
                 return None
             
-            print(f"   🗺️ Kakao geocoded '{address}' → {result['address_korean']} ({result['lat']}, {result['lon']})")
-            print(f"      District: {result['district']}, Dong: {result['dong']}")
-            return result
+            print(f"   🗺️ Kakao geocoded '{address}' → ({lat}, {lon})")
+            return (lat, lon)
         else:
             print(f"   ⚠️ Kakao geocoding: No results for '{address}'")
             return None
@@ -106,10 +92,10 @@ def kakao_geocode(address: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def kakao_reverse_geocode(lat: float, lon: float) -> Optional[Dict[str, Any]]:
+def kakao_reverse_geocode(lat: float, lon: float) -> Optional[str]:
     """
     Convert coordinates to address using Kakao API.
-    Returns dict with {address_korean, district, dong} or None.
+    Returns address string or None if not found.
     """
     if not KAKAO_REST_API_KEY:
         print("⚠️ KAKAO_REST_API_KEY not set - skipping reverse geocoding")
@@ -126,25 +112,17 @@ def kakao_reverse_geocode(lat: float, lon: float) -> Optional[Dict[str, Any]]:
         
         if data.get('documents') and len(data['documents']) > 0:
             doc = data['documents'][0]
-            result = {}
             
             # Try road address first, then jibun address
             if doc.get('road_address'):
-                addr = doc['road_address']
-                result['address_korean'] = addr['address_name']
-                result['district'] = addr.get('region_2depth_name', '')
-                result['dong'] = addr.get('region_3depth_name', '')
+                address = doc['road_address']['address_name']
             elif doc.get('address'):
-                addr = doc['address']
-                result['address_korean'] = addr['address_name']
-                result['district'] = addr.get('region_2depth_name', '')
-                result['dong'] = addr.get('region_3depth_name', '')
+                address = doc['address']['address_name']
             else:
                 return None
             
-            print(f"   🗺️ Kakao reverse geocoded ({lat}, {lon}) → '{result['address_korean']}'")
-            print(f"      District: {result['district']}, Dong: {result['dong']}")
-            return result
+            print(f"   🗺️ Kakao reverse geocoded ({lat}, {lon}) → '{address}'")
+            return address
         else:
             print(f"   ⚠️ Kakao reverse geocoding: No results for ({lat}, {lon})")
             return None
@@ -157,85 +135,33 @@ def kakao_reverse_geocode(lat: float, lon: float) -> Optional[Dict[str, Any]]:
         return None
 
 
-def verify_and_standardize_address(location_text: str) -> Optional[Dict[str, Any]]:
+def geocode_location(location_text: str) -> Optional[Tuple[float, float]]:
     """
-    Verify and standardize any location input (English or Korean) via Kakao API.
-    Returns standardized address info with coordinates and zone details.
-    
-    This is the main entry point for address verification.
+    Smart geocoding that handles district names and full addresses.
+    Returns (latitude, longitude) or None.
     """
     if not location_text:
         return None
     
-    print(f"🔍 Verifying address: '{location_text}'")
-    
-    # Try direct geocoding first
-    result = kakao_geocode(location_text)
-    if result:
-        return result
+    # First try direct geocoding
+    coords = kakao_geocode(location_text)
+    if coords:
+        return coords
     
     # If that fails, try adding "서울" prefix for district names
-    if not location_text.startswith("서울") and not location_text.lower().startswith("seoul"):
-        result = kakao_geocode(f"서울 {location_text}")
-        if result:
-            return result
+    if not location_text.startswith("서울"):
+        coords = kakao_geocode(f"서울 {location_text}")
+        if coords:
+            return coords
     
     # Try adding "구" suffix for districts
     if "구" not in location_text and "동" not in location_text:
-        result = kakao_geocode(f"서울 {location_text}구")
-        if result:
-            return result
+        coords = kakao_geocode(f"서울 {location_text}구")
+        if coords:
+            return coords
     
-    # Try translating common English district names
-    english_to_korean = {
-        "gangnam": "강남구",
-        "songpa": "송파구",
-        "mapo": "마포구",
-        "jung": "중구",
-        "jongno": "종로구",
-        "yeongdeungpo": "영등포구",
-        "seocho": "서초구",
-        "gwanak": "관악구",
-        "dongdaemun": "동대문구",
-        "seongdong": "성동구"
-    }
-    
-    location_lower = location_text.lower().strip()
-    for eng, kor in english_to_korean.items():
-        if eng in location_lower:
-            result = kakao_geocode(f"서울 {kor}")
-            if result:
-                print(f"   ✅ Translated '{location_text}' → '{kor}'")
-                return result
-    
-    print(f"   ⚠️ Could not verify address: {location_text}")
+    print(f"   ⚠️ Could not geocode: {location_text}")
     return None
-
-
-def detect_search_mode(location_text: str, state: State) -> str:
-    """
-    Detect if user wants zone-based or distance-based search.
-    Returns 'zone' or 'distance'.
-    """
-    if not location_text:
-        return 'distance'
-    
-    # Zone indicators
-    zone_keywords = ["in ", "구", "동", "district", "area", "zone", "neighborhood"]
-    
-    # Distance indicators
-    distance_keywords = ["near", "close", "nearby", "km", "meter", "around", "근처", "주변", "가까운"]
-    
-    location_lower = location_text.lower()
-    
-    has_zone_keyword = any(kw in location_lower for kw in zone_keywords)
-    has_distance_keyword = any(kw in location_lower for kw in distance_keywords)
-    
-    # If both or neither, prefer zone if we have district/dong info
-    if has_zone_keyword or (not has_distance_keyword and state.district):
-        return 'zone'
-    else:
-        return 'distance'
 
 
 # --- 3. DATA LOADING ---
@@ -316,7 +242,7 @@ def build_context_for_llm(df_subset: pd.DataFrame, n_results: int = 10) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global vector_db, df_facilities, df_filtered
-    print("🚀 Booting SeoulMedBot Backend (Enhanced with Zone Search + Address Verification)...")
+    print("🚀 Booting SeoulMedBot Backend (Router-Controller + Kakao Geocoding)...")
 
     try:
         df_facilities = download_and_cache_parquet()
@@ -419,95 +345,6 @@ app.add_middleware(
 # HELPER FUNCTIONS
 # ==========================================
 
-def log_state_detailed(state: State, context: str = ""):
-    """
-    Print comprehensive state information for debugging and monitoring.
-    """
-    print(f"\n{'='*80}")
-    print(f"📊 STATE SNAPSHOT {f'({context})' if context else ''}")
-    print(f"{'='*80}")
-    
-    # Search Criteria
-    print(f"\n🎯 SEARCH CRITERIA:")
-    print(f"   Medical Specialty: {state.specialty or 'Not specified'}")
-    if state.specialty:
-        print(f"   └─ Confidence: {state.specialty_confidence:.2%}")
-        specialty_lower = state.specialty.lower().strip()
-        if specialty_lower in SPECIALTY_CATEGORY_MAP:
-            korean_category = SPECIALTY_CATEGORY_MAP[specialty_lower]
-            print(f"   └─ Korean Category: {korean_category}")
-    
-    # Location Information
-    print(f"\n📍 LOCATION DATA:")
-    print(f"   Location Text: {state.location or 'Not specified'}")
-    
-    if state.address_korean:
-        print(f"   Verified Address (KR): {state.address_korean}")
-    
-    if state.district or state.dong:
-        zone_info = []
-        if state.district:
-            zone_info.append(f"District: {state.district}")
-        if state.dong:
-            zone_info.append(f"Dong: {state.dong}")
-        print(f"   Administrative Zone: {', '.join(zone_info)}")
-    
-    if state.latitude and state.longitude:
-        print(f"   GPS Coordinates: ({state.latitude:.6f}, {state.longitude:.6f})")
-    else:
-        print(f"   GPS Coordinates: Not available")
-    
-    # Search Mode & Distance
-    print(f"\n🔍 SEARCH PARAMETERS:")
-    if state.search_mode:
-        print(f"   Search Mode: {state.search_mode.upper()}")
-        if state.search_mode == 'zone':
-            print(f"   └─ Zone-based: Searching within {state.district or 'specified zone'}")
-            print(f"   └─ Distance Limit: None (all facilities in zone)")
-        elif state.search_mode == 'distance':
-            print(f"   └─ Distance-based: Radius search")
-            print(f"   └─ Max Distance: {state.max_distance_km}km")
-    else:
-        print(f"   Search Mode: Not determined yet")
-        print(f"   Default Max Distance: {state.max_distance_km}km")
-    
-    # Language Preference
-    print(f"\n🌐 LANGUAGE:")
-    print(f"   User Language: {state.language_pref}")
-    if "English" in state.language_pref:
-        print(f"   └─ Filtering for English-speaking facilities")
-    
-    # Conversation State
-    print(f"\n💬 CONVERSATION STATE:")
-    print(f"   Turn Number: {state.turn_count}")
-    print(f"   Phase: {state.conversation_phase}")
-    print(f"   Ready to Search: {'✅ Yes' if state.ready_to_search else '❌ No'}")
-    print(f"   Search Executed: {'✅ Yes' if state.search_executed else '❌ No'}")
-    
-    # Summary Status
-    print(f"\n📋 STATUS SUMMARY:")
-    has_specialty = bool(state.specialty)
-    has_location = bool(state.location or (state.latitude and state.longitude) or state.district)
-    
-    missing_items = []
-    if not has_specialty:
-        missing_items.append("Medical Specialty")
-    if not has_location:
-        missing_items.append("Location")
-    
-    if missing_items:
-        print(f"   ⚠️  Missing: {', '.join(missing_items)}")
-    else:
-        print(f"   ✅ All required criteria provided")
-    
-    if state.ready_to_search:
-        print(f"   🚀 Ready to execute search")
-    elif missing_items:
-        print(f"   ⏳ Waiting for: {', '.join(missing_items)}")
-    
-    print(f"{'='*80}\n")
-
-
 def detect_language(message: str) -> str:
     """Simple language detection."""
     has_korean = any(0xAC00 <= ord(char) <= 0xD7A3 for char in message)
@@ -543,14 +380,10 @@ def cleanse_state_for_change(current_state: State, user_message: str) -> State:
         new_state.specialty_confidence = 0.0
     
     if has_location_change:
-        print("   🧹 Cleansing: location data")
+        print("   🧹 Cleansing: location")
         new_state.location = None
         new_state.latitude = None
         new_state.longitude = None
-        new_state.address_korean = None
-        new_state.district = None
-        new_state.dong = None
-        new_state.search_mode = None
     
     # Always reset search flags when changing
     new_state.ready_to_search = False
@@ -562,7 +395,7 @@ def cleanse_state_for_change(current_state: State, user_message: str) -> State:
 
 def extract_entities(user_message: str) -> Dict[str, Any]:
     """
-    Call the EXTRACTION_PROMPT_V2 (pure extractor) and verify address via Kakao API.
+    Call the EXTRACTION_PROMPT_V2 (pure extractor).
     This is a leaf node that only extracts, doesn't reason about flow.
     """
     extraction_messages = [{
@@ -580,23 +413,20 @@ def extract_entities(user_message: str) -> Dict[str, Any]:
         )
         extracted = json.loads(completion.choices[0].message.content)
         
-        # ENHANCED: Verify and standardize address via Kakao API
-        if extracted.get('location'):
-            verified = verify_and_standardize_address(extracted['location'])
-            
-            if verified:
-                # Replace with verified data
-                extracted['latitude'] = verified['lat']
-                extracted['longitude'] = verified['lon']
-                extracted['address_korean'] = verified['address_korean']
-                extracted['district'] = verified['district']
-                extracted['dong'] = verified['dong']
-                
-                print(f"   ✅ Address verified: {verified['address_korean']}")
-                print(f"      Zone: {verified['district']} {verified['dong']}")
-                print(f"      GPS: ({verified['lat']}, {verified['lon']})")
-            else:
-                print(f"   ⚠️ Could not verify address '{extracted['location']}'")
+        # Log extraction
+        gps_info = ""
+        if extracted.get('latitude') and extracted.get('longitude'):
+            gps_info = f", GPS=({extracted['latitude']}, {extracted['longitude']})"
+        
+        print(f"   📦 Extracted: specialty={extracted.get('specialty')}, location={extracted.get('location')}{gps_info}, confidence={extracted.get('specialty_confidence', 0):.2f}")
+        
+        # GEOCODE if we have location text but no GPS
+        if extracted.get('location') and not extracted.get('latitude'):
+            coords = geocode_location(extracted['location'])
+            if coords:
+                extracted['latitude'] = coords[0]
+                extracted['longitude'] = coords[1]
+                print(f"   🗺️ Geocoded location to ({coords[0]}, {coords[1]})")
         
         return extracted
         
@@ -621,146 +451,34 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any]) -> Stat
     if extracted.get('longitude') is not None:
         state.longitude = extracted['longitude']
     
-    if extracted.get('address_korean'):
-        state.address_korean = extracted['address_korean']
-    
-    if extracted.get('district'):
-        state.district = extracted['district']
-    
-    if extracted.get('dong'):
-        state.dong = extracted['dong']
-    
     if extracted.get('language_pref'):
         state.language_pref = extracted['language_pref']
-    
-    # Detect search mode based on location context
-    if state.location:
-        state.search_mode = detect_search_mode(state.location, state)
     
     return state
 
 
-def filter_by_zone(df: pd.DataFrame, district: str, dong: Optional[str] = None) -> pd.DataFrame:
+def execute_search(state: State, user_message: str) -> Tuple[str, List[Dict]]:
     """
-    Filter facilities by zone (district and optionally dong).
-    Uses fuzzy matching for flexibility.
+    Execute the actual search logic with GPS and geocoding support.
+    Returns (response_text, results_list).
     """
-    if not district:
-        return df
-    
-    print(f"🏘️ Zone filter: district={district}, dong={dong}")
-    
-    # Exact match first
-    if 'file_district' in df.columns:
-        mask = df['file_district'].str.contains(district, na=False, case=False)
-        
-        # Add dong filter if specified
-        if dong and 'file_dong' in df.columns:
-            mask = mask & df['file_dong'].str.contains(dong, na=False, case=False)
-        
-        result = df[mask]
-        
-        if len(result) > 0:
-            print(f"   ✅ Zone filter: {len(df)} → {len(result)}")
-            return result
-    
-    # Fallback: fuzzy match
-    print(f"   ⚠️ No exact zone match, using fuzzy matching")
-    return fuzzy_match_location(district, df)
-
-
-def validate_distance_criteria(df: pd.DataFrame, max_distance: float) -> pd.DataFrame:
-    """
-    Validate that results respect distance criteria.
-    Filters out facilities beyond max_distance.
-    """
-    if 'distance_km' not in df.columns:
-        return df
-    
-    # Remove facilities with invalid/missing distance
-    df_valid = df[df['distance_km'].notna()].copy()
-    
-    # Filter by max distance
-    before = len(df_valid)
-    df_valid = df_valid[df_valid['distance_km'] <= max_distance]
-    
-    if len(df_valid) < before:
-        print(f"   ✂️ Distance validation: {before} → {len(df_valid)} (max {max_distance}km)")
-    
-    return df_valid
-
-
-def execute_search(state: State, user_message: str, max_distance: float = DEFAULT_MAX_DISTANCE) -> Tuple[str, List[Dict]]:
-    """
-    Execute the actual search logic with:
-    - Address verification via Kakao
-    - Zone-based OR distance-based search
-    - Distance validation
-    """
-    print(f"\n{'='*80}")
-    print(f"🔍 SEARCH EXECUTION STARTED")
-    print(f"{'='*80}")
-    print(f"📝 User Query: \"{user_message}\"")
-    print(f"🏥 Medical Specialty: {state.specialty or 'Any'}")
-    print(f"📍 Search Mode: {(state.search_mode or 'auto').upper()}")
-    print(f"🌐 Language Preference: {state.language_pref}")
-    
-    if state.search_mode == 'zone':
-        print(f"🏘️  Zone Target: {state.district or 'N/A'} {state.dong or ''}")
-    elif state.search_mode == 'distance':
-        print(f"📏 Distance Criteria: Within {max_distance}km radius")
-        if state.latitude and state.longitude:
-            print(f"📌 Center Point: ({state.latitude:.6f}, {state.longitude:.6f})")
-    
-    print(f"{'='*80}\n")
-    
     working_df = df_filtered.copy()
     print(f"📊 Starting with {len(working_df)} facilities")
-    print(f"🔍 Search mode: {state.search_mode or 'distance'}")
     
     location_context = ""
     user_lat = state.latitude
     user_lon = state.longitude
     
-    # ===== LOCATION FILTERING =====
-    
-    if state.search_mode == 'zone' and state.district:
-        # ZONE-BASED SEARCH
-        print(f"🏘️ Zone-based search: {state.district} {state.dong or ''}")
-        
-        working_df = filter_by_zone(working_df, state.district, state.dong)
-        
-        if state.dong:
-            location_context = f"in {state.dong}, {state.district}"
-        else:
-            location_context = f"in {state.district}"
-        
-        # Still calculate distances for ranking if GPS available
-        if user_lat and user_lon and 'lat' in working_df.columns and 'lon' in working_df.columns:
-            def calc_distance(row):
-                if pd.notna(row['lat']) and pd.notna(row['lon']):
-                    return haversine(user_lat, user_lon, row['lat'], row['lon'])
-                return 999.0
-            
-            working_df['distance_km'] = working_df.apply(calc_distance, axis=1)
-            working_df = working_df.sort_values('distance_km')  # Sort by distance within zone
-        else:
-            working_df['distance_km'] = 0
-    
-    elif user_lat and user_lon:
-        # GPS-BASED DISTANCE SEARCH
-        print(f"📍 GPS-based distance search: ({user_lat}, {user_lon})")
+    # ===== LOCATION FILTERING WITH GPS =====
+    if user_lat and user_lon:
+        # GPS-based search with distance calculation
+        print(f"📍 GPS-based search: ({user_lat}, {user_lon})")
         
         # Get address from coordinates for context
-        reverse_result = kakao_reverse_geocode(user_lat, user_lon)
-        if reverse_result:
-            location_context = f"near {reverse_result['address_korean']}"
-            print(f"   📍 Reverse geocoded to: {reverse_result['address_korean']}")
-            
-            # Store district/dong if not already set
-            if not state.district:
-                state.district = reverse_result.get('district')
-                state.dong = reverse_result.get('dong')
+        user_address = kakao_reverse_geocode(user_lat, user_lon)
+        if user_address:
+            location_context = f"near {user_address}"
+            print(f"   📍 Reverse geocoded to: {user_address}")
         else:
             location_context = f"near your location"
         
@@ -769,39 +487,40 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
             def calc_distance(row):
                 if pd.notna(row['lat']) and pd.notna(row['lon']):
                     return haversine(user_lat, user_lon, row['lat'], row['lon'])
-                return 999.0
+                else:
+                    return 999.0
             
             working_df['distance_km'] = working_df.apply(calc_distance, axis=1)
             
-            # Filter by distance
+            # Filter to reasonable distance (within 10km by default)
+            max_distance = 10.0
             before_count = len(working_df)
             working_df = working_df[working_df['distance_km'] < max_distance]
             print(f"   ✅ Distance filter (<{max_distance}km): {before_count} → {len(working_df)}")
             
             if len(working_df) == 0:
                 # Expand search radius if nothing found
-                expanded_radius = max_distance * 2
-                print(f"   ⚠️ No results within {max_distance}km, expanding to {expanded_radius}km")
+                print(f"   ⚠️ No results within {max_distance}km, expanding to 20km")
                 working_df = df_filtered.copy()
                 working_df['distance_km'] = working_df.apply(calc_distance, axis=1)
-                working_df = working_df[working_df['distance_km'] < expanded_radius]
-                location_context = f"within {expanded_radius}km of your location"
+                working_df = working_df[working_df['distance_km'] < 20.0]
+                location_context = f"within 20km of your location"
             
-            # Sort by distance
+            # Sort by distance initially
             working_df = working_df.sort_values('distance_km')
         else:
             working_df['distance_km'] = 0
             location_context = "in Seoul"
     
     elif state.location:
-        # TEXT-BASED LOCATION SEARCH (fallback)
+        # Text-based location search with fuzzy matching
         print(f"📍 Text-based location: {state.location}")
         working_df = fuzzy_match_location(state.location, working_df)
         location_context = f"in {state.location}"
         working_df['distance_km'] = 0
     
     else:
-        # CITY-WIDE SEARCH
+        # City-wide search
         print(f"📍 City-wide search (no location specified)")
         location_context = "across Seoul"
         working_df['distance_km'] = 0
@@ -832,8 +551,9 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
                 rag_ranking = {place_id: idx for idx, place_id in enumerate(rag_results['ids'][0])}
                 working_df['relevance_rank'] = working_df['place_id'].apply(lambda pid: rag_ranking.get(pid, 9999))
                 
-                # Combined ranking: distance + relevance (only if distance mode)
-                if state.search_mode != 'zone' and 'distance_km' in working_df.columns and working_df['distance_km'].max() > 0:
+                # Combined ranking: distance + relevance
+                if 'distance_km' in working_df.columns and working_df['distance_km'].max() > 0:
+                    # Normalize both scores to 0-1 range
                     max_rank = working_df['relevance_rank'].max()
                     max_dist = working_df['distance_km'].max()
                     
@@ -852,7 +572,6 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
                     working_df = working_df.sort_values('combined_score', ascending=False)
                     print(f"   ✅ Combined ranking (60% relevance + 40% distance)")
                 else:
-                    # Zone mode: pure relevance ranking
                     working_df = working_df.sort_values('relevance_rank')
                     print(f"   ✅ RAG ranked {(working_df['relevance_rank'] < 9999).sum()}/{len(working_df)}")
             else:
@@ -869,10 +588,6 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
         before = len(working_df)
         working_df = working_df[working_df['has_english'] == True]
         print(f"🌐 English filter: {before} → {len(working_df)}")
-    
-    # ===== FINAL DISTANCE VALIDATION (for distance mode) =====
-    if state.search_mode != 'zone' and 'distance_km' in working_df.columns:
-        working_df = validate_distance_criteria(working_df, max_distance)
     
     # ===== GENERATE RESPONSE =====
     results = []
@@ -962,36 +677,6 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
         else:
             response_text = "검색 조건에 맞는 시설을 찾을 수 없습니다. 다른 전문 분야나 지역을 시도해 보시겠어요?"
     
-    # === SEARCH RESULTS SUMMARY ===
-    print(f"\n{'='*80}")
-    print(f"✅ SEARCH EXECUTION COMPLETED")
-    print(f"{'='*80}")
-    print(f"📊 Results Found: {len(results)}")
-    
-    if len(results) > 0:
-        print(f"\n🏆 TOP RESULTS:")
-        for i, result in enumerate(results, 1):
-            print(f"\n   {i}. {result['name']}")
-            print(f"      Category: {result['category']}")
-            if result.get('district'):
-                print(f"      Location: {result.get('dong', '')} {result['district']}")
-            if result.get('distance_km') and result['distance_km'] > 0:
-                print(f"      Distance: {result['distance_km']:.1f}km")
-            if result.get('has_english'):
-                print(f"      English: ✅ Available")
-            if result.get('relevance_rank', 9999) < 9999:
-                print(f"      Relevance Rank: #{result['relevance_rank'] + 1}")
-    else:
-        print(f"   ⚠️  No facilities matched the search criteria")
-        print(f"   💡 Suggestion: Try expanding search radius or changing specialty")
-    
-    print(f"\n🔍 Search Summary:")
-    print(f"   Specialty Filter: {state.specialty or 'None'}")
-    print(f"   Location Filter: {state.location or state.address_korean or 'City-wide'}")
-    print(f"   Search Mode: {(state.search_mode or 'default').upper()}")
-    print(f"   Language Filter: {'English speakers only' if 'English' in state.language_pref else 'All'}")
-    print(f"{'='*80}\n")
-    
     return response_text, results
 
 
@@ -1055,9 +740,6 @@ async def chat_endpoint(req: ChatRequest):
     if intent == "NEW_SEARCH":
         print("🔄 BRANCH: NEW_SEARCH - Complete state reset to 0")
         
-        # Log current state before reset
-        log_state_detailed(req.current_state, "BEFORE RESET")
-        
         # Detect language from current message before reset
         detected_lang = detect_language(req.message)
         
@@ -1080,9 +762,6 @@ async def chat_endpoint(req: ChatRequest):
         print(f"   ✅ State reset complete - all fields returned to initial values")
         print(f"   📊 New state: specialty=None, location=None, lat=None, lon=None")
         
-        # Log new state after reset
-        log_state_detailed(new_state, "AFTER RESET")
-        
         return {
             "response": response,
             "state": new_state.model_dump(),
@@ -1093,24 +772,18 @@ async def chat_endpoint(req: ChatRequest):
     elif intent == "CHANGE_CRITERIA":
         print("🔀 BRANCH: CHANGE_CRITERIA - Cleansing state")
         
-        # Log state before cleansing
-        log_state_detailed(req.current_state, "BEFORE CHANGE")
-        
         # Hard state cleansing
         cleansed_state = cleanse_state_for_change(req.current_state, req.message)
         cleansed_state.turn_count = current_turn
         
-        # Extract new information (will auto-verify address via Kakao)
+        # Extract new information (will auto-geocode if needed)
         extracted = extract_entities(req.message)
         
         # Merge extracted data into cleansed state
         new_state = merge_extraction_into_state(cleansed_state, extracted)
         
-        # Log state after extraction and merge
-        log_state_detailed(new_state, "AFTER CHANGE & EXTRACTION")
-        
-        # Check if we have enough to search (either location OR GPS OR zone)
-        has_location = bool(new_state.location or (new_state.latitude and new_state.longitude) or new_state.district)
+        # Check if we have enough to search (either location OR GPS)
+        has_location = bool(new_state.location or (new_state.latitude and new_state.longitude))
         
         if new_state.specialty and has_location:
             # Check specialty confidence
@@ -1137,7 +810,6 @@ async def chat_endpoint(req: ChatRequest):
         # Execute search if ready
         results = []
         if new_state.ready_to_search:
-            log_state_detailed(new_state, "EXECUTING SEARCH (CHANGE_CRITERIA)")
             response, results = execute_search(new_state, req.message)
             new_state.search_executed = True
          
@@ -1152,10 +824,7 @@ async def chat_endpoint(req: ChatRequest):
     elif intent == "PROVIDE_INFO":
         print("📝 BRANCH: PROVIDE_INFO - Extracting entities")
         
-        # Log current state
-        log_state_detailed(req.current_state, "BEFORE EXTRACTION")
-        
-        # Extract entities from user message (will auto-verify address via Kakao)
+        # Extract entities from user message (will auto-geocode if needed)
         extracted = extract_entities(req.message)
         
         # Merge into current state (accumulate information)
@@ -1163,11 +832,8 @@ async def chat_endpoint(req: ChatRequest):
         new_state.turn_count = current_turn
         new_state = merge_extraction_into_state(new_state, extracted)
         
-        # Log state after extraction
-        log_state_detailed(new_state, "AFTER EXTRACTION")
-        
-        # Check if we have enough to search (either location OR GPS OR zone)
-        has_location = bool(new_state.location or (new_state.latitude and new_state.longitude) or new_state.district)
+        # Check if we have enough to search (either location OR GPS)
+        has_location = bool(new_state.location or (new_state.latitude and new_state.longitude))
         
         # Determine conversation phase
         if new_state.specialty and has_location:
@@ -1198,7 +864,6 @@ async def chat_endpoint(req: ChatRequest):
         # Execute search if ready
         results = []
         if new_state.ready_to_search:
-            log_state_detailed(new_state, "EXECUTING SEARCH (PROVIDE_INFO)")
             response, results = execute_search(new_state, req.message)
             new_state.search_executed = True
          
@@ -1211,8 +876,6 @@ async def chat_endpoint(req: ChatRequest):
     # === BRANCH 4: CHIT_CHAT ===
     elif intent == "CHIT_CHAT":
         print("💬 BRANCH: CHIT_CHAT - Simple response")
-        
-        log_state_detailed(req.current_state, "CHIT_CHAT")
         
         new_state = req.current_state.model_copy()
         new_state.turn_count = current_turn
@@ -1240,8 +903,6 @@ async def chat_endpoint(req: ChatRequest):
     # === BRANCH 5: HELP_RECOVERY (Stagnation Check) ===
     elif intent == "HELP_RECOVERY":
         print("🆘 BRANCH: HELP_RECOVERY - User is stuck")
-        
-        log_state_detailed(req.current_state, "HELP_RECOVERY")
         
         new_state = req.current_state.model_copy()
         new_state.turn_count = current_turn
@@ -1298,5 +959,5 @@ async def health_check():
         "gps_coverage_percent": round(gps_count / len(df_filtered) * 100, 1) if df_filtered is not None and len(df_filtered) > 0 else 0,
         "vector_db_initialized": vector_db is not None,
         "kakao_geocoding_enabled": bool(KAKAO_REST_API_KEY),
-        "architecture": "Router-Controller with Enhanced Address Verification + Zone/Distance Search"
+        "architecture": "Router-Controller (Tree-Based) + Kakao Geocoding"
     }
