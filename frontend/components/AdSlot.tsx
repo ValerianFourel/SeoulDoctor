@@ -1,13 +1,18 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function AdSlot() {
   const adRef = useRef<HTMLModElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isClient, setIsClient] = useState(false);
   const hasLoaded = useRef(false);
 
   useEffect(() => {
-    if (hasLoaded.current) return;
+    setIsClient(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isClient || hasLoaded.current) return;
 
     const loadAd = () => {
       if (!adRef.current || !containerRef.current) return;
@@ -15,7 +20,7 @@ export default function AdSlot() {
       // Verify the container actually has dimensions
       const containerRect = containerRef.current.getBoundingClientRect();
       if (containerRect.width === 0 || containerRect.height === 0) {
-        console.log("Container not ready, width:", containerRect.width);
+        console.log("Container not ready, skipping ad load");
         return;
       }
 
@@ -24,17 +29,16 @@ export default function AdSlot() {
         ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({});
       } catch (err) {
         console.error("AdSense error:", err);
-        hasLoaded.current = false; // Allow retry
+        hasLoaded.current = false;
       }
     };
 
-    // Use IntersectionObserver to ensure element is actually visible
+    // Use IntersectionObserver to ensure element is visible
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting && entry.intersectionRatio > 0) {
-            // Element is visible, wait a bit for layout to settle
-            setTimeout(loadAd, 200);
+            setTimeout(loadAd, 300);
             observer.disconnect();
           }
         });
@@ -49,7 +53,7 @@ export default function AdSlot() {
     return () => {
       observer.disconnect();
     };
-  }, []);
+  }, [isClient]);
 
   return (
     <div ref={containerRef} className="w-full min-w-[250px]">
