@@ -1,82 +1,65 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 export default function AdSlot() {
   const adRef = useRef<HTMLModElement>(null);
-  const [shouldLoad, setShouldLoad] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const hasLoaded = useRef(false);
 
   useEffect(() => {
-    // Check if element is visible and has width
-    const checkVisibility = () => {
-      if (!adRef.current) return false;
-      
-      const rect = adRef.current.getBoundingClientRect();
-      const styles = window.getComputedStyle(adRef.current.parentElement || adRef.current);
-      
-      // Element must be visible and have width
-      return (
-        styles.display !== 'none' &&
-        styles.visibility !== 'hidden' &&
-        rect.width > 0
-      );
-    };
+    if (hasLoaded.current) return;
 
-    // Wait for layout and check visibility
-    const timer = setTimeout(() => {
-      if (checkVisibility()) {
-        setShouldLoad(true);
+    const loadAd = () => {
+      if (!adRef.current || !containerRef.current) return;
+
+      // Verify the container actually has dimensions
+      const containerRect = containerRef.current.getBoundingClientRect();
+      if (containerRect.width === 0 || containerRect.height === 0) {
+        console.log("Container not ready, width:", containerRect.width);
+        return;
       }
-    }, 100);
 
-    // Also listen for resize events (in case screen size changes)
-    const handleResize = () => {
-      if (!shouldLoad && checkVisibility()) {
-        setShouldLoad(true);
+      try {
+        hasLoaded.current = true;
+        ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({});
+      } catch (err) {
+        console.error("AdSense error:", err);
+        hasLoaded.current = false; // Allow retry
       }
     };
 
-    window.addEventListener('resize', handleResize);
+    // Use IntersectionObserver to ensure element is actually visible
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && entry.intersectionRatio > 0) {
+            // Element is visible, wait a bit for layout to settle
+            setTimeout(loadAd, 200);
+            observer.disconnect();
+          }
+        });
+      },
+      { threshold: 0.01 }
+    );
+
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
 
     return () => {
-      clearTimeout(timer);
-      window.removeEventListener('resize', handleResize);
+      observer.disconnect();
     };
-  }, [shouldLoad]);
-
-  useEffect(() => {
-    if (!shouldLoad || !adRef.current) return;
-
-    try {
-      // Double-check element still has width before pushing
-      const rect = adRef.current.getBoundingClientRect();
-      if (rect.width === 0) {
-        console.log("Ad container has no width, skipping");
-        return;
-      }
-
-      // Check if already initialized
-      if (adRef.current.getAttribute('data-ad-status')) {
-        return;
-      }
-
-      adRef.current.setAttribute('data-ad-status', 'filled');
-      ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({});
-      
-    } catch (e) {
-      console.error("AdSense error:", e);
-    }
-  }, [shouldLoad]);
+  }, []);
 
   return (
-    <div className="w-full flex justify-center">
+    <div ref={containerRef} className="w-full min-w-[250px]">
       <ins
         ref={adRef}
         className="adsbygoogle"
         style={{ 
           display: "block",
           minWidth: "250px",
-          minHeight: "250px",
-          width: "100%"
+          minHeight: "250px"
         }}
         data-ad-client="ca-pub-2786202112029582"
         data-ad-slot="6649005456"

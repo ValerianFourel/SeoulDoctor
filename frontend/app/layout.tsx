@@ -5,7 +5,12 @@ import Footer from "../components/Footer";
 import HeaderMenu from "../components/HeaderMenu";
 import { Analytics } from "@vercel/analytics/react";
 import Script from "next/script";
-import AdSlot from "../components/AdSlot";
+import dynamic from "next/dynamic";
+
+// Dynamically import ConditionalAdSlot with no SSR
+const ConditionalAdSlot = dynamic(() => import("../components/ConditionalAdSlot"), {
+  ssr: false
+});
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -44,12 +49,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        {/* AdSense Script - Only ONE instance */}
+        {/* AdSense Script */}
         <Script
           async
           src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2786202112029582"
           crossOrigin="anonymous"
-          strategy="beforeInteractive"
+          strategy="afterInteractive"
         />
       </head>
       <body className={`${inter.className} flex flex-col min-h-screen bg-gray-50`}>
@@ -60,7 +65,7 @@ export default function RootLayout({
           {/* Left Ad Column (Hidden on Mobile) */}
           <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-end pr-4 pt-6">
             <div className="sticky top-24">
-              <AdSlot />
+              <ConditionalAdSlot />
             </div>
           </aside>
 
@@ -72,7 +77,7 @@ export default function RootLayout({
           {/* Right Ad Column (Hidden on Mobile) */}
           <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-start pl-4 pt-6">
             <div className="sticky top-24">
-              <AdSlot />
+              <ConditionalAdSlot />
             </div>
           </aside>
 
