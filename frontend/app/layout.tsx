@@ -5,7 +5,7 @@ import Footer from "../components/Footer";
 import HeaderMenu from "../components/HeaderMenu";
 import { Analytics } from "@vercel/analytics/react";
 import Script from "next/script";
-import AdSlot from "../components/AdSlot";
+import AdSlotWrapper from "../components/AdSlotWrapper";  // Changed this
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -57,7 +57,7 @@ export default function RootLayout({
           {/* Left Ad Column (Hidden on Mobile) */}
           <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-end pr-4 pt-6">
             <div className="sticky top-24">
-              <AdSlot />
+              <AdSlotWrapper />
             </div>
           </aside>
 
@@ -69,7 +69,7 @@ export default function RootLayout({
           {/* Right Ad Column (Hidden on Mobile) */}
           <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-start pl-4 pt-6">
             <div className="sticky top-24">
-              <AdSlot />
+              <AdSlotWrapper />
             </div>
           </aside>
 
