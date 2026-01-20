@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: "About - Seoul Medical Facility Finder",
   description: "Learn about our mission to help residents and visitors find quality medical care in Seoul",
   icons: {
-    icon: "/img/logo.ico",
+    icon: "/img/home_doctor_care_treatment_support_medical_hehcare_icon_261646.ico",
   },
 };
 

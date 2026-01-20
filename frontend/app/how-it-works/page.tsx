@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: "How It Works - Seoul Medical Facility Finder",
   description: "Learn how our AI-powered chatbot helps you find the right medical facilities in Seoul",
   icons: {
-    icon: "/img/logo.ico",
+    icon: "/img/home_doctor_care_treatment_support_medical_hehcare_icon_261646.ico",
   },
 };
 

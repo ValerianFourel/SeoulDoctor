@@ -1,33 +1,26 @@
+// components/TestAd.tsx
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 
-export default function AdSlot() {
-  const adRef = useRef<HTMLModElement>(null);
-
+export default function TestAd() {
   useEffect(() => {
     try {
-      // Check if the ad has already been loaded in this slot to prevent errors
-      if (adRef.current && adRef.current.innerHTML === "") {
-        ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({});
-      }
+      ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({});
     } catch (e) {
-      console.error("AdSense error", e);
+      console.error("Ad error:", e);
     }
   }, []);
 
   return (
-    // The container constrains the width, but allows height to grow
-    <div className="my-4 w-full flex justify-center overflow-hidden">
+    <div style={{ width: "100%", maxWidth: "728px", margin: "20px auto" }}>
       <ins
-        ref={adRef}
         className="adsbygoogle"
-        // Changed style to block so 'data-ad-format="auto"' works correctly
-        style={{ display: "block", minWidth: "250px", width: "100%" }} 
+        style={{ display: "block" }}
         data-ad-client="ca-pub-2786202112029582"
-        data-ad-slot="6649005456" 
+        data-ad-slot="6649005456"
         data-ad-format="auto"
         data-full-width-responsive="true"
-      ></ins>
+      />
     </div>
   );
 }

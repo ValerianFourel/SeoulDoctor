@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: "Privacy Policy - Seoul Medical Facility Finder",
   description: "How we collect, use, and protect your data when using our medical facility finder service",
   icons: {
-    icon: "/img/logo.ico",
+    icon: "/img/home_doctor_care_treatment_support_medical_hehcare_icon_261646.ico",
   },
 };
 
