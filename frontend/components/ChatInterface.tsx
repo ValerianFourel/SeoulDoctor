@@ -1,18 +1,28 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, MapPin, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
+import { Send, MapPin, Sparkles, ChevronDown, ChevronUp, Bug } from "lucide-react";
 import AdSlot from "./AdSlot";
 
 // --- TYPES ---
 type State = {
   specialty: string | null;
+  specialty_confidence: number;
   location: string | null;
-  lat_lon: number[] | null;
-  willingness_to_travel: string;
+  latitude: number | null;
+  longitude: number | null;
+  address_korean: string | null;
+  district: string | null;
+  dong: string | null;
   language_pref: string;
+  max_distance_km: number;
+  willingness_to_travel: string;
   keywords: string[];
   ready_to_search: boolean;
+  search_executed: boolean;
+  search_mode: string | null;
+  conversation_phase: string;
+  turn_count: number;
 };
 
 type Message = {
@@ -32,14 +42,122 @@ type FacilityResult = {
 
 const TRAVEL_OPTIONS = ["Neighborhood", "Nearby", "City-wide", "Don't Care"];
 
+// ============ TEMPORARY DEBUG UTILITIES - REMOVE BEFORE PRODUCTION ============
+const DEBUG_MODE = false; // Set to false to disable all debug features
+
+const logStateToConsole = (state: State, label: string = "LLM Response State") => {
+  if (!DEBUG_MODE) return;
+  
+  console.log(`\n${'='.repeat(80)}`);
+  console.log(`🤖 ${label.toUpperCase()}`);
+  console.log(`${'='.repeat(80)}`);
+  
+  // Group 1: Core Search Info
+  console.log(`\n📋 SEARCH CRITERIA:`);
+  console.log(`   Specialty: ${state.specialty || 'Not set'} (confidence: ${state.specialty_confidence || 0})`);
+  console.log(`   Location: ${state.location || 'Not set'}`);
+  console.log(`   Search Mode: ${state.search_mode || 'auto'}`);
+  
+  // Group 2: Location Details
+  console.log(`\n📍 LOCATION DETAILS:`);
+  console.log(`   GPS: ${state.latitude && state.longitude ? `${state.latitude.toFixed(4)}, ${state.longitude.toFixed(4)}` : 'Not available'}`);
+  console.log(`   Address (KR): ${state.address_korean || 'Not set'}`);
+  console.log(`   District: ${state.district || 'Not set'}`);
+  console.log(`   Dong: ${state.dong || 'Not set'}`);
+  console.log(`   Max Distance: ${state.max_distance_km}km`);
+  
+  // Group 3: Conversation State
+  console.log(`\n💬 CONVERSATION STATE:`);
+  console.log(`   Phase: ${state.conversation_phase}`);
+  console.log(`   Turn: ${state.turn_count}`);
+  console.log(`   Language: ${state.language_pref}`);
+  console.log(`   Ready to Search: ${state.ready_to_search ? '✅' : '❌'}`);
+  console.log(`   Search Executed: ${state.search_executed ? '✅' : '❌'}`);
+  
+  // Group 4: Full Object (collapsed)
+  console.log(`\n🔍 FULL STATE OBJECT:`);
+  console.log(state);
+  
+  console.log(`\n${'='.repeat(80)}\n`);
+};
+
+const StateDebugPanel = ({ state }: { state: State }) => {
+  if (!DEBUG_MODE) return null;
+  
+  const [isExpanded, setIsExpanded] = useState(false);
+  
+  return (
+    <div className="fixed bottom-20 right-4 z-50 max-w-md">
+      <div className="bg-slate-900 text-white rounded-lg shadow-2xl border border-slate-700">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="w-full px-4 py-2 flex items-center justify-between hover:bg-slate-800 transition-colors rounded-t-lg"
+        >
+          <div className="flex items-center gap-2">
+            <Bug size={16} className="text-yellow-400" />
+            <span className="text-xs font-bold">DEBUG STATE</span>
+          </div>
+          <ChevronDown 
+            size={16} 
+            className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} 
+          />
+        </button>
+        
+        {isExpanded && (
+          <div className="p-4 text-xs space-y-3 max-h-96 overflow-y-auto">
+            {/* Core Search */}
+            <div>
+              <div className="text-yellow-400 font-bold mb-1">🔍 SEARCH</div>
+              <div className="space-y-1 text-slate-300">
+                <div>Specialty: <span className="text-white">{state.specialty || '—'}</span></div>
+                <div>Confidence: <span className="text-white">{state.specialty_confidence || 0}</span></div>
+                <div>Mode: <span className="text-white">{state.search_mode || 'auto'}</span></div>
+              </div>
+            </div>
+            
+            {/* Location */}
+            <div>
+              <div className="text-blue-400 font-bold mb-1">📍 LOCATION</div>
+              <div className="space-y-1 text-slate-300">
+                <div>Input: <span className="text-white">{state.location || '—'}</span></div>
+                <div>GPS: <span className="text-white">
+                  {state.latitude && state.longitude 
+                    ? `${state.latitude.toFixed(4)}, ${state.longitude.toFixed(4)}`
+                    : '—'}
+                </span></div>
+                <div>District: <span className="text-white">{state.district || '—'}</span></div>
+                <div>Dong: <span className="text-white">{state.dong || '—'}</span></div>
+                <div>Max Dist: <span className="text-white">{state.max_distance_km}km</span></div>
+              </div>
+            </div>
+            
+            {/* Conversation */}
+            <div>
+              <div className="text-green-400 font-bold mb-1">💬 CONVERSATION</div>
+              <div className="space-y-1 text-slate-300">
+                <div>Phase: <span className="text-white">{state.conversation_phase}</span></div>
+                <div>Turn: <span className="text-white">{state.turn_count}</span></div>
+                <div>Language: <span className="text-white">{state.language_pref}</span></div>
+                <div>Ready: <span className={state.ready_to_search ? 'text-green-400' : 'text-red-400'}>
+                  {state.ready_to_search ? '✅' : '❌'}
+                </span></div>
+                <div>Executed: <span className={state.search_executed ? 'text-green-400' : 'text-red-400'}>
+                  {state.search_executed ? '✅' : '❌'}
+                </span></div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+// ============================================================================
+
 // --- HELPER FUNCTION FOR FORMATTING AI RESPONSES ---
 const formatAIResponse = (text: string): string => {
-  // First, remove ** markers and add newline after bold text
   let formatted = text.replace(/\*\*([^*]+)\*\*/g, '$1\n');
-  
-  // Then, add newline before numbered lists (1. 2. 3. etc.)
   formatted = formatted.replace(/(\d+\.)/g, '\n$1');
-  
   return formatted;
 };
 
@@ -62,7 +180,6 @@ const getCategoryEnglish = (koreanCategory: string): string => {
     '비뇨기과': 'Urology',
   };
 
-  // Find matching category
   for (const [korean, english] of Object.entries(categoryMap)) {
     if (koreanCategory.includes(korean)) {
       return english;
@@ -88,14 +205,23 @@ export default function ChatInterface() {
   const [travelRadius, setTravelRadius] = useState("Nearby"); 
   const [currentState, setCurrentState] = useState<State>({
     specialty: null,
+    specialty_confidence: 0,
     location: null,
-    lat_lon: null,
-    willingness_to_travel: "Nearby",
+    latitude: null,
+    longitude: null,
+    address_korean: null,
+    district: null,
+    dong: null,
     language_pref: "English",
+    max_distance_km: 5,
+    willingness_to_travel: "Nearby",
     keywords: [],
     ready_to_search: false,
+    search_executed: false,
+    search_mode: null,
+    conversation_phase: "greeting",
+    turn_count: 0,
   });
-
 
   const toggleFacilityExpand = (placeId: string) => {
     setExpandedFacilities(prev => {
@@ -124,6 +250,13 @@ export default function ChatInterface() {
       willingness_to_travel: travelRadius,
     };
 
+    // ============ TEMPORARY LOGGING - REMOVE BEFORE PRODUCTION ============
+    if (DEBUG_MODE) {
+      console.log(`\n📤 SENDING STATE TO BACKEND:`);
+      console.log(stateToSend);
+    }
+    // ======================================================================
+
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/chat`, {
         method: "POST",
@@ -136,7 +269,13 @@ export default function ChatInterface() {
 
       const data = await response.json();
 
-      if (data.state) setCurrentState(data.state);
+      if (data.state) {
+        setCurrentState(data.state);
+        
+        // ============ TEMPORARY LOGGING - REMOVE BEFORE PRODUCTION ============
+        logStateToConsole(data.state, "LLM Response State");
+        // ======================================================================
+      }
       
       setMessages((prev) => [
         ...prev,
@@ -170,7 +309,8 @@ export default function ChatInterface() {
       (position) => {
         const { latitude, longitude } = position.coords;
         handleSendMessage("User shared location coordinates.", {
-          lat_lon: [latitude, longitude],
+          latitude: latitude,
+          longitude: longitude,
           location: "Current Location",
         });
       },
@@ -183,6 +323,10 @@ export default function ChatInterface() {
 
   return (
     <div className="flex flex-col h-screen w-full bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
+      
+      {/* ============ TEMPORARY DEBUG PANEL - REMOVE BEFORE PRODUCTION ============ */}
+      <StateDebugPanel state={currentState} />
+      {/* ========================================================================== */}
       
       {/* --- HEADER --- */}
       <div className="sticky top-0 z-10 backdrop-blur-xl bg-white/80 border-b border-slate-200/50">
