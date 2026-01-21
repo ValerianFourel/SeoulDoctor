@@ -3,6 +3,8 @@
 import { useState, useRef } from "react";
 import { Send, MapPin, Sparkles } from "lucide-react";
 import AdSlot from "./AdSlot";
+import Footer from "./Footer";
+import DisclaimerBanner from "./DisclaimerBanner";
 
 // --- TYPES ---
 type State = {
@@ -216,7 +218,7 @@ export default function ChatInterface() {
         </div>
       </div>
 
-      {/* --- CHAT AREA --- */}
+      {/* --- CHAT AREA (SCROLLABLE WITH FOOTER INSIDE) --- */}
       <div className="flex-1 overflow-y-auto">
         <div className="w-full px-3 sm:px-6 py-4 sm:py-8">
           <div className="space-y-4 sm:space-y-6">
@@ -271,12 +273,10 @@ export default function ChatInterface() {
                               <div className="p-3 sm:p-4">
                                 <div className="flex justify-between items-start mb-1.5 sm:mb-2">
                                   <div className="flex-1">
-                                    {/* Korean Name */}
                                     <h3 className="font-bold text-slate-900 text-sm sm:text-base mb-1">
                                       {facility.name}
                                     </h3>
                                     
-                                    {/* Category in Korean and English */}
                                     <div className="flex flex-wrap gap-1.5 sm:gap-2 items-center">
                                       <span className="inline-block px-1.5 py-0.5 sm:px-2 sm:py-1 bg-blue-50 text-blue-600 text-[10px] sm:text-xs font-semibold rounded-md">
                                         {facility.category}
@@ -366,12 +366,18 @@ export default function ChatInterface() {
             <div ref={scrollRef} />
           </div>
         </div>
+
+        {/* DISCLAIMER AND FOOTER - INSIDE SCROLLABLE AREA */}
+        <div className="w-full px-3 sm:px-6 pb-4">
+          <DisclaimerBanner />
+        </div>
+        <Footer />
       </div>
 
-      {/* --- AD BANNER + INPUT AREA (NO GAPS) --- */}
+      {/* --- AD BANNER + INPUT AREA (STICKY BOTTOM) --- */}
       <div className="sticky bottom-0 bg-white border-t border-slate-200/50 z-20">
         
-        {/* ▼▼▼ MOBILE AD BANNER - DIRECTLY ABOVE INPUT (NO SPACE) ▼▼▼ */}
+        {/* MOBILE AD BANNER */}
         <div className="block xl:hidden w-full border-b border-slate-200/30">
           <div className="w-full h-[50px] flex items-center justify-center bg-gradient-to-r from-slate-50/50 to-slate-100/50">
             <div className="scale-[0.6] origin-center">
@@ -380,7 +386,7 @@ export default function ChatInterface() {
           </div>
         </div>
         
-        {/* Input Controls - Compact, No Extra Space */}
+        {/* Input Controls */}
         <div className="w-full px-3 sm:px-6 py-2 sm:py-3">
           <div className="flex items-center gap-2 sm:gap-3">
             <button

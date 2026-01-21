@@ -61,8 +61,8 @@ export default function RootLayout({
             </div>
           </aside>
 
-          {/* Center Content (Chat Interface) - Takes full viewport height on mobile */}
-          <div className="w-full max-w-4xl flex flex-col bg-white shadow-sm min-h-screen xl:min-h-[calc(100vh-64px)]">
+          {/* Center Content (Chat Interface) */}
+          <div className="w-full max-w-4xl flex flex-col bg-white shadow-sm min-h-screen">
             {children}
           </div>
 
@@ -75,10 +75,6 @@ export default function RootLayout({
 
         </main>
         
-        {/* Footer - Hidden on mobile, visible on desktop below content */}
-        <div className="hidden xl:block">
-          <Footer />
-        </div>
         <Analytics />
       </body>
     </html>
