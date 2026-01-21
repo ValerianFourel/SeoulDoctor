@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Send, MapPin, Sparkles, ChevronDown, ChevronUp, Bug } from "lucide-react";
+import { useState, useRef } from "react";
+import { Send, MapPin, Sparkles } from "lucide-react";
 import AdSlot from "./AdSlot";
 
 // --- TYPES ---
@@ -39,120 +39,6 @@ type FacilityResult = {
   english_confidence_score: number;
   Summaries: string[];
 };
-
-const TRAVEL_OPTIONS = ["Neighborhood", "Nearby", "City-wide", "Don't Care"];
-
-// ============ TEMPORARY DEBUG UTILITIES - REMOVE BEFORE PRODUCTION ============
-const DEBUG_MODE = false; // Set to false to disable all debug features
-
-const logStateToConsole = (state: State, label: string = "LLM Response State") => {
-  if (!DEBUG_MODE) return;
-  
-  console.log(`\n${'='.repeat(80)}`);
-  console.log(`🤖 ${label.toUpperCase()}`);
-  console.log(`${'='.repeat(80)}`);
-  
-  // Group 1: Core Search Info
-  console.log(`\n📋 SEARCH CRITERIA:`);
-  console.log(`   Specialty: ${state.specialty || 'Not set'} (confidence: ${state.specialty_confidence || 0})`);
-  console.log(`   Location: ${state.location || 'Not set'}`);
-  console.log(`   Search Mode: ${state.search_mode || 'auto'}`);
-  
-  // Group 2: Location Details
-  console.log(`\n📍 LOCATION DETAILS:`);
-  console.log(`   GPS: ${state.latitude && state.longitude ? `${state.latitude.toFixed(4)}, ${state.longitude.toFixed(4)}` : 'Not available'}`);
-  console.log(`   Address (KR): ${state.address_korean || 'Not set'}`);
-  console.log(`   District: ${state.district || 'Not set'}`);
-  console.log(`   Dong: ${state.dong || 'Not set'}`);
-  console.log(`   Max Distance: ${state.max_distance_km}km`);
-  
-  // Group 3: Conversation State
-  console.log(`\n💬 CONVERSATION STATE:`);
-  console.log(`   Phase: ${state.conversation_phase}`);
-  console.log(`   Turn: ${state.turn_count}`);
-  console.log(`   Language: ${state.language_pref}`);
-  console.log(`   Ready to Search: ${state.ready_to_search ? '✅' : '❌'}`);
-  console.log(`   Search Executed: ${state.search_executed ? '✅' : '❌'}`);
-  
-  // Group 4: Full Object (collapsed)
-  console.log(`\n🔍 FULL STATE OBJECT:`);
-  console.log(state);
-  
-  console.log(`\n${'='.repeat(80)}\n`);
-};
-
-const StateDebugPanel = ({ state }: { state: State }) => {
-  if (!DEBUG_MODE) return null;
-  
-  const [isExpanded, setIsExpanded] = useState(false);
-  
-  return (
-    <div className="fixed bottom-20 right-4 z-50 max-w-md">
-      <div className="bg-slate-900 text-white rounded-lg shadow-2xl border border-slate-700">
-        <button
-          onClick={() => setIsExpanded(!isExpanded)}
-          className="w-full px-4 py-2 flex items-center justify-between hover:bg-slate-800 transition-colors rounded-t-lg"
-        >
-          <div className="flex items-center gap-2">
-            <Bug size={16} className="text-yellow-400" />
-            <span className="text-xs font-bold">DEBUG STATE</span>
-          </div>
-          <ChevronDown 
-            size={16} 
-            className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} 
-          />
-        </button>
-        
-        {isExpanded && (
-          <div className="p-4 text-xs space-y-3 max-h-96 overflow-y-auto">
-            {/* Core Search */}
-            <div>
-              <div className="text-yellow-400 font-bold mb-1">🔍 SEARCH</div>
-              <div className="space-y-1 text-slate-300">
-                <div>Specialty: <span className="text-white">{state.specialty || '—'}</span></div>
-                <div>Confidence: <span className="text-white">{state.specialty_confidence || 0}</span></div>
-                <div>Mode: <span className="text-white">{state.search_mode || 'auto'}</span></div>
-              </div>
-            </div>
-            
-            {/* Location */}
-            <div>
-              <div className="text-blue-400 font-bold mb-1">📍 LOCATION</div>
-              <div className="space-y-1 text-slate-300">
-                <div>Input: <span className="text-white">{state.location || '—'}</span></div>
-                <div>GPS: <span className="text-white">
-                  {state.latitude && state.longitude 
-                    ? `${state.latitude.toFixed(4)}, ${state.longitude.toFixed(4)}`
-                    : '—'}
-                </span></div>
-                <div>District: <span className="text-white">{state.district || '—'}</span></div>
-                <div>Dong: <span className="text-white">{state.dong || '—'}</span></div>
-                <div>Max Dist: <span className="text-white">{state.max_distance_km}km</span></div>
-              </div>
-            </div>
-            
-            {/* Conversation */}
-            <div>
-              <div className="text-green-400 font-bold mb-1">💬 CONVERSATION</div>
-              <div className="space-y-1 text-slate-300">
-                <div>Phase: <span className="text-white">{state.conversation_phase}</span></div>
-                <div>Turn: <span className="text-white">{state.turn_count}</span></div>
-                <div>Language: <span className="text-white">{state.language_pref}</span></div>
-                <div>Ready: <span className={state.ready_to_search ? 'text-green-400' : 'text-red-400'}>
-                  {state.ready_to_search ? '✅' : '❌'}
-                </span></div>
-                <div>Executed: <span className={state.search_executed ? 'text-green-400' : 'text-red-400'}>
-                  {state.search_executed ? '✅' : '❌'}
-                </span></div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-// ============================================================================
 
 // --- HELPER FUNCTION FOR FORMATTING AI RESPONSES ---
 const formatAIResponse = (text: string): string => {
@@ -198,11 +84,9 @@ export default function ChatInterface() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [expandedFacilities, setExpandedFacilities] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const [travelRadius, setTravelRadius] = useState("Nearby"); 
   const [currentState, setCurrentState] = useState<State>({
     specialty: null,
     specialty_confidence: 0,
@@ -247,15 +131,7 @@ export default function ChatInterface() {
     const stateToSend = {
       ...currentState,
       ...stateOverride,
-      willingness_to_travel: travelRadius,
     };
-
-    // ============ TEMPORARY LOGGING - REMOVE BEFORE PRODUCTION ============
-    if (DEBUG_MODE) {
-      console.log(`\n📤 SENDING STATE TO BACKEND:`);
-      console.log(stateToSend);
-    }
-    // ======================================================================
 
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/chat`, {
@@ -271,10 +147,6 @@ export default function ChatInterface() {
 
       if (data.state) {
         setCurrentState(data.state);
-        
-        // ============ TEMPORARY LOGGING - REMOVE BEFORE PRODUCTION ============
-        logStateToConsole(data.state, "LLM Response State");
-        // ======================================================================
       }
       
       setMessages((prev) => [
@@ -324,69 +196,28 @@ export default function ChatInterface() {
   return (
     <div className="flex flex-col h-full w-full bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
       
-      {/* ============ TEMPORARY DEBUG PANEL - REMOVE BEFORE PRODUCTION ============ */}
-      <StateDebugPanel state={currentState} />
-      {/* ========================================================================== */}
-      
       {/* --- HEADER --- */}
       <div className="sticky top-0 z-10 backdrop-blur-xl bg-white/80 border-b border-slate-200/50">
         <div className="w-full px-4 sm:px-6 py-3 sm:py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 sm:gap-3">
-              <div className="relative">
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl blur-sm opacity-75"></div>
-                <div className="relative bg-gradient-to-br from-blue-500 to-purple-600 p-1.5 sm:p-2 rounded-xl">
-                  <Sparkles className="text-white" size={16} />
-                </div>
-              </div>
-              <div>
-                <h1 className="font-bold text-base sm:text-xl bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
-                  SeoulMedBot
-                </h1>
-                <p className="text-[10px] sm:text-xs text-slate-500">AI Medical Concierge</p>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl blur-sm opacity-75"></div>
+              <div className="relative bg-gradient-to-br from-blue-500 to-purple-600 p-1.5 sm:p-2 rounded-xl">
+                <Sparkles className="text-white" size={16} />
               </div>
             </div>
-            
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-slate-100 hover:bg-slate-200 transition-all text-xs sm:text-sm font-medium text-slate-700 z-10"
-            >
-              <span className="text-sm sm:text-base">⚙️</span>
-              <span className="hidden sm:inline">Settings</span>
-              <ChevronDown className={`transition-transform ${showSettings ? 'rotate-180' : ''} hidden sm:block`} size={14} />
-            </button>
+            <div>
+              <h1 className="font-bold text-base sm:text-xl bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
+                SeoulMedBot
+              </h1>
+              <p className="text-[10px] sm:text-xs text-slate-500">AI Medical Concierge</p>
+            </div>
           </div>
-          
-          {/* Settings Panel */}
-          {showSettings && (
-            <div className="mt-3 sm:mt-4 p-3 sm:p-4 rounded-xl bg-slate-50 border border-slate-200 animate-slideDown">
-              <div className="flex flex-col gap-2 sm:gap-3">
-                <div>
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-600 mb-1.5 sm:mb-2 block">Search Radius</label>
-                  <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
-                    {TRAVEL_OPTIONS.map((opt) => (
-                      <button
-                        key={opt}
-                        onClick={() => setTravelRadius(opt)}
-                        className={`py-2 sm:py-2.5 px-2 sm:px-3 rounded-lg text-[10px] sm:text-xs font-semibold transition-all ${
-                          travelRadius === opt
-                            ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg shadow-blue-500/50"
-                            : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
-                        }`}
-                      >
-                        {opt === "Neighborhood" ? "< 2km" : opt === "Nearby" ? "< 5km" : opt === "City-wide" ? "< 10km" : "Any"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
       {/* --- CHAT AREA --- */}
-      <div className="flex-1 overflow-y-auto pb-4">
+      <div className="flex-1 overflow-y-auto">
         <div className="w-full px-3 sm:px-6 py-4 sm:py-8">
           <div className="space-y-4 sm:space-y-6">
             {messages.map((msg, idx) => (
@@ -477,11 +308,11 @@ export default function ChatInterface() {
                                       >
                                         {isExpanded ? (
                                           <>
-                                            Show less <ChevronUp size={12} />
+                                            Show less <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
                                           </>
                                         ) : (
                                           <>
-                                            Read more <ChevronDown size={12} />
+                                            Read more <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                                           </>
                                         )}
                                       </button>
@@ -537,60 +368,54 @@ export default function ChatInterface() {
         </div>
       </div>
 
-      {/* --- INPUT AREA WITH AD ABOVE --- */}
-      <div className="sticky bottom-0 backdrop-blur-xl bg-white/90 border-t border-slate-200/50 z-20">
-        <div className="w-full px-3 sm:px-6">
-          
-          {/* ▼▼▼ MOBILE AD BANNER - ABOVE INPUT ▼▼▼ */}
-          <div className="block xl:hidden w-full py-2 border-b border-slate-200/50">
-            <div className="w-full h-[50px] overflow-hidden rounded-md bg-gradient-to-r from-slate-50 to-slate-100 flex items-center justify-center">
-              <div className="scale-[0.6] origin-center w-full flex justify-center">
-                <AdSlot />
-              </div>
+      {/* --- AD BANNER + INPUT AREA (NO GAPS) --- */}
+      <div className="sticky bottom-0 bg-white border-t border-slate-200/50 z-20">
+        
+        {/* ▼▼▼ MOBILE AD BANNER - DIRECTLY ABOVE INPUT (NO SPACE) ▼▼▼ */}
+        <div className="block xl:hidden w-full border-b border-slate-200/30">
+          <div className="w-full h-[50px] flex items-center justify-center bg-gradient-to-r from-slate-50/50 to-slate-100/50">
+            <div className="scale-[0.6] origin-center">
+              <AdSlot />
             </div>
           </div>
-          
-          {/* Input Controls */}
-          <div className="py-3 sm:py-4">
-            <div className="flex items-end gap-2 sm:gap-3">
-              <button
-                onClick={handleLocationClick}
-                className="p-2 sm:p-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-blue-300 transition-all text-slate-600 hover:text-blue-600 group"
-                title="Share Location"
-              >
-                <MapPin size={18} className="sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
-              </button>
-              
-              <div className="flex-1 relative">
-                <input
-                  type="text"
-                  className="w-full px-3 py-2.5 sm:px-5 sm:py-3.5 pr-10 sm:pr-12 rounded-xl bg-white border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all text-slate-800 placeholder-slate-400 outline-none text-xs sm:text-base"
-                  placeholder="Describe what you need..."
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSendMessage(input)}
-                />
-              </div>
-
-              <button
-                onClick={() => handleSendMessage(input)}
-                disabled={!input.trim() || loading}
-                className={`p-2.5 sm:p-3.5 rounded-xl transition-all ${
-                  input.trim() && !loading 
-                    ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg shadow-blue-500/50 hover:shadow-xl hover:shadow-blue-500/50 hover:scale-105" 
-                    : "bg-slate-200 text-slate-400 cursor-not-allowed"
-                }`}
-              >
-                <Send size={18} className="sm:w-5 sm:h-5" />
-              </button>
-            </div>
-            
-            <p className="text-[10px] sm:text-xs text-slate-400 text-center mt-2 sm:mt-3">
-              SeoulMedBot can make mistakes. Verify important medical information.
-            </p>
-          </div>
-          
         </div>
+        
+        {/* Input Controls - Compact, No Extra Space */}
+        <div className="w-full px-3 sm:px-6 py-2 sm:py-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              onClick={handleLocationClick}
+              className="p-2 sm:p-3 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-blue-300 transition-all text-slate-600 hover:text-blue-600"
+              title="Share Location"
+            >
+              <MapPin size={18} className="sm:w-5 sm:h-5" />
+            </button>
+            
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                className="w-full px-3 py-2 sm:px-5 sm:py-3 rounded-xl bg-slate-50 border border-slate-200 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20 transition-all text-slate-800 placeholder-slate-400 outline-none text-sm sm:text-base"
+                placeholder="Describe what you need..."
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSendMessage(input)}
+              />
+            </div>
+
+            <button
+              onClick={() => handleSendMessage(input)}
+              disabled={!input.trim() || loading}
+              className={`p-2 sm:p-3 rounded-xl transition-all ${
+                input.trim() && !loading 
+                  ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-105" 
+                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
+              }`}
+            >
+              <Send size={18} className="sm:w-5 sm:h-5" />
+            </button>
+          </div>
+        </div>
+        
       </div>
     </div>
   ); 
