@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Seoul Medical Facility Finder",
+   title: "Seoul Medical Facility Finder",
     description: "Find the best English-speaking medical facilities in Seoul with AI assistance",
   },
 };
