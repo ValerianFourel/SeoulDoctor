@@ -101,7 +101,6 @@ RAG SEMANTIC SEARCH:
 - Returns semantic relevance ranking
 - Combined with distance for final scoring
 """
-
 import json
 import pandas as pd
 import numpy as np
@@ -121,6 +120,8 @@ from utils import safe_convert_to_python
 from prompt import ROUTER_PROMPT, EXTRACTION_PROMPT_V2, GENERATION_PROMPT
 from deterministic import get_greeting_message,get_reset_confirmation,generate_change_acknowledgment, ask_for_missing_info,ask_for_specialty_clarification,generate_chit_chat_response, generate_recovery_prompt,format_response 
 import re
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
 import logging
@@ -162,6 +163,10 @@ DEFAULT_LAT = 37.5219  # Yeouido
 DEFAULT_LON = 126.9243
 DEFAULT_MAX_DISTANCE = 5.0  # km - default search radius
 
+# --- GLOBAL LANGUAGE STATE ---
+LANGUAGE = "English"  # Semi-fixed fixture, updated per message
+
+# Global data structures
 vector_db = None
 df_facilities = None  # Full dataset
 df_filtered = None    # Filtered subset (Summaries not null)
@@ -175,7 +180,32 @@ def print_separator(char='=', length=100):
     logger.info(char * length)
 
 
-# --- 3. GOOGLE MAPS API FUNCTIONS ---
+# --- 3. LANGUAGE DETECTION ---
+
+def detect_language(message: str) -> str:
+    """
+    Simple character-based language detection.
+    If 50%+ characters are Roman (ASCII letters), return English.
+    Otherwise, return Korean.
+    """
+    if not message or len(message.strip()) == 0:
+        return "English"  # Default
+    
+    # Count ASCII letters (a-z, A-Z)
+    roman_chars = sum(1 for char in message if char.isalpha() and ord(char) < 128)
+    total_chars = len(message.replace(" ", ""))  # Exclude spaces
+    
+    if total_chars == 0:
+        return "English"
+    
+    roman_ratio = roman_chars / total_chars
+    detected = "English" if roman_ratio >= 0.5 else "Korean"
+    
+    logger.info(f"Language detected: {detected} (Roman: {roman_ratio:.1%})")
+    return detected
+
+
+# --- 4. GOOGLE MAPS API FUNCTIONS ---
 
 def google_maps_geocode(address: str, add_seoul: bool = False) -> Optional[Dict[str, Any]]:
     """
@@ -406,7 +436,7 @@ def google_maps_place_details(place_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-# --- 4. ENHANCED KAKAO API FUNCTIONS (kept as fallback) ---
+# --- 5. ENHANCED KAKAO API FUNCTIONS (kept as fallback) ---
 
 def kakao_geocode(address: str) -> Optional[Dict[str, Any]]:
     """
@@ -612,7 +642,7 @@ def detect_search_mode(location_text: str, state: State) -> str:
         return 'distance'
 
 
-# --- 4. DATA LOADING ---
+# --- 6. DATA LOADING ---
 
 def download_and_cache_parquet():
     """Download parquet from HuggingFace and cache locally."""
@@ -685,7 +715,7 @@ def build_context_for_llm(df_subset: pd.DataFrame, n_results: int = 10) -> str:
     return "\n\n---\n\n".join(context_parts)
 
 
-# --- 5. LIFESPAN (STARTUP) ---
+# --- 7. LIFESPAN (STARTUP) ---
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -806,19 +836,6 @@ app.add_middleware(
 # HELPER FUNCTIONS
 # ==========================================
 
-def detect_language(message: str) -> str:
-    """Simple language detection."""
-    has_korean = any(0xAC00 <= ord(char) <= 0xD7A3 for char in message)
-    has_english = any(char.isalpha() and ord(char) < 128 for char in message)
-
-    if has_english:
-        return "English"
-    elif has_korean:
-        return "Korean"
-    else:
-        return "English"  # Default
-
-
 def _format_location_summary(state: State) -> str:
     """Helper to format location data for logging."""
     parts = []
@@ -843,7 +860,7 @@ def _format_location_summary(state: State) -> str:
 
 def standardize_and_fill_state(state: State) -> State:
     """
-    Standardize and fill missing location fields in state using Kakao API.
+    Standardize and fill missing location fields in state using geocoding APIs.
     This ensures all location data is complete and consistent.
     
     Priority:
@@ -1036,10 +1053,12 @@ def cleanse_state_for_change(current_state: State, user_message: str) -> State:
 
 def extract_entities(user_message: str) -> Dict[str, Any]:
     """
-    Call the EXTRACTION_PROMPT_V2 (pure extractor) and verify address via Kakao API.
+    Call the extraction LLM and verify address via geocoding APIs.
     Matches user intent to actual specialties from parquet data.
     This is a leaf node that only extracts, doesn't reason about flow.
     """
+    global LANGUAGE
+    
     # Build list of available specialties for LLM matching
     specialty_list = ", ".join(available_specialties[:50]) if available_specialties else "No specialties available"
     
@@ -1055,8 +1074,7 @@ Return JSON with:
 {{
   "specialty": "exact match from available specialties above, or null",
   "specialty_confidence": 0.0-1.0 (how confident the match is),
-  "location": "any location mentioned (address, district, place name, landmark)",
-  "language_pref": "English Preferred" or "Korean"
+  "location": "any location mentioned (address, district, place name, landmark)"
 }}
 
 RULES:
@@ -1090,22 +1108,22 @@ Examples:
         if extracted.get('specialty'):
             logger.info(f"🎯 Specialty match: '{extracted['specialty']}' (confidence: {extracted.get('specialty_confidence', 0):.2f})")
         
-        # ENHANCED: Verify and standardize address via Kakao API
+        # ENHANCED: Verify and standardize address via geocoding APIs
         if extracted.get('location'):
             logger.debug(f"📍 Location extraction: '{extracted['location']}'")
             verified = verify_and_standardize_address(extracted['location'])
             
             if verified:
-                # Replace with verified Kakao data
+                # Replace with verified data
                 extracted['latitude'] = verified['lat']
                 extracted['longitude'] = verified['lon']
                 extracted['address_korean'] = verified['address_korean']
                 extracted['district'] = verified['district']
                 extracted['dong'] = verified['dong']
                 
-                logger.info(f"✅ Kakao verified: {verified['district']} ({verified['lat']:.4f}, {verified['lon']:.4f})")
+                logger.info(f"✅ Geocoding verified: {verified['district']} ({verified['lat']:.4f}, {verified['lon']:.4f})")
             else:
-                logger.warning(f"⚠️ Kakao could not verify: '{extracted['location']}'")
+                logger.warning(f"⚠️ Could not verify: '{extracted['location']}'")
         
         return extracted
         
@@ -1139,7 +1157,7 @@ Examples: "강남구", "Gangnam", "서울역", "역삼동"
         )
         extracted = json.loads(completion.choices[0].message.content)
         
-        # Verify via Kakao
+        # Verify via geocoding
         if extracted.get('location'):
             verified = verify_and_standardize_address(extracted['location'])
             
@@ -1226,9 +1244,6 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any]) -> Stat
     if extracted.get('dong'):
         state.dong = extracted['dong']
     
-    if extracted.get('language_pref'):
-        state.language_pref = extracted['language_pref']
-    
     # Detect search mode based on location context
     if state.location:
         state.search_mode = detect_search_mode(state.location, state)
@@ -1289,16 +1304,19 @@ def validate_distance_criteria(df: pd.DataFrame, max_distance: float) -> pd.Data
 def execute_search(state: State, user_message: str, max_distance: float = DEFAULT_MAX_DISTANCE) -> Tuple[str, List[Dict]]:
     """
     Execute the actual search logic with:
-    - Address verification via Kakao
+    - Address verification via geocoding
     - Zone-based OR distance-based search
     - Distance validation
     """
+    global LANGUAGE
+    
     logger.info("=" * 60)
     logger.info("🔍 SEARCH STARTED")
     logger.info(f"Query: \"{user_message[:50]}...\"")
     logger.info(f"Specialty: {state.specialty or 'Any'}")
     logger.info(f"Mode: {(state.search_mode or 'auto').upper()}")
     logger.info(f"Max Distance: {max_distance}km")
+    logger.info(f"Language: {LANGUAGE}")
     logger.info("=" * 60)
     
     working_df = df_filtered.copy()
@@ -1472,8 +1490,7 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
         working_df['relevance_rank'] = 9999
     
     # ===== ENGLISH FILTER =====
-    language_pref = state.language_pref
-    if "English" in language_pref and 'has_english' in working_df.columns:
+    if LANGUAGE == "English" and 'has_english' in working_df.columns:
         before = len(working_df)
         working_df = working_df[working_df['has_english'] == True]
         logger.info(f"🌐 English filter: {before} → {len(working_df)}")
@@ -1489,14 +1506,12 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
         logger.info(f"✓ Building response from {min(10, len(working_df))} facilities")
         facilities_context = build_context_for_llm(working_df, n_results=10)
         
-        language = "English" if "English" in language_pref else "Korean"
-        
         gen_messages = [{
             "role": "system",
             "content": GENERATION_PROMPT.format(
                 user_query=user_message,
                 location_context=location_context,
-                language=language,
+                language=LANGUAGE,
                 facilities_context=facilities_context
             )
         }]
@@ -1570,7 +1585,7 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
             results.append(result)
     else:
         # No results found
-        if "English" in language_pref:
+        if LANGUAGE == "English":
             response_text = "I couldn't find any facilities matching your criteria. Would you like to try a different specialty or area?"
         else:
             response_text = "검색 조건에 맞는 시설을 찾을 수 없습니다. 다른 전문 분야나 지역을 시도해 보시겠어요?"
@@ -1589,21 +1604,30 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
 async def chat_endpoint(req: ChatRequest):
     """
     Router-Controller Architecture:
-    Step 0: Enrich state (fill in missing location data)
+    Step 0: Detect language and enrich state
     Step 1: Route (classify intent)
     Step 2: Branch (execute appropriate logic)
     Step 3: Return enriched state to frontend
     """
     
+    global LANGUAGE
+    
     logger.info("=" * 60)
     logger.info("📨 NEW REQUEST")
     logger.info(f"Message: \"{req.message[:50]}...\"")
+    
+    # ==========================================
+    # STEP 0A: LANGUAGE DETECTION (Per Message)
+    # ==========================================
+    LANGUAGE = detect_language(req.message)
+    
     logger.info("=" * 60)
     
     # ==========================================
-    # STEP 0: STATE ENRICHMENT (Fill in blanks)
+    # STEP 0B: STATE ENRICHMENT (Fill in blanks)
     # ==========================================
     enriched_state = standardize_and_fill_state(req.current_state)
+    enriched_state.language_pref = LANGUAGE  # Update language in state
     
     # Use enriched state for the rest of the processing
     current_turn = enriched_state.turn_count + 1
@@ -1650,13 +1674,10 @@ async def chat_endpoint(req: ChatRequest):
     if intent == "NEW_SEARCH":
         logger.info("🔄 BRANCH: NEW_SEARCH")
         
-        # Detect language from current message before reset
-        detected_lang = detect_language(req.message)
-        
         # Create brand new state (all fields reset to default/None)
         new_state = State()
         new_state.turn_count = 0  # Reset to 0
-        new_state.language_pref = detected_lang
+        new_state.language_pref = LANGUAGE  # Use global language
         
         # Check if this is an explicit reset/quit command
         reset_keywords = ["reset", "restart", "quit", "exit", "stop", "cancel", 
@@ -1665,9 +1686,9 @@ async def chat_endpoint(req: ChatRequest):
         is_explicit_reset = any(kw in req.message.lower() for kw in reset_keywords)
         
         if is_explicit_reset:
-            response = get_reset_confirmation(detected_lang)
+            response = get_reset_confirmation(LANGUAGE)
         else:
-            response = get_greeting_message(detected_lang)
+            response = get_greeting_message(LANGUAGE)
         
         return {
             "response": response,
@@ -1682,6 +1703,7 @@ async def chat_endpoint(req: ChatRequest):
         # Hard state cleansing (use enriched state)
         cleansed_state = cleanse_state_for_change(enriched_state, req.message)
         cleansed_state.turn_count = current_turn
+        cleansed_state.language_pref = LANGUAGE
         
         # Detect what's being changed for optimized extraction
         message_lower = req.message.lower()
@@ -1710,6 +1732,7 @@ async def chat_endpoint(req: ChatRequest):
         
         # ⭐ ENRICH AGAIN after extraction
         new_state = standardize_and_fill_state(new_state)
+        new_state.language_pref = LANGUAGE
         
         # Check if we have enough to search (either location OR GPS OR zone)
         has_location = bool(new_state.location or (new_state.latitude and new_state.longitude) or new_state.district)
@@ -1754,16 +1777,18 @@ async def chat_endpoint(req: ChatRequest):
     elif intent == "PROVIDE_INFO":
         logger.info("📝 BRANCH: PROVIDE_INFO")
         
-        # Extract entities from user message (will auto-verify address via Kakao)
+        # Extract entities from user message (will auto-verify address via geocoding)
         extracted = extract_entities(req.message)
         
         # Merge into enriched state (accumulate information)
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
+        new_state.language_pref = LANGUAGE
         new_state = merge_extraction_into_state(new_state, extracted)
         
         # ⭐ ENRICH AGAIN after extraction
         new_state = standardize_and_fill_state(new_state)
+        new_state.language_pref = LANGUAGE
         
         # Check if we have enough to search (either location OR GPS OR zone)
         has_location = bool(new_state.location or (new_state.latitude and new_state.longitude) or new_state.district)
@@ -1812,10 +1837,7 @@ async def chat_endpoint(req: ChatRequest):
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        
-        # Detect language if not set
-        if not new_state.language_pref or new_state.language_pref == "Korean is fine":
-            new_state.language_pref = detect_language(req.message)
+        new_state.language_pref = LANGUAGE  # Use global language
         
         # Check if this is a closing statement
         is_closing = any(word in req.message.lower() for word in 
@@ -1838,10 +1860,7 @@ async def chat_endpoint(req: ChatRequest):
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        
-        # Detect language if not set
-        if not new_state.language_pref or new_state.language_pref == "Korean is fine":
-            new_state.language_pref = detect_language(req.message)
+        new_state.language_pref = LANGUAGE  # Use global language
         
         response = generate_recovery_prompt(new_state)
         
@@ -1855,16 +1874,14 @@ async def chat_endpoint(req: ChatRequest):
     else:
         logger.warning(f"Unknown intent: {intent}")
         
-        # Try to detect language
-        lang = detect_language(req.message)
-        
-        if "English" in lang:
+        if LANGUAGE == "English":
             response = "I'm not sure how to help. Could you rephrase your request?"
         else:
             response = "잘 이해하지 못했습니다. 다시 말씀해 주시겠어요?"
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
+        new_state.language_pref = LANGUAGE
         
         return {
             "response": response,
@@ -1900,5 +1917,5 @@ async def health_check():
         },
         "geocoding_strategy": "Google Maps (primary) → Kakao Maps (fallback)",
         "logging_mode": "STRUCTURED LOGGING (uvicorn compatible)",
-        "architecture": "Dynamic Specialty Matching + Google Maps Location ID + Radius-Adaptive Relevance Ranking"
+        "architecture": "Dynamic Specialty Matching + Google Maps Location ID + Radius-Adaptive Relevance Ranking + Simplified Language Detection"
     }
