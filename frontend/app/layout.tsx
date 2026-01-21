@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import HeaderMenu from "../components/HeaderMenu";
+import Footer from "../components/Footer";
 import { Analytics } from "@vercel/analytics/react";
 import Script from "next/script";
 import AdSlotWrapper from "../components/AdSlotWrapper";
@@ -51,7 +52,8 @@ export default function RootLayout({
       <body className={`${inter.className} flex flex-col min-h-screen bg-gray-50`}>
         <HeaderMenu />
         
-        <main className="flex-grow flex justify-center w-full">
+        {/* Main content area - takes at least full viewport to push footer down */}
+        <main className="flex-grow flex justify-center w-full min-h-[calc(100vh-64px)]">
           
           {/* Left Ad Column (Hidden on Mobile) */}
           <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-end pr-4 pt-6">
@@ -61,7 +63,7 @@ export default function RootLayout({
           </aside>
 
           {/* Center Content (Chat Interface) */}
-          <div className="w-full max-w-4xl flex flex-col bg-white shadow-sm min-h-screen">
+          <div className="w-full max-w-4xl flex flex-col bg-white shadow-sm">
             {children}
           </div>
 
@@ -73,6 +75,9 @@ export default function RootLayout({
           </aside>
 
         </main>
+        
+        {/* Footer - Will be below the fold */}
+        <Footer />
         
         <Analytics />
       </body>

@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react";
 import { Send, MapPin, Sparkles } from "lucide-react";
+import Link from 'next/link';
 import AdSlot from "./AdSlot";
 
 // --- TYPES ---
@@ -85,6 +86,7 @@ export default function ChatInterface() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [expandedFacilities, setExpandedFacilities] = useState<Set<string>>(new Set());
+  const [disclaimerVisible, setDisclaimerVisible] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const [currentState, setCurrentState] = useState<State>({
@@ -194,10 +196,38 @@ export default function ChatInterface() {
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
+    <div className="flex flex-col h-screen w-full bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
+      
+      {/* --- COMPACT DISCLAIMER BANNER --- */}
+      {disclaimerVisible && (
+        <div className="bg-amber-50 border-b border-amber-300 px-3 py-1.5 sm:py-2 flex-shrink-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-1 min-w-0">
+              <span className="text-sm sm:text-base flex-shrink-0">⚠️</span>
+              <p className="text-[9px] sm:text-[10px] text-amber-800 leading-tight">
+                <strong>Info only</strong> - Not medical advice. 
+                <Link href="/disclaimer" className="underline hover:text-amber-900 font-semibold ml-1">
+                  Full disclaimer
+                </Link>
+                {' • '}
+                <span className="font-semibold whitespace-nowrap">Emergency: 119</span>
+              </p>
+            </div>
+            <button
+              onClick={() => setDisclaimerVisible(false)}
+              className="flex-shrink-0 text-amber-600 hover:text-amber-800 p-0.5"
+              aria-label="Dismiss"
+            >
+              <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* --- HEADER --- */}
-      <div className="sticky top-0 z-10 backdrop-blur-xl bg-white/80 border-b border-slate-200/50">
+      <div className="backdrop-blur-xl bg-white/80 border-b border-slate-200/50 flex-shrink-0">
         <div className="w-full px-4 sm:px-6 py-3 sm:py-4">
           <div className="flex items-center gap-2 sm:gap-3">
             <div className="relative">
@@ -369,7 +399,7 @@ export default function ChatInterface() {
       </div>
 
       {/* --- AD BANNER + INPUT AREA (NO GAPS) --- */}
-      <div className="sticky bottom-0 bg-white border-t border-slate-200/50 z-20">
+      <div className="bg-white border-t border-slate-200/50 flex-shrink-0">
         
         {/* ▼▼▼ MOBILE AD BANNER - DIRECTLY ABOVE INPUT (NO SPACE) ▼▼▼ */}
         <div className="block xl:hidden w-full border-b border-slate-200/30">
