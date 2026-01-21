@@ -349,11 +349,22 @@ export default function ChatInterface() {
             
             <button
               onClick={() => setShowSettings(!showSettings)}
-              className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-slate-100 hover:bg-slate-200 transition-all text-xs sm:text-sm font-medium text-slate-700"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 transition-all text-sm font-medium text-slate-700"
             >
-              <span className="hidden sm:inline">Settings</span>
-              <span className="sm:hidden">⚙️</span>
-              <ChevronDown className={`transition-transform ${showSettings ? 'rotate-180' : ''}`} size={14} />
+              <svg 
+                className="w-5 h-5" 
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+                  strokeWidth={2} 
+                  d="M4 6h16M4 12h16M4 18h16" 
+                />
+              </svg>
+              <ChevronDown className={`hidden sm:block transition-transform ${showSettings ? 'rotate-180' : ''}`} size={14} />
             </button>
           </div>
           
@@ -541,11 +552,20 @@ export default function ChatInterface() {
       <div className="sticky bottom-0 backdrop-blur-xl bg-white/80 border-t border-slate-200/50 z-20">
         <div className="w-full px-3 sm:px-6 py-3 sm:py-4">
           
+          {/* ▼▼▼ MOBILE ONLY AD SLOT - SAME WIDTH AS INPUT ▼▼▼ */}
+          <div className="block xl:hidden w-full mb-3">
+             <div className="overflow-hidden rounded-lg bg-slate-50/80 border border-slate-200/50 flex items-center justify-center" style={{ height: '60px' }}>
+                <div className="scale-90 origin-center">
+                  <AdSlot />
+                </div>
+             </div>
+          </div>
+
           {/* Input Controls */}
           <div className="flex items-end gap-2 sm:gap-3">
             <button
               onClick={handleLocationClick}
-              className="p-2 sm:p-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-blue-300 transition-all text-slate-600 hover:text-blue-600 group"
+              className="p-2.5 sm:p-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-blue-300 transition-all text-slate-600 hover:text-blue-600 group"
               title="Share Location"
             >
               <MapPin size={18} className="sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
@@ -578,15 +598,6 @@ export default function ChatInterface() {
           <p className="text-[10px] sm:text-xs text-slate-400 text-center mt-2 sm:mt-3">
             SeoulMedBot can make mistakes. Verify important medical information.
           </p>
-
-          {/* ▼▼▼ MOBILE ONLY AD SLOT - COMPACT BANNER ▼▼▼ */}
-          <div className="block xl:hidden w-full mt-2 sm:mt-3">
-             <div className="overflow-hidden rounded-md h-12 sm:h-16 flex items-center justify-center bg-slate-100/50">
-                <div className="scale-75 sm:scale-90 origin-center">
-                  <AdSlot />
-                </div>
-             </div>
-          </div>
           
         </div>
       </div>
