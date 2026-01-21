@@ -810,13 +810,13 @@ def detect_language(message: str) -> str:
     """Simple language detection."""
     has_korean = any(0xAC00 <= ord(char) <= 0xD7A3 for char in message)
     has_english = any(char.isalpha() and ord(char) < 128 for char in message)
-    
-    if has_korean:
+
+    if has_english:
+        return "English"
+    elif has_korean:
         return "Korean"
-    elif has_english:
-        return "English Preferred"
     else:
-        return "Korean"  # Default
+        return "English"  # Default
 
 
 def _format_location_summary(state: State) -> str:
