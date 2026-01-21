@@ -5,7 +5,7 @@ import Footer from "../components/Footer";
 import HeaderMenu from "../components/HeaderMenu";
 import { Analytics } from "@vercel/analytics/react";
 import Script from "next/script";
-import AdSlotWrapper from "../components/AdSlotWrapper";  // Changed this
+import AdSlotWrapper from "../components/AdSlotWrapper";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-   title: "Seoul Medical Facility Finder",
+    title: "Seoul Medical Facility Finder",
     description: "Find the best English-speaking medical facilities in Seoul with AI assistance",
   },
 };
@@ -61,8 +61,8 @@ export default function RootLayout({
             </div>
           </aside>
 
-          {/* Center Content (Chat Interface) */}
-          <div className="w-full max-w-4xl flex flex-col bg-white shadow-sm min-h-[calc(100vh-64px)]">
+          {/* Center Content (Chat Interface) - Takes full viewport height on mobile */}
+          <div className="w-full max-w-4xl flex flex-col bg-white shadow-sm min-h-screen xl:min-h-[calc(100vh-64px)]">
             {children}
           </div>
 
@@ -75,7 +75,10 @@ export default function RootLayout({
 
         </main>
         
-        <Footer />
+        {/* Footer - Hidden on mobile, visible on desktop below content */}
+        <div className="hidden xl:block">
+          <Footer />
+        </div>
         <Analytics />
       </body>
     </html>

@@ -349,22 +349,11 @@ export default function ChatInterface() {
             
             <button
               onClick={() => setShowSettings(!showSettings)}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 transition-all text-sm font-medium text-slate-700"
+              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-slate-100 hover:bg-slate-200 transition-all text-xs sm:text-sm font-medium text-slate-700 z-10"
             >
-              <svg 
-                className="w-5 h-5" 
-                fill="none" 
-                stroke="currentColor" 
-                viewBox="0 0 24 24"
-              >
-                <path 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round" 
-                  strokeWidth={2} 
-                  d="M4 6h16M4 12h16M4 18h16" 
-                />
-              </svg>
-              <ChevronDown className={`hidden sm:block transition-transform ${showSettings ? 'rotate-180' : ''}`} size={14} />
+              <span className="text-sm sm:text-base">⚙️</span>
+              <span className="hidden sm:inline">Settings</span>
+              <ChevronDown className={`transition-transform ${showSettings ? 'rotate-180' : ''} hidden sm:block`} size={14} />
             </button>
           </div>
           
@@ -397,7 +386,7 @@ export default function ChatInterface() {
       </div>
 
       {/* --- CHAT AREA --- */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto pb-4">
         <div className="w-full px-3 sm:px-6 py-4 sm:py-8">
           <div className="space-y-4 sm:space-y-6">
             {messages.map((msg, idx) => (
@@ -548,59 +537,61 @@ export default function ChatInterface() {
         </div>
       </div>
 
-      {/* --- INPUT AREA & MOBILE AD --- */}
-      <div className="sticky bottom-0 backdrop-blur-xl bg-white/80 border-t border-slate-200/50 z-20">
-        <div className="w-full px-3 sm:px-6 py-3 sm:py-4">
+      {/* --- INPUT AREA WITH AD ABOVE --- */}
+      <div className="sticky bottom-0 backdrop-blur-xl bg-white/90 border-t border-slate-200/50 z-20">
+        <div className="w-full px-3 sm:px-6">
           
-          {/* ▼▼▼ MOBILE ONLY AD SLOT - SAME WIDTH AS INPUT ▼▼▼ */}
-          <div className="block xl:hidden w-full mb-3">
-             <div className="overflow-hidden rounded-lg bg-slate-50/80 border border-slate-200/50 flex items-center justify-center" style={{ height: '60px' }}>
-                <div className="scale-90 origin-center">
-                  <AdSlot />
-                </div>
-             </div>
-          </div>
-
-          {/* Input Controls */}
-          <div className="flex items-end gap-2 sm:gap-3">
-            <button
-              onClick={handleLocationClick}
-              className="p-2.5 sm:p-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-blue-300 transition-all text-slate-600 hover:text-blue-600 group"
-              title="Share Location"
-            >
-              <MapPin size={18} className="sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
-            </button>
-            
-            <div className="flex-1 relative">
-              <input
-                type="text"
-                className="w-full px-3 py-2.5 sm:px-5 sm:py-3.5 pr-10 sm:pr-12 rounded-xl bg-white border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all text-slate-800 placeholder-slate-400 outline-none text-xs sm:text-base"
-                placeholder="Describe what you need..."
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSendMessage(input)}
-              />
+          {/* ▼▼▼ MOBILE AD BANNER - ABOVE INPUT ▼▼▼ */}
+          <div className="block xl:hidden w-full py-2 border-b border-slate-200/50">
+            <div className="w-full h-[50px] overflow-hidden rounded-md bg-gradient-to-r from-slate-50 to-slate-100 flex items-center justify-center">
+              <div className="scale-[0.6] origin-center w-full flex justify-center">
+                <AdSlot />
+              </div>
             </div>
-
-            <button
-              onClick={() => handleSendMessage(input)}
-              disabled={!input.trim() || loading}
-              className={`p-2.5 sm:p-3.5 rounded-xl transition-all ${
-                input.trim() && !loading 
-                  ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg shadow-blue-500/50 hover:shadow-xl hover:shadow-blue-500/50 hover:scale-105" 
-                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
-              }`}
-            >
-              <Send size={18} className="sm:w-5 sm:h-5" />
-            </button>
           </div>
           
-          <p className="text-[10px] sm:text-xs text-slate-400 text-center mt-2 sm:mt-3">
-            SeoulMedBot can make mistakes. Verify important medical information.
-          </p>
+          {/* Input Controls */}
+          <div className="py-3 sm:py-4">
+            <div className="flex items-end gap-2 sm:gap-3">
+              <button
+                onClick={handleLocationClick}
+                className="p-2 sm:p-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-blue-300 transition-all text-slate-600 hover:text-blue-600 group"
+                title="Share Location"
+              >
+                <MapPin size={18} className="sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+              </button>
+              
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  className="w-full px-3 py-2.5 sm:px-5 sm:py-3.5 pr-10 sm:pr-12 rounded-xl bg-white border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all text-slate-800 placeholder-slate-400 outline-none text-xs sm:text-base"
+                  placeholder="Describe what you need..."
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSendMessage(input)}
+                />
+              </div>
+
+              <button
+                onClick={() => handleSendMessage(input)}
+                disabled={!input.trim() || loading}
+                className={`p-2.5 sm:p-3.5 rounded-xl transition-all ${
+                  input.trim() && !loading 
+                    ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg shadow-blue-500/50 hover:shadow-xl hover:shadow-blue-500/50 hover:scale-105" 
+                    : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                }`}
+              >
+                <Send size={18} className="sm:w-5 sm:h-5" />
+              </button>
+            </div>
+            
+            <p className="text-[10px] sm:text-xs text-slate-400 text-center mt-2 sm:mt-3">
+              SeoulMedBot can make mistakes. Verify important medical information.
+            </p>
+          </div>
           
         </div>
       </div>
     </div>
-  );
+  ); 
 }

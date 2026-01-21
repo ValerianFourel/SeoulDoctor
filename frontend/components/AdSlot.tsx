@@ -32,20 +32,18 @@ export default function AdSlot() {
   }, []);
 
   return (
-    <div className="w-full min-w-[250px]">
-      <ins
-        ref={adRef}
-        className="adsbygoogle"
-        style={{ 
-          display: "block",
-          minWidth: "250px",
-          minHeight: "250px"
-        }}
-        data-ad-client="ca-pub-2786202112029582"
-        data-ad-slot="6649005456"
-        data-ad-format="auto"
-        data-full-width-responsive="true"
-      ></ins>
-    </div>
+    <ins
+      ref={adRef}
+      className="adsbygoogle"
+      style={{ 
+        display: "inline-block",
+        width: "100%",
+        height: "50px"
+      }}
+      data-ad-client="ca-pub-2786202112029582"
+      data-ad-slot="6649005456"
+      data-ad-format="horizontal"
+      data-full-width-responsive="false"
+    ></ins>
   );
 }
