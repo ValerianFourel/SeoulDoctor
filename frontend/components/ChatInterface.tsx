@@ -428,8 +428,8 @@ export default function ChatInterface() {
 
       {/* --- INPUT AREA AT BOTTOM --- */}
       <div className="flex-shrink-0 border-t border-slate-200/50 bg-white/95 backdrop-blur-md shadow-lg">
-        
-        {/* Mobile Ad Banner */}
+        {/*
+        { Mobile Ad Banner }
         <div className="block xl:hidden border-b border-slate-100">
           <div className="w-full h-[50px] flex items-center justify-center bg-gradient-to-r from-slate-50/50 to-slate-100/50">
             <div className="scale-[0.6] origin-center">
@@ -437,7 +437,8 @@ export default function ChatInterface() {
             </div>
           </div>
         </div>
-        
+        */}
+
         {/* Input Controls */}
         <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
           <div className="flex items-center gap-2 sm:gap-3">
