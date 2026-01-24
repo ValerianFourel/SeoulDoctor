@@ -2,9 +2,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, MapPin, Sparkles } from "lucide-react";
+import { Send, MapPin, Sparkles, Globe } from "lucide-react";
 import Link from 'next/link';
-import AdSlot from "./AdSlot";
 
 // --- TYPES ---
 type State = {
@@ -40,6 +39,8 @@ type FacilityResult = {
   distance: number;
   english_confidence_score: number;
   Summaries: string[];
+  address?: string;
+  website?: string;
 };
 
 // --- HELPER FUNCTION FOR FORMATTING AI RESPONSES ---
@@ -380,6 +381,14 @@ export default function ChatInterface() {
                           const summary = facility.Summaries?.[0] || "";
                           const needsExpansion = summary.length > 150;
                           const categoryEnglish = getCategoryEnglish(facility.category);
+                          
+                          // Create search query for Naver Map (name + address beginning)
+                          const addressStart = facility.address 
+                            ? facility.address.split(',')[0].trim().split(' ').slice(0, 3).join(' ')
+                            : '';
+                          const mapSearchQuery = addressStart 
+                            ? `${facility.name} ${addressStart}`
+                            : facility.name;
 
                           return (
                             <div
@@ -409,6 +418,31 @@ export default function ChatInterface() {
                                     </span>
                                   )}
                                 </div>
+
+                                {/* Address Display */}
+                                {facility.address && (
+                                  <div className="my-2.5 flex items-start gap-2">
+                                    <MapPin size={14} className="text-slate-400 flex-shrink-0 mt-0.5" />
+                                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed break-words">
+                                      {facility.address}
+                                    </p>
+                                  </div>
+                                )}
+
+                                {/* Website Display */}
+                                {facility.website && (
+                                  <div className="my-2">
+                                    <a 
+                                      href={facility.website}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1.5 text-xs sm:text-sm text-blue-600 hover:text-blue-700 font-medium hover:underline transition-colors"
+                                    >
+                                      <Globe size={14} className="flex-shrink-0" />
+                                      <span>Visit Website</span>
+                                    </a>
+                                  </div>
+                                )}
 
                                 {summary && (
                                   <div className="my-3">
@@ -444,12 +478,12 @@ export default function ChatInterface() {
                                     </span>
                                   </div>
                                   <a 
-                                    href={`https://map.naver.com/v5/search/${encodeURIComponent(facility.name)}`}
+                                    href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
                                   >
-                                    View Map
+                                    View on Map
                                   </a>
                                 </div>
                               </div>

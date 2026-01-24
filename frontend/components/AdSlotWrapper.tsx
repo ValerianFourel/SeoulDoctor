@@ -30,16 +30,21 @@ export default function AdSlotWrapper() {
     return () => window.removeEventListener('storage', checkConsent);
   }, []);
 
-  if (!mounted || !hasConsent) {
-    return null;
-  }
-
+  // Always maintain container size to prevent layout shift
   return (
     <div 
       className="w-[300px] min-w-[300px]" 
       style={{ width: '300px', minWidth: '300px' }}
     >
-      <AdSlot />
+      {mounted && hasConsent ? (
+        <AdSlot />
+      ) : (
+        // Placeholder with same dimensions as ad slot
+        <div 
+          className="w-[300px] h-[250px] bg-gradient-to-br from-slate-50 to-slate-100 rounded-lg border border-slate-200"
+          style={{ width: '300px', height: '250px' }}
+        />
+      )}
     </div>
   );
 }
