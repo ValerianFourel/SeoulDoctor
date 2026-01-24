@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactElement } from 'react';
 
-const ADSENSE_APPROVED = false; // Set to true once Google approves you
+const ADSENSE_APPROVED = true; // Set to true once Google approves you
 
 export default function ConsentScripts(): ReactElement | null {
   const [hasConsent, setHasConsent] = useState(false);
