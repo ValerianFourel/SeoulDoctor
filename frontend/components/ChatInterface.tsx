@@ -90,8 +90,7 @@ export default function ChatInterface() {
   const [disclaimerVisible, setDisclaimerVisible] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
-  const previousMessageCountRef = useRef(messages.length);
-  const isTypingRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Auto-dismiss disclaimer after 15 seconds
   useEffect(() => {
@@ -117,18 +116,37 @@ export default function ChatInterface() {
     return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Auto-scroll ONLY when new messages arrive (not when typing)
+  // Handle mobile keyboard and viewport changes
   useEffect(() => {
-    const hasNewMessage = messages.length > previousMessageCountRef.current;
-    
-    if (hasNewMessage && !isTypingRef.current) {
-      // Small delay to ensure DOM has updated
+    const handleResize = () => {
+      // Scroll input into view when keyboard appears on mobile
+      if (document.activeElement === inputRef.current) {
+        setTimeout(() => {
+          inputRef.current?.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'nearest' 
+          });
+        }, 100);
+      }
+    };
+
+    // Listen for viewport changes (mobile keyboard)
+    if (typeof window !== 'undefined' && 'visualViewport' in window) {
+      window.visualViewport?.addEventListener('resize', handleResize);
+      return () => {
+        window.visualViewport?.removeEventListener('resize', handleResize);
+      };
+    }
+  }, []);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messages.length > 1) {
+      // Small delay to ensure content is rendered
       setTimeout(() => {
-        scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+        scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
       }, 100);
     }
-    
-    previousMessageCountRef.current = messages.length;
   }, [messages]);
 
   const [currentState, setCurrentState] = useState<State>({
@@ -163,17 +181,23 @@ export default function ChatInterface() {
     });
   };
 
+  const scrollToBottom = () => {
+    setTimeout(() => {
+      scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, 100);
+  };
+
   const handleSendMessage = async (text: string, stateOverride?: Partial<State>) => {
     if (!text.trim()) return;
-
-    // Reset typing flag when sending
-    isTypingRef.current = false;
 
     const userMsg: Message = { role: "user", content: text };
     if (!stateOverride) setMessages((prev) => [...prev, userMsg]);
     
     setInput("");
     setLoading(true);
+
+    // Scroll immediately when user sends message
+    scrollToBottom();
 
     const stateToSend = {
       ...currentState,
@@ -204,12 +228,16 @@ export default function ChatInterface() {
           results: data.results,
         },
       ]);
+
+      // Scroll again after AI response
+      scrollToBottom();
     } catch (error) {
       console.error("API Error:", error);
       setMessages((prev) => [
         ...prev,
         { role: "ai", content: "I'm having trouble connecting right now. Please try again in a moment." },
       ]);
+      scrollToBottom();
     } finally {
       setLoading(false);
     }
@@ -223,6 +251,7 @@ export default function ChatInterface() {
     
     setMessages((prev) => [...prev, { role: "user", content: "📍 Sharing my location..." }]);
     setLoading(true);
+    scrollToBottom();
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -240,16 +269,21 @@ export default function ChatInterface() {
     );
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    isTypingRef.current = true;
-    setInput(e.target.value);
-  };
-
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage(input);
     }
+  };
+
+  const handleInputFocus = () => {
+    // Ensure input stays visible on mobile when keyboard appears
+    setTimeout(() => {
+      inputRef.current?.scrollIntoView({ 
+        behavior: 'smooth', 
+        block: 'nearest' 
+      });
+    }, 300); // Delay to let keyboard animation finish
   };
 
   // Calculate disclaimer height for dynamic spacing
@@ -298,7 +332,7 @@ export default function ChatInterface() {
       {/* --- CHAT MESSAGES AREA --- */}
       <div 
         ref={chatContainerRef}
-        className="flex-1 overflow-y-auto min-h-0 transition-all duration-500 ease-in-out"
+        className="flex-1 overflow-y-auto min-h-0 transition-all duration-500 ease-in-out overscroll-behavior-contain"
         style={{ 
           paddingTop: `${disclaimerHeight}px`
         }}
@@ -465,21 +499,14 @@ export default function ChatInterface() {
             
             <div className="flex-1 relative min-w-0">
               <input
+                ref={inputRef}
                 type="text"
                 className="w-full px-4 py-3 sm:px-5 sm:py-4 rounded-xl bg-white border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all text-slate-800 placeholder-slate-400 outline-none text-sm sm:text-base shadow-sm"
                 placeholder="Describe what you need..."
                 value={input}
-                onChange={handleInputChange}
+                onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                onFocus={() => { isTypingRef.current = true; }}
-                onBlur={() => { 
-                  // Delay to allow send button click to register
-                  setTimeout(() => { 
-                    if (input.trim() === '') {
-                      isTypingRef.current = false; 
-                    }
-                  }, 200);
-                }}
+                onFocus={handleInputFocus}
               />
             </div>
 
