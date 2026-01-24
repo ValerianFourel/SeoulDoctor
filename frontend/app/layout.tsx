@@ -2,6 +2,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
+import Script from "next/script";
 
 import "./globals.css";
 import HeaderMenu from "../components/HeaderMenu";
@@ -63,23 +64,7 @@ export default function RootLayout({
       lang="en"
       suppressHydrationWarning={true}
     >
-      <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              window.dataLayer = window.dataLayer || [];
-              function gtag(){dataLayer.push(arguments);}
-              
-              gtag('consent', 'default', {
-                'ad_storage': 'denied',
-                'ad_user_data': 'denied',
-                'ad_personalization': 'denied',
-                'analytics_storage': 'denied'
-              });
-            `,
-          }}
-        />
-      </head>
+      <head />
 
       <body 
         className={`${inter.className} flex flex-col min-h-screen bg-gray-50`}
@@ -87,6 +72,24 @@ export default function RootLayout({
         data-gramm_editor="false"
         suppressHydrationWarning={true}
       >
+        {/* Google Consent Mode */}
+        <Script
+          id="google-consent-mode"
+          strategy="beforeInteractive"
+        >
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            
+            gtag('consent', 'default', {
+              'ad_storage': 'denied',
+              'ad_user_data': 'denied',
+              'ad_personalization': 'denied',
+              'analytics_storage': 'denied'
+            });
+          `}
+        </Script>
+
         <HeaderMenu />
         
         <div className="pt-[60px]">
