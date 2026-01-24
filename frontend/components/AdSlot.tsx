@@ -1,49 +1,66 @@
-"use client";
-import { useEffect, useRef } from "react";
+// components/AdSlot.tsx
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
 
 export default function AdSlot() {
-  const adRef = useRef<HTMLModElement>(null);
-  const hasLoaded = useRef(false);
+  const adRef = useRef<HTMLDivElement>(null);
+  const [adLoaded, setAdLoaded] = useState(false);
 
   useEffect(() => {
-    if (hasLoaded.current) return;
-
-    // Wait for layout to settle
-    const timer = setTimeout(() => {
-      try {
-        if (!adRef.current) return;
-
-        // Final safety check
-        const rect = adRef.current.getBoundingClientRect();
-        if (rect.width === 0) {
-          console.warn("Ad slot has no width, not initializing");
-          return;
-        }
-
-        console.log("Initializing AdSense with width:", rect.width);
-        hasLoaded.current = true;
-        ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({});
-      } catch (err) {
-        console.error("AdSense error:", err);
+    const loadAd = () => {
+      const adContainer = adRef.current;
+      if (!adContainer) {
+        console.warn('Ad container not found');
+        return;
       }
-    }, 600);
+
+      // Check if container has width
+      const rect = adContainer.getBoundingClientRect();
+      if (rect.width === 0) {
+        console.warn('Ad slot has no width, not initializing');
+        return;
+      }
+
+      // Check if AdSense is loaded
+      if (typeof window === 'undefined' || !(window as any).adsbygoogle) {
+        console.warn('AdSense script not loaded yet');
+        return;
+      }
+
+      // Initialize ad
+      try {
+        ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({});
+        setAdLoaded(true);
+        console.log('✅ Ad initialized');
+      } catch (error) {
+        console.error('Error initializing ad:', error);
+      }
+    };
+
+    // Wait a bit for AdSense script to load
+    const timer = setTimeout(loadAd, 1000);
 
     return () => clearTimeout(timer);
   }, []);
 
   return (
-    <ins
+    <div 
       ref={adRef}
-      className="adsbygoogle"
-      style={{ 
-        display: "inline-block",
-        width: "100%",
-        height: "50px"
-      }}
-      data-ad-client="ca-pub-2786202112029582"
-      data-ad-slot="6649005456"
-      data-ad-format="horizontal"
-      data-full-width-responsive="false"
-    ></ins>
+      className="w-[300px] h-[250px] bg-gray-100 flex items-center justify-center"
+      style={{ width: '300px', height: '250px' }}
+    >
+      <ins
+        className="adsbygoogle"
+        style={{ display: 'block', width: '300px', height: '250px' }}
+        data-ad-client="ca-pub-2786202112029582"
+        data-ad-slot="YOUR_AD_SLOT_ID"
+        data-ad-format="auto"
+        data-full-width-responsive="false"
+      />
+      {!adLoaded && (
+        <div className="text-gray-400 text-sm">Advertisement</div>
+      )}
+    </div>
   );
 }

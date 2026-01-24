@@ -1,29 +1,45 @@
-"use client";
-import { useEffect, useState } from "react";
-import AdSlot from "./AdSlot";
+// components/AdSlotWrapper.tsx
+'use client';
+
+import { useEffect, useState } from 'react';
+import AdSlot from './AdSlot';
 
 export default function AdSlotWrapper() {
-  const [shouldRender, setShouldRender] = useState(false);
+  const [hasConsent, setHasConsent] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    const checkScreen = () => {
-      // Only render if screen is >= 1280px (xl breakpoint)
-      setShouldRender(window.innerWidth >= 1280);
+    setMounted(true);
+    
+    const checkConsent = () => {
+      const savedConsent = localStorage.getItem('cookieConsent');
+      if (savedConsent) {
+        try {
+          const parsed = JSON.parse(savedConsent);
+          setHasConsent(parsed.advertising === true);
+        } catch (error) {
+          console.error('Error parsing consent:', error);
+        }
+      }
     };
 
-    // Check immediately
-    checkScreen();
-
-    // Listen for resize
-    window.addEventListener('resize', checkScreen);
-
-    return () => window.removeEventListener('resize', checkScreen);
+    checkConsent();
+    
+    // Listen for consent changes
+    window.addEventListener('storage', checkConsent);
+    return () => window.removeEventListener('storage', checkConsent);
   }, []);
 
-  // Don't render AdSlot component at all on small screens
-  if (!shouldRender) {
+  if (!mounted || !hasConsent) {
     return null;
   }
 
-  return <AdSlot />;
+  return (
+    <div 
+      className="w-[300px] min-w-[300px]" 
+      style={{ width: '300px', minWidth: '300px' }}
+    >
+      <AdSlot />
+    </div>
+  );
 }
