@@ -1,6 +1,7 @@
+// components/ChatInterface.tsx
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Send, MapPin, Sparkles } from "lucide-react";
 import Link from 'next/link';
 import AdSlot from "./AdSlot";
@@ -88,6 +89,38 @@ export default function ChatInterface() {
   const [expandedFacilities, setExpandedFacilities] = useState<Set<string>>(new Set());
   const [disclaimerVisible, setDisclaimerVisible] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-dismiss disclaimer after 15 seconds
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDisclaimerVisible(false);
+    }, 15000);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Hide disclaimer on scroll
+  useEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      if (container.scrollTop > 50) {
+        setDisclaimerVisible(false);
+      }
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Auto-scroll to bottom when new messages arrive (but not on mount)
+  useEffect(() => {
+    if (messages.length > 1) {
+      scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
 
   const [currentState, setCurrentState] = useState<State>({
     specialty: null,
@@ -195,97 +228,95 @@ export default function ChatInterface() {
     );
   };
 
+  // Calculate disclaimer height for dynamic spacing
+  const disclaimerHeight = disclaimerVisible ? 56 : 0;
+
   return (
-    <div className="flex flex-col h-screen w-full bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
+    <div className="relative h-full w-full bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 flex flex-col">
       
-      {/* --- COMPACT DISCLAIMER BANNER --- */}
-      {disclaimerVisible && (
-        <div className="bg-amber-50 border-b border-amber-300 px-3 py-1.5 sm:py-2 flex-shrink-0">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 sm:gap-2 flex-1 min-w-0">
-              <span className="text-sm sm:text-base flex-shrink-0">⚠️</span>
-              <p className="text-[9px] sm:text-[10px] text-amber-800 leading-tight">
-                <strong>Info only</strong> - Not medical advice. 
-                <Link href="/disclaimer" className="underline hover:text-amber-900 font-semibold ml-1">
-                  Full disclaimer
-                </Link>
-                {' • '}
-                <span className="font-semibold whitespace-nowrap">Emergency: 119</span>
-              </p>
-            </div>
-            <button
-              onClick={() => setDisclaimerVisible(false)}
-              className="flex-shrink-0 text-amber-600 hover:text-amber-800 p-0.5"
-              aria-label="Dismiss"
-            >
-              <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      )}
-      
-      {/* --- HEADER --- */}
-      <div className="backdrop-blur-xl bg-white/80 border-b border-slate-200/50 flex-shrink-0">
-        <div className="w-full px-4 sm:px-6 py-3 sm:py-4">
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl blur-sm opacity-75"></div>
-              <div className="relative bg-gradient-to-br from-blue-500 to-purple-600 p-1.5 sm:p-2 rounded-xl">
-                <Sparkles className="text-white" size={16} />
+      {/* --- ELEGANT DISCLAIMER BANNER --- */}
+      <div 
+        className={`absolute top-0 left-0 right-0 z-20 transition-all duration-500 ease-in-out ${
+          disclaimerVisible 
+            ? 'translate-y-0 opacity-100' 
+            : '-translate-y-full opacity-0'
+        }`}
+        style={{ pointerEvents: disclaimerVisible ? 'auto' : 'none' }}
+      >
+        <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border-b border-amber-200 shadow-sm backdrop-blur-sm">
+          <div className="max-w-5xl mx-auto px-4 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <span className="text-lg flex-shrink-0">⚠️</span>
+                <p className="text-xs sm:text-sm text-amber-900 leading-tight">
+                  <strong>Info only</strong> - Not medical advice. 
+                  <Link href="/disclaimer" className="underline hover:text-amber-700 font-semibold ml-1">
+                    Full disclaimer
+                  </Link>
+                  {' • '}
+                  <span className="font-semibold whitespace-nowrap">Emergency: 119</span>
+                </p>
               </div>
-            </div>
-            <div>
-              <h1 className="font-bold text-base sm:text-xl bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
-                SeoulMedBot
-              </h1>
-              <p className="text-[10px] sm:text-xs text-slate-500">AI Medical Concierge</p>
+              <button
+                onClick={() => setDisclaimerVisible(false)}
+                className="flex-shrink-0 text-amber-700 hover:text-amber-900 p-1 rounded-full hover:bg-amber-100 transition-colors"
+                aria-label="Dismiss"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* --- CHAT AREA --- */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="w-full px-3 sm:px-6 py-4 sm:py-8">
+      {/* --- CHAT MESSAGES AREA --- */}
+      <div 
+        ref={chatContainerRef}
+        className="flex-1 overflow-y-auto min-h-0 transition-all duration-500 ease-in-out"
+        style={{ 
+          paddingTop: `${disclaimerHeight}px`
+        }}
+      >
+        <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
           <div className="space-y-4 sm:space-y-6">
             {messages.map((msg, idx) => (
               <div
                 key={idx}
                 className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} animate-fadeIn`}
               >
-                <div className={`flex gap-2 sm:gap-3 max-w-[98%] sm:max-w-[85%] ${msg.role === "user" ? 'flex-row-reverse' : 'flex-row'}`}>
+                <div className={`flex gap-2 sm:gap-3 max-w-[95%] sm:max-w-[85%] ${msg.role === "user" ? 'flex-row-reverse' : 'flex-row'}`}>
                   {/* Avatar */}
-                  <div className={`flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center ${
+                  <div className={`flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shadow-md ${
                     msg.role === "user" 
                       ? "bg-gradient-to-br from-slate-600 to-slate-800" 
                       : "bg-gradient-to-br from-blue-500 to-purple-600"
                   }`}>
                     {msg.role === "user" ? (
-                      <span className="text-white text-[10px] sm:text-xs font-bold">You</span>
+                      <span className="text-white text-xs sm:text-sm font-bold">You</span>
                     ) : (
-                      <Sparkles className="text-white" size={12} />
+                      <Sparkles className="text-white" size={16} />
                     )}
                   </div>
 
-                  <div className="flex flex-col gap-2 sm:gap-3 flex-1">
+                  <div className="flex flex-col gap-2 sm:gap-3 flex-1 min-w-0">
                     {/* Message Bubble */}
                     <div
-                      className={`px-3 py-2 sm:px-5 sm:py-3 rounded-2xl ${
+                      className={`px-4 py-3 sm:px-5 sm:py-3.5 rounded-2xl shadow-sm ${
                         msg.role === "user"
                           ? "bg-gradient-to-r from-slate-700 to-slate-900 text-white"
-                          : "bg-white border border-slate-200 text-slate-800 shadow-sm"
+                          : "bg-white border border-slate-200 text-slate-800"
                       }`}
                     >
-                      <p className="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap">
+                      <p className="text-sm sm:text-base leading-relaxed whitespace-pre-wrap break-words">
                         {msg.role === "ai" ? formatAIResponse(msg.content) : msg.content}
                       </p>
                     </div>
 
                     {/* Results Cards */}
                     {msg.results && msg.results.length > 0 && (
-                      <div className="space-y-2 sm:space-y-3">
+                      <div className="space-y-3">
                         {msg.results.map((facility, facilityIdx) => {
                           const isExpanded = expandedFacilities.has(facility.place_id);
                           const summary = facility.Summaries?.[0] || "";
@@ -295,38 +326,35 @@ export default function ChatInterface() {
                           return (
                             <div
                               key={facility.place_id}
-                              className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all overflow-hidden group animate-fadeIn"
-                              style={{ animationDelay: `${facilityIdx * 100}ms` }}
+                              className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all overflow-hidden"
                             >
-                              <div className="p-3 sm:p-4">
-                                <div className="flex justify-between items-start mb-1.5 sm:mb-2">
-                                  <div className="flex-1">
-                                    {/* Korean Name */}
-                                    <h3 className="font-bold text-slate-900 text-sm sm:text-base mb-1">
+                              <div className="p-4 sm:p-5">
+                                <div className="flex justify-between items-start gap-3 mb-2">
+                                  <div className="flex-1 min-w-0">
+                                    <h3 className="font-bold text-slate-900 text-base sm:text-lg mb-1.5 break-words">
                                       {facility.name}
                                     </h3>
                                     
-                                    {/* Category in Korean and English */}
-                                    <div className="flex flex-wrap gap-1.5 sm:gap-2 items-center">
-                                      <span className="inline-block px-1.5 py-0.5 sm:px-2 sm:py-1 bg-blue-50 text-blue-600 text-[10px] sm:text-xs font-semibold rounded-md">
+                                    <div className="flex flex-wrap gap-2 items-center">
+                                      <span className="inline-block px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-md">
                                         {facility.category}
                                       </span>
-                                      <span className="inline-block px-1.5 py-0.5 sm:px-2 sm:py-1 bg-slate-50 text-slate-600 text-[10px] sm:text-xs font-medium rounded-md">
+                                      <span className="inline-block px-2.5 py-1 bg-slate-50 text-slate-600 text-xs font-medium rounded-md">
                                         {categoryEnglish}
                                       </span>
                                     </div>
                                   </div>
                                   {facility.english_confidence_score >= 4 && (
-                                    <span className="flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2 py-1 sm:px-3 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-bold">
-                                      <span className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-emerald-500 rounded-full"></span>
+                                    <span className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap flex-shrink-0">
+                                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
                                       English OK
                                     </span>
                                   )}
                                 </div>
 
                                 {summary && (
-                                  <div className="my-2 sm:my-3">
-                                    <p className={`text-xs sm:text-sm text-slate-600 leading-relaxed ${
+                                  <div className="my-3">
+                                    <p className={`text-sm sm:text-base text-slate-600 leading-relaxed break-words ${
                                       !isExpanded && needsExpansion ? 'line-clamp-2' : ''
                                     }`}>
                                       {summary}
@@ -334,15 +362,15 @@ export default function ChatInterface() {
                                     {needsExpansion && (
                                       <button
                                         onClick={() => toggleFacilityExpand(facility.place_id)}
-                                        className="mt-1.5 sm:mt-2 flex items-center gap-1 text-[10px] sm:text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors"
+                                        className="mt-2 flex items-center gap-1 text-xs sm:text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors"
                                       >
                                         {isExpanded ? (
                                           <>
-                                            Show less <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                                            Show less <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
                                           </>
                                         ) : (
                                           <>
-                                            Read more <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                            Read more <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                                           </>
                                         )}
                                       </button>
@@ -350,10 +378,10 @@ export default function ChatInterface() {
                                   </div>
                                 )}
 
-                                <div className="flex items-center justify-between pt-2 sm:pt-3 border-t border-slate-100">
-                                  <div className="flex items-center gap-1.5 sm:gap-2 text-slate-500">
-                                    <MapPin size={12} className="text-blue-500" />
-                                    <span className="text-xs sm:text-sm font-medium">
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-100">
+                                  <div className="flex items-center gap-2 text-slate-500">
+                                    <MapPin size={16} className="text-blue-500 flex-shrink-0" />
+                                    <span className="text-sm sm:text-base font-medium">
                                       {facility.distance != null ? `${facility.distance.toFixed(1)} km away` : 'Distance N/A'}
                                     </span>
                                   </div>
@@ -361,7 +389,7 @@ export default function ChatInterface() {
                                     href={`https://map.naver.com/v5/search/${encodeURIComponent(facility.name)}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="px-3 py-1.5 sm:px-4 sm:py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-xs sm:text-sm font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all"
+                                    className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
                                   >
                                     View Map
                                   </a>
@@ -379,15 +407,15 @@ export default function ChatInterface() {
             
             {loading && (
               <div className="flex justify-start animate-fadeIn">
-                <div className="flex gap-2 sm:gap-3">
-                  <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                    <Sparkles className="text-white" size={12} />
+                <div className="flex gap-3">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-md flex-shrink-0">
+                    <Sparkles className="text-white" size={16} />
                   </div>
-                  <div className="bg-white border border-slate-200 rounded-2xl px-3 py-2 sm:px-5 sm:py-3 shadow-sm">
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full animate-bounce"></div>
-                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                      <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                  <div className="bg-white border border-slate-200 rounded-2xl px-5 py-3.5 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
                     </div>
                   </div>
                 </div>
@@ -398,11 +426,11 @@ export default function ChatInterface() {
         </div>
       </div>
 
-      {/* --- AD BANNER + INPUT AREA (NO GAPS) --- */}
-      <div className="bg-white border-t border-slate-200/50 flex-shrink-0">
+      {/* --- INPUT AREA AT BOTTOM --- */}
+      <div className="flex-shrink-0 border-t border-slate-200/50 bg-white/95 backdrop-blur-md shadow-lg">
         
-        {/* ▼▼▼ MOBILE AD BANNER - DIRECTLY ABOVE INPUT (NO SPACE) ▼▼▼ */}
-        <div className="block xl:hidden w-full border-b border-slate-200/30">
+        {/* Mobile Ad Banner */}
+        <div className="block xl:hidden border-b border-slate-100">
           <div className="w-full h-[50px] flex items-center justify-center bg-gradient-to-r from-slate-50/50 to-slate-100/50">
             <div className="scale-[0.6] origin-center">
               <AdSlot />
@@ -410,21 +438,21 @@ export default function ChatInterface() {
           </div>
         </div>
         
-        {/* Input Controls - Compact, No Extra Space */}
-        <div className="w-full px-3 sm:px-6 py-2 sm:py-3">
+        {/* Input Controls */}
+        <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
           <div className="flex items-center gap-2 sm:gap-3">
             <button
               onClick={handleLocationClick}
-              className="p-2 sm:p-3 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-blue-300 transition-all text-slate-600 hover:text-blue-600"
+              className="flex-shrink-0 p-3 sm:p-3.5 rounded-xl bg-gradient-to-br from-slate-50 to-slate-100 hover:from-slate-100 hover:to-slate-200 border border-slate-200 hover:border-blue-300 transition-all text-slate-600 hover:text-blue-600 shadow-sm"
               title="Share Location"
             >
-              <MapPin size={18} className="sm:w-5 sm:h-5" />
+              <MapPin size={20} className="sm:w-5 sm:h-5" />
             </button>
             
-            <div className="flex-1 relative">
+            <div className="flex-1 relative min-w-0">
               <input
                 type="text"
-                className="w-full px-3 py-2 sm:px-5 sm:py-3 rounded-xl bg-slate-50 border border-slate-200 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20 transition-all text-slate-800 placeholder-slate-400 outline-none text-sm sm:text-base"
+                className="w-full px-4 py-3 sm:px-5 sm:py-4 rounded-xl bg-white border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all text-slate-800 placeholder-slate-400 outline-none text-sm sm:text-base shadow-sm"
                 placeholder="Describe what you need..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -435,17 +463,16 @@ export default function ChatInterface() {
             <button
               onClick={() => handleSendMessage(input)}
               disabled={!input.trim() || loading}
-              className={`p-2 sm:p-3 rounded-xl transition-all ${
+              className={`flex-shrink-0 p-3 sm:p-3.5 rounded-xl transition-all shadow-md ${
                 input.trim() && !loading 
-                  ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-105" 
+                  ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:shadow-lg hover:scale-105 active:scale-95" 
                   : "bg-slate-200 text-slate-400 cursor-not-allowed"
               }`}
             >
-              <Send size={18} className="sm:w-5 sm:h-5" />
+              <Send size={20} className="sm:w-5 sm:h-5" />
             </button>
           </div>
         </div>
-        
       </div>
     </div>
   ); 

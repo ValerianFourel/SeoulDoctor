@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description: "AI-powered chatbot to find medical facilities in Seoul. Search by specialty, location, and English language capabilities. Free and easy to use.",
   keywords: "Seoul doctors, English-speaking hospitals Seoul, Korea medical facilities, Seoul healthcare finder",
   icons: {
-    icon: "/img/home_doctor_care_treatment_support_medical_hehcare_icon_261646.ico",
+    icon: "/img/logo_v3.ico",
   },
   openGraph: {
     title: "Seoul Medical Facility Finder",
@@ -22,3 +22,13 @@ export default function Home() {
     </div>
   );
 }
+
+/*
+export default function Home() {
+  return (
+    <div className="h-full">
+      <ChatInterface />
+    </div>
+  );
+}
+  */

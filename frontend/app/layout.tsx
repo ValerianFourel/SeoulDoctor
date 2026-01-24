@@ -1,12 +1,15 @@
+// app/layout.tsx
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import Script from "next/script";
 import { Analytics } from "@vercel/analytics/react";
+import Script from "next/script";
 
 import "./globals.css";
 import HeaderMenu from "../components/HeaderMenu";
 import Footer from "../components/Footer";
 import AdSlotWrapper from "../components/AdSlotWrapper";
+import CookieConsent from "../components/CookieConsent";
+import ConsentScripts from "../components/ConsentScripts";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -64,42 +67,56 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        {/* Google AdSense */}
         <Script
-          async
-          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2786202112029582"
-          crossOrigin="anonymous"
+          id="google-consent-mode"
           strategy="afterInteractive"
-        />
+        >
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            
+            gtag('consent', 'default', {
+              'ad_storage': 'denied',
+              'ad_user_data': 'denied',
+              'ad_personalization': 'denied',
+              'analytics_storage': 'denied'
+            });
+          `}
+        </Script>
+        <ConsentScripts />
       </head>
 
       <body
         className={`${inter.className} flex flex-col min-h-screen bg-gray-50`}
       >
         <HeaderMenu />
+        
+        <div className="pt-[60px]">
+          <main className="flex justify-center w-full min-h-[calc(100vh-60px)]">
+            {/* Left Ad Column */}
+            <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-end pr-4 pt-6">
+              <div className="sticky top-24">
+                <AdSlotWrapper />
+              </div>
+            </aside>
 
-        <main className="flex-grow flex justify-center w-full min-h-[calc(100vh-64px)]">
-          {/* Left Ad Column */}
-          <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-end pr-4 pt-6">
-            <div className="sticky top-24">
-              <AdSlotWrapper />
+            {/* Main Content */}
+            <div className="w-full max-w-4xl flex flex-col bg-white shadow-sm">
+              {children}
             </div>
-          </aside>
 
-          {/* Main Content */}
-          <div className="w-full max-w-4xl flex flex-col bg-white shadow-sm">
-            {children}
-          </div>
+            {/* Right Ad Column */}
+            <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-start pl-4 pt-6">
+              <div className="sticky top-24">
+                <AdSlotWrapper />
+              </div>
+            </aside>
+          </main>
 
-          {/* Right Ad Column */}
-          <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-start pl-4 pt-6">
-            <div className="sticky top-24">
-              <AdSlotWrapper />
-            </div>
-          </aside>
-        </main>
-
-        <Footer />
+          <Footer />
+        </div>
+        
+        <CookieConsent />
         <Analytics />
       </body>
     </html>
