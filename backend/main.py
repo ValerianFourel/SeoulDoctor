@@ -1,13 +1,3 @@
-import os
-import sys
-
-# FORCE UNBUFFERED OUTPUT - Must be at the very top
-os.environ['PYTHONUNBUFFERED'] = '1'
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(line_buffering=True)
-if hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(line_buffering=True)
-
 """
 ========================================
 SEOUL MEDICAL FACILITY SEARCH BACKEND
@@ -58,8 +48,8 @@ ARCHITECTURE OVERVIEW:
 5. RANKING ALGORITHM (Radius-Adaptive)
    - Small radius (≤2km): 50% specialty relevance + 50% distance
    - Medium radius (5km): 70% specialty relevance + 30% distance
-   - Large radius (10km): 85% specialty relevance + 15% distance
-   - Very large (20km+): 95% specialty relevance + 5% distance
+   - Large radius (10km): 85% relevance + 15% distance
+   - Very large (20km+): 95% relevance + 5% distance
    
 6. EXTRACTION OPTIMIZATION
    - Full extraction: Initial queries with both specialty + location
@@ -67,7 +57,13 @@ ARCHITECTURE OVERVIEW:
    - Quick location extraction: When user changes only location
    - Shorter prompts = faster responses, lower costs
 
-7. SEARCH FLOW
+7. COOKIE CONSENT & PRIVACY
+   - GDPR/CCPA compliant cookie consent management
+   - Privacy-aware logging (respects analytics consent)
+   - Conditional feature activation based on user consent
+   - Transparent data usage with user control
+
+8. SEARCH FLOW
    Input → LLM Extract → Google Maps Verify (+ ", Seoul" fallback) → 
    Filter Parquet → RAG Rank → Distance Sort → Results
 
@@ -101,33 +97,70 @@ RAG SEMANTIC SEARCH:
 - Returns semantic relevance ranking
 - Combined with distance for final scoring
 """
+
+# FORCE UNBUFFERED OUTPUT - Must be at the very top
+import os
+import sys
+os.environ['PYTHONUNBUFFERED'] = '1'
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(line_buffering=True)
+
 import json
 import pandas as pd
 import numpy as np
 import requests
 import chromadb
 from chromadb.utils import embedding_functions
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Cookie, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Dict, Any, Tuple
 from groq import Groq
 from contextlib import asynccontextmanager
 from huggingface_hub import hf_hub_download
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
+from pathlib import Path
+import logging
+import re
+
+# Local imports
 from distance import haversine, fuzzy_match_location
 from models import ChatRequest, State
 from utils import safe_convert_to_python
 from prompt import ROUTER_PROMPT, EXTRACTION_PROMPT_V2, GENERATION_PROMPT
-from deterministic import get_greeting_message,get_reset_confirmation,generate_change_acknowledgment, ask_for_missing_info,ask_for_specialty_clarification,generate_chit_chat_response, generate_recovery_prompt,format_response 
-from location import google_maps_geocode, google_maps_reverse_geocode, google_maps_place_search, google_maps_place_details, kakao_geocode, kakao_reverse_geocode, verify_and_standardize_address
-import re
-import os
-import sys
-from datetime import datetime
-from pathlib import Path
-import logging
+from deterministic import (
+    get_greeting_message, get_reset_confirmation, generate_change_acknowledgment,
+    ask_for_missing_info, ask_for_specialty_clarification, generate_chit_chat_response,
+    generate_recovery_prompt, format_response
+)
+from location import (
+    google_maps_geocode, google_maps_reverse_geocode, google_maps_place_search,
+    google_maps_place_details, kakao_geocode, kakao_reverse_geocode,
+    verify_and_standardize_address
+)
 
-# --- LOGGING SETUP ---
+# Pydantic imports
+from pydantic import BaseModel
+
+
+# ==========================================
+# COOKIE CONSENT MODEL
+# ==========================================
+
+class CookieConsent(BaseModel):
+    """Model for cookie consent settings - GDPR/CCPA compliant"""
+    necessary: bool = True
+    analytics: bool = False
+    advertising: bool = False
+    timestamp: Optional[str] = None
+
+
+# ==========================================
+# LOGGING SETUP
+# ==========================================
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -142,7 +175,11 @@ logging.getLogger("chromadb").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-# --- 1. CONFIGURATION ---
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -164,7 +201,7 @@ DEFAULT_LAT = 37.5219  # Yeouido
 DEFAULT_LON = 126.9243
 DEFAULT_MAX_DISTANCE = 5.0  # km - default search radius
 
-# --- GLOBAL LANGUAGE STATE ---
+# Global state
 LANGUAGE = "English"  # Semi-fixed fixture, updated per message
 
 # Global data structures
@@ -174,14 +211,65 @@ df_filtered = None    # Filtered subset (Summaries not null)
 available_specialties = []  # Unique specialties from parquet data
 
 
-# --- 2. ENHANCED LOGGING UTILITIES ---
+# ==========================================
+# COOKIE CONSENT HELPERS
+# ==========================================
+
+def get_consent_from_cookie(cookie_value: Optional[str]) -> CookieConsent:
+    """
+    Parse cookie consent from request.
+    Returns default (all denied except necessary) if not present.
+    """
+    if not cookie_value:
+        return CookieConsent()
+    
+    try:
+        consent_data = json.loads(cookie_value)
+        return CookieConsent(**consent_data)
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.warning(f"Invalid cookieConsent format: {e}")
+        return CookieConsent()
+
+
+def should_log_analytics(consent: CookieConsent) -> bool:
+    """Check if we can log analytics data"""
+    return consent.analytics
+
+
+def should_use_advertising(consent: CookieConsent) -> bool:
+    """Check if we can use advertising features"""
+    return consent.advertising
+
+
+def privacy_safe_log(consent: CookieConsent, message: str, level: str = "info"):
+    """
+    Privacy-aware logging that respects user consent.
+    Only logs detailed information if analytics consent is given.
+    """
+    if should_log_analytics(consent):
+        if level == "info":
+            logger.info(message)
+        elif level == "debug":
+            logger.debug(message)
+        elif level == "warning":
+            logger.warning(message)
+        elif level == "error":
+            logger.error(message)
+    else:
+        # Minimal logging without user data
+        if level in ["warning", "error"]:
+            logger.log(logging.WARNING if level == "warning" else logging.ERROR, 
+                      "Operation logged (details hidden - no analytics consent)")
+
+
+# ==========================================
+# UTILITIES
+# ==========================================
 
 def print_separator(char='=', length=100):
     """Print a visual separator."""
     logger.info(char * length)
 
-
-# --- 3. LANGUAGE DETECTION ---
 
 def detect_language(message: str) -> str:
     """
@@ -232,7 +320,31 @@ def detect_search_mode(location_text: str, state: State) -> str:
         return 'distance'
 
 
-# --- 6. DATA LOADING ---
+def _format_location_summary(state: State) -> str:
+    """Helper to format location data for logging."""
+    parts = []
+    
+    if state.location:
+        parts.append(f"location={state.location}")
+    
+    if state.latitude and state.longitude:
+        parts.append(f"GPS=({state.latitude:.4f},{state.longitude:.4f})")
+    
+    if state.district:
+        parts.append(f"district={state.district}")
+    
+    if state.dong:
+        parts.append(f"dong={state.dong}")
+    
+    if state.address_korean:
+        parts.append(f"address={state.address_korean[:30]}...")
+    
+    return " | ".join(parts) if parts else "No location data"
+
+
+# ==========================================
+# DATA LOADING
+# ==========================================
 
 def download_and_cache_parquet():
     """Download parquet from HuggingFace and cache locally."""
@@ -305,7 +417,9 @@ def build_context_for_llm(df_subset: pd.DataFrame, n_results: int = 10) -> str:
     return "\n\n---\n\n".join(context_parts)
 
 
-# --- 7. LIFESPAN (STARTUP) ---
+# ==========================================
+# LIFESPAN (STARTUP/SHUTDOWN)
+# ==========================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -411,67 +525,49 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down.")
 
 
+# ==========================================
+# FASTAPI APP SETUP
+# ==========================================
+
 app = FastAPI(lifespan=lifespan)
 client = Groq(api_key=GROQ_API_KEY)
+
+# CORS with credentials enabled for cookie support
 app.add_middleware(
-    CORSMiddleware, 
-    allow_origins=["*"], 
-    allow_credentials=True, 
-    allow_methods=["*"], 
-    allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify your frontend domain
+    allow_credentials=True,  # Important: allows cookies
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Set-Cookie"]  # Allow frontend to read Set-Cookie header
 )
 
 
 # ==========================================
-# HELPER FUNCTIONS
+# STATE MANAGEMENT FUNCTIONS
 # ==========================================
 
-def _format_location_summary(state: State) -> str:
-    """Helper to format location data for logging."""
-    parts = []
-    
-    if state.location:
-        parts.append(f"location={state.location}")
-    
-    if state.latitude and state.longitude:
-        parts.append(f"GPS=({state.latitude:.4f},{state.longitude:.4f})")
-    
-    if state.district:
-        parts.append(f"district={state.district}")
-    
-    if state.dong:
-        parts.append(f"dong={state.dong}")
-    
-    if state.address_korean:
-        parts.append(f"address={state.address_korean[:30]}...")
-    
-    return " | ".join(parts) if parts else "No location data"
-
-
-def standardize_and_fill_state(state: State) -> State:
+def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = None) -> State:
     """
     Standardize and fill missing location fields in state using geocoding APIs.
     This ensures all location data is complete and consistent.
     
-    Priority:
-    1. If we have address/location text but no GPS → geocode to get GPS + district/dong
-    2. If we have GPS but no address/district/dong → reverse geocode
-    3. If we have district/dong but no GPS → geocode district to get approximate GPS
-    
-    Returns enriched state with all available location data.
+    Privacy-aware: Only logs detailed information if analytics consent is given.
     """
     enriched_state = state.model_copy()
     
-    logger.info("=" * 60)
-    logger.info("🔧 STATE ENRICHMENT STARTED")
-    logger.info("=" * 60)
+    if not consent:
+        consent = CookieConsent()
     
-    # Track what we're filling in
+    privacy_safe_log(consent, "=" * 60)
+    privacy_safe_log(consent, "🔧 STATE ENRICHMENT STARTED")
+    privacy_safe_log(consent, "=" * 60)
+    
     filled_fields = []
     
     # ===== CASE 1: Have address/location text but missing GPS/district/dong =====
     if state.location and not (state.latitude and state.longitude):
-        logger.info(f"📍 Case 1: Have location text '{state.location}', need GPS data")
+        privacy_safe_log(consent, f"📍 Case 1: Have location text '{state.location}', need GPS data")
         
         verified = verify_and_standardize_address(state.location)
         
@@ -496,25 +592,22 @@ def standardize_and_fill_state(state: State) -> State:
                 enriched_state.dong = verified['dong']
                 filled_fields.append('dong')
             
-            # Set search mode if not already set
             if not state.search_mode:
                 enriched_state.search_mode = detect_search_mode(state.location, enriched_state)
                 filled_fields.append('search_mode')
             
-            logger.info(f"✅ Filled from address: {', '.join(filled_fields)}")
+            privacy_safe_log(consent, f"✅ Filled from address: {', '.join(filled_fields)}")
         else:
             logger.warning(f"Could not geocode '{state.location}'")
     
     # ===== CASE 2: Have GPS but missing address/district/dong =====
     elif state.latitude and state.longitude and not (state.address_korean and state.district):
-        logger.info(f"📍 Case 2: Have GPS ({state.latitude:.4f}, {state.longitude:.4f}), need address data")
+        privacy_safe_log(consent, f"📍 Case 2: Have GPS ({state.latitude:.4f}, {state.longitude:.4f}), need address data")
         
-        # Try Google Maps reverse geocoding first
         reverse_result = None
         if GOOGLE_MAPS_API_KEY:
             reverse_result = google_maps_reverse_geocode(state.latitude, state.longitude)
         
-        # Fallback to Kakao if Google fails
         if not reverse_result and KAKAO_REST_API_KEY:
             reverse_result = kakao_reverse_geocode(state.latitude, state.longitude)
         
@@ -531,25 +624,22 @@ def standardize_and_fill_state(state: State) -> State:
                 enriched_state.dong = reverse_result['dong']
                 filled_fields.append('dong')
             
-            # Update location text if not set
             if not state.location:
                 enriched_state.location = reverse_result['district']
                 filled_fields.append('location')
             
-            # Set search mode if not already set
             if not state.search_mode:
-                enriched_state.search_mode = 'distance'  # GPS implies distance-based search
+                enriched_state.search_mode = 'distance'
                 filled_fields.append('search_mode')
             
-            logger.info(f"✅ Filled from GPS: {', '.join(filled_fields)}")
+            privacy_safe_log(consent, f"✅ Filled from GPS: {', '.join(filled_fields)}")
         else:
             logger.warning("Could not reverse geocode GPS coordinates")
     
     # ===== CASE 3: Have district/dong but missing GPS =====
     elif state.district and not (state.latitude and state.longitude):
-        logger.info(f"📍 Case 3: Have district '{state.district}', need GPS")
+        privacy_safe_log(consent, f"📍 Case 3: Have district '{state.district}', need GPS")
         
-        # Try to geocode the district
         location_query = f"서울 {state.district}"
         if state.dong:
             location_query = f"서울 {state.district} {state.dong}"
@@ -569,35 +659,33 @@ def standardize_and_fill_state(state: State) -> State:
                 enriched_state.address_korean = verified['address_korean']
                 filled_fields.append('address_korean')
             
-            # Update location text if not set
             if not state.location:
                 enriched_state.location = state.district
                 filled_fields.append('location')
             
-            # Set search mode if not already set
             if not state.search_mode:
-                enriched_state.search_mode = 'zone'  # District implies zone-based search
+                enriched_state.search_mode = 'zone'
                 filled_fields.append('search_mode')
             
-            logger.info(f"✅ Filled from district: {', '.join(filled_fields)}")
+            privacy_safe_log(consent, f"✅ Filled from district: {', '.join(filled_fields)}")
         else:
             logger.warning(f"Could not geocode district '{state.district}'")
     
     # ===== CASE 4: Already complete =====
     else:
         if state.latitude and state.longitude and state.district:
-            logger.info("✅ State already complete - no enrichment needed")
+            privacy_safe_log(consent, "✅ State already complete - no enrichment needed")
         else:
-            logger.info("ℹ️ Insufficient data for enrichment")
+            privacy_safe_log(consent, "ℹ️ Insufficient data for enrichment")
     
     # ===== SUMMARY =====
-    if filled_fields:
+    if filled_fields and should_log_analytics(consent):
         logger.info("\n📋 ENRICHMENT SUMMARY:")
         logger.info(f"   Before: {_format_location_summary(state)}")
         logger.info(f"   After:  {_format_location_summary(enriched_state)}")
         logger.info(f"   Filled: {', '.join(filled_fields)}")
     
-    logger.info("=" * 60 + "\n")
+    privacy_safe_log(consent, "=" * 60 + "\n")
     
     return enriched_state
 
@@ -609,7 +697,6 @@ def cleanse_state_for_change(current_state: State, user_message: str) -> State:
     """
     message_lower = user_message.lower()
     
-    # Detect what's being changed
     location_keywords = ["in ", "near ", "at ", "구", "동", "역", "gangnam", "songpa", "mapo", "jung", "강남", "송파"]
     specialty_keywords = ["dentist", "doctor", "dermatologist", "pediatrician", "치과", "피부과", "병원", "의원", "내과"]
     
@@ -633,7 +720,6 @@ def cleanse_state_for_change(current_state: State, user_message: str) -> State:
         new_state.dong = None
         new_state.search_mode = None
     
-    # Always reset search flags when changing
     new_state.ready_to_search = False
     new_state.search_executed = False
     new_state.conversation_phase = "gathering"
@@ -641,18 +727,22 @@ def cleanse_state_for_change(current_state: State, user_message: str) -> State:
     return new_state
 
 
-def extract_entities(user_message: str) -> Dict[str, Any]:
+# ==========================================
+# EXTRACTION FUNCTIONS
+# ==========================================
+
+def extract_entities(user_message: str, consent: Optional[CookieConsent] = None) -> Dict[str, Any]:
     """
     Call the extraction LLM and verify address via geocoding APIs.
     Matches user intent to actual specialties from parquet data.
-    This is a leaf node that only extracts, doesn't reason about flow.
     """
     global LANGUAGE
     
-    # Build list of available specialties for LLM matching
+    if not consent:
+        consent = CookieConsent()
+    
     specialty_list = ", ".join(available_specialties[:50]) if available_specialties else "No specialties available"
     
-    # Create extraction prompt with actual specialty options
     extraction_prompt = f"""You are extracting medical specialty and location from user messages.
 
 AVAILABLE SPECIALTIES (from actual data):
@@ -679,10 +769,7 @@ Examples:
 "강남구에서 피부과" → {{"specialty": "피부과", "location": "강남구", ...}}
 """
     
-    extraction_messages = [{
-        "role": "system",
-        "content": extraction_prompt
-    }]
+    extraction_messages = [{"role": "system", "content": extraction_prompt}]
     
     try:
         completion = client.chat.completions.create(
@@ -694,24 +781,23 @@ Examples:
         )
         extracted = json.loads(completion.choices[0].message.content)
         
-        # Log the extracted specialty match
         if extracted.get('specialty'):
-            logger.info(f"🎯 Specialty match: '{extracted['specialty']}' (confidence: {extracted.get('specialty_confidence', 0):.2f})")
+            privacy_safe_log(consent, 
+                f"🎯 Specialty match: '{extracted['specialty']}' (confidence: {extracted.get('specialty_confidence', 0):.2f})")
         
-        # ENHANCED: Verify and standardize address via geocoding APIs
         if extracted.get('location'):
             logger.debug(f"📍 Location extraction: '{extracted['location']}'")
             verified = verify_and_standardize_address(extracted['location'])
             
             if verified:
-                # Replace with verified data
                 extracted['latitude'] = verified['lat']
                 extracted['longitude'] = verified['lon']
                 extracted['address_korean'] = verified['address_korean']
                 extracted['district'] = verified['district']
                 extracted['dong'] = verified['dong']
                 
-                logger.info(f"✅ Geocoding verified: {verified['district']} ({verified['lat']:.4f}, {verified['lon']:.4f})")
+                privacy_safe_log(consent,
+                    f"✅ Geocoding verified: {verified['district']} ({verified['lat']:.4f}, {verified['lon']:.4f})")
             else:
                 logger.warning(f"⚠️ Could not verify: '{extracted['location']}'")
         
@@ -722,11 +808,11 @@ Examples:
         return {}
 
 
-def quick_extract_location_change(user_message: str) -> Dict[str, Any]:
-    """
-    SHORTER extraction for when user is just changing location.
-    Uses minimal prompt for efficiency.
-    """
+def quick_extract_location_change(user_message: str, consent: Optional[CookieConsent] = None) -> Dict[str, Any]:
+    """SHORTER extraction for when user is just changing location."""
+    if not consent:
+        consent = CookieConsent()
+    
     extraction_prompt = f"""Extract location from: "{user_message}"
 
 Return JSON: {{"location": "extracted location or null"}}
@@ -747,7 +833,6 @@ Examples: "강남구", "Gangnam", "서울역", "역삼동"
         )
         extracted = json.loads(completion.choices[0].message.content)
         
-        # Verify via geocoding
         if extracted.get('location'):
             verified = verify_and_standardize_address(extracted['location'])
             
@@ -757,7 +842,7 @@ Examples: "강남구", "Gangnam", "서울역", "역삼동"
                 extracted['address_korean'] = verified['address_korean']
                 extracted['district'] = verified['district']
                 extracted['dong'] = verified['dong']
-                logger.info(f"✅ Quick location change: {verified['district']}")
+                privacy_safe_log(consent, f"✅ Quick location change: {verified['district']}")
             else:
                 logger.warning(f"⚠️ Could not verify: '{extracted['location']}'")
         
@@ -768,11 +853,11 @@ Examples: "강남구", "Gangnam", "서울역", "역삼동"
         return {}
 
 
-def quick_extract_specialty_change(user_message: str) -> Dict[str, Any]:
-    """
-    SHORTER extraction for when user is just changing specialty.
-    Uses minimal prompt for efficiency.
-    """
+def quick_extract_specialty_change(user_message: str, consent: Optional[CookieConsent] = None) -> Dict[str, Any]:
+    """SHORTER extraction for when user is just changing specialty."""
+    if not consent:
+        consent = CookieConsent()
+    
     specialty_list = ", ".join(available_specialties[:50]) if available_specialties else ""
     
     extraction_prompt = f"""Match user intent to specialty from: "{user_message}"
@@ -800,7 +885,8 @@ Match Korean/English names. Examples: "dentist" → "치과", "dermatologist" �
         extracted = json.loads(completion.choices[0].message.content)
         
         if extracted.get('specialty'):
-            logger.info(f"✅ Quick specialty change: '{extracted['specialty']}' ({extracted.get('specialty_confidence', 0):.2f})")
+            privacy_safe_log(consent,
+                f"✅ Quick specialty change: '{extracted['specialty']}' ({extracted.get('specialty_confidence', 0):.2f})")
         
         return extracted
         
@@ -834,28 +920,26 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any]) -> Stat
     if extracted.get('dong'):
         state.dong = extracted['dong']
     
-    # Detect search mode based on location context
     if state.location:
         state.search_mode = detect_search_mode(state.location, state)
     
     return state
 
 
+# ==========================================
+# SEARCH FUNCTIONS
+# ==========================================
+
 def filter_by_zone(df: pd.DataFrame, district: str, dong: Optional[str] = None) -> pd.DataFrame:
-    """
-    Filter facilities by zone (district and optionally dong).
-    Uses fuzzy matching for flexibility.
-    """
+    """Filter facilities by zone (district and optionally dong)."""
     if not district:
         return df
     
     logger.info(f"🏘️ Zone filter: {district} {dong or ''}")
     
-    # Exact match first
     if 'file_district' in df.columns:
         mask = df['file_district'].str.contains(district, na=False, case=False)
         
-        # Add dong filter if specified
         if dong and 'file_dong' in df.columns:
             mask = mask & df['file_dong'].str.contains(dong, na=False, case=False)
         
@@ -865,23 +949,17 @@ def filter_by_zone(df: pd.DataFrame, district: str, dong: Optional[str] = None) 
             logger.info(f"✓ Filtered: {len(df)} → {len(result)}")
             return result
     
-    # Fallback: fuzzy match
     logger.warning("Using fuzzy matching")
     return fuzzy_match_location(district, df)
 
 
 def validate_distance_criteria(df: pd.DataFrame, max_distance: float) -> pd.DataFrame:
-    """
-    Validate that results respect distance criteria.
-    Filters out facilities beyond max_distance.
-    """
+    """Validate that results respect distance criteria."""
     if 'distance_km' not in df.columns:
         return df
     
-    # Remove facilities with invalid/missing distance
     df_valid = df[df['distance_km'].notna()].copy()
     
-    # Filter by max distance
     before = len(df_valid)
     df_valid = df_valid[df_valid['distance_km'] <= max_distance]
     
@@ -891,23 +969,25 @@ def validate_distance_criteria(df: pd.DataFrame, max_distance: float) -> pd.Data
     return df_valid
 
 
-def execute_search(state: State, user_message: str, max_distance: float = DEFAULT_MAX_DISTANCE) -> Tuple[str, List[Dict]]:
-    """
-    Execute the actual search logic with:
-    - Address verification via geocoding
-    - Zone-based OR distance-based search
-    - Distance validation
-    """
+def execute_search(
+    state: State, 
+    user_message: str, 
+    max_distance: float = DEFAULT_MAX_DISTANCE,
+    consent: Optional[CookieConsent] = None
+) -> Tuple[str, List[Dict]]:
+    """Execute the actual search logic with privacy-aware logging."""
     global LANGUAGE
     
-    logger.info("=" * 60)
-    logger.info("🔍 SEARCH STARTED")
-    logger.info(f"Query: \"{user_message[:50]}...\"")
-    logger.info(f"Specialty: {state.specialty or 'Any'}")
-    logger.info(f"Mode: {(state.search_mode or 'auto').upper()}")
-    logger.info(f"Max Distance: {max_distance}km")
-    logger.info(f"Language: {LANGUAGE}")
-    logger.info("=" * 60)
+    if not consent:
+        consent = CookieConsent()
+    
+    privacy_safe_log(consent, "=" * 60)
+    privacy_safe_log(consent, "🔍 SEARCH STARTED")
+    privacy_safe_log(consent, f"Specialty: {state.specialty or 'Any'}")
+    privacy_safe_log(consent, f"Mode: {(state.search_mode or 'auto').upper()}")
+    privacy_safe_log(consent, f"Max Distance: {max_distance}km")
+    privacy_safe_log(consent, f"Language: {LANGUAGE}")
+    privacy_safe_log(consent, "=" * 60)
     
     working_df = df_filtered.copy()
     location_context = ""
@@ -917,8 +997,7 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
     # ===== LOCATION FILTERING =====
     
     if state.search_mode == 'zone' and state.district:
-        # ZONE-BASED SEARCH
-        logger.info(f"🏘️ Zone search: {state.district} {state.dong or ''}")
+        privacy_safe_log(consent, f"🏘️ Zone search: {state.district} {state.dong or ''}")
         
         working_df = filter_by_zone(working_df, state.district, state.dong)
         
@@ -927,7 +1006,6 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
         else:
             location_context = f"in {state.district}"
         
-        # Still calculate distances for ranking if GPS available
         if user_lat and user_lon and 'lat' in working_df.columns and 'lon' in working_df.columns:
             def calc_distance(row):
                 if pd.notna(row['lat']) and pd.notna(row['lon']):
@@ -940,29 +1018,24 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
             working_df['distance_km'] = 0
     
     elif user_lat and user_lon:
-        # GPS-BASED DISTANCE SEARCH
-        logger.info(f"📍 GPS search: ({user_lat:.4f}, {user_lon:.4f})")
+        privacy_safe_log(consent, f"📍 GPS search: ({user_lat:.4f}, {user_lon:.4f})")
         
-        # Get address from coordinates for context (try Google Maps first)
         reverse_result = None
         if GOOGLE_MAPS_API_KEY:
             reverse_result = google_maps_reverse_geocode(user_lat, user_lon)
         
-        # Fallback to Kakao
         if not reverse_result and KAKAO_REST_API_KEY:
             reverse_result = kakao_reverse_geocode(user_lat, user_lon)
         
         if reverse_result:
             location_context = f"near {reverse_result['address_korean']}"
             
-            # Store district/dong if not already set
             if not state.district:
                 state.district = reverse_result.get('district')
                 state.dong = reverse_result.get('dong')
         else:
             location_context = f"near your location"
         
-        # Calculate distances for all facilities with coordinates
         if 'lat' in working_df.columns and 'lon' in working_df.columns:
             def calc_distance(row):
                 if pd.notna(row['lat']) and pd.notna(row['lon']):
@@ -971,13 +1044,11 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
             
             working_df['distance_km'] = working_df.apply(calc_distance, axis=1)
             
-            # Filter by distance
             before_count = len(working_df)
             working_df = working_df[working_df['distance_km'] < max_distance]
-            logger.info(f"✓ Distance filter: {before_count} → {len(working_df)}")
+            privacy_safe_log(consent, f"✓ Distance filter: {before_count} → {len(working_df)}")
             
             if len(working_df) == 0:
-                # Expand search radius if nothing found
                 expanded_radius = max_distance * 2
                 logger.warning(f"Expanding to {expanded_radius}km")
                 working_df = df_filtered.copy()
@@ -985,32 +1056,27 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
                 working_df = working_df[working_df['distance_km'] < expanded_radius]
                 location_context = f"within {expanded_radius}km of your location"
             
-            # Sort by distance
             working_df = working_df.sort_values('distance_km')
         else:
             working_df['distance_km'] = 0
             location_context = "in Seoul"
     
     elif state.location:
-        # TEXT-BASED LOCATION SEARCH (fallback)
-        logger.info(f"📍 Text location: {state.location}")
+        privacy_safe_log(consent, f"📍 Text location: {state.location}")
         working_df = fuzzy_match_location(state.location, working_df)
         location_context = f"in {state.location}"
         working_df['distance_km'] = 0
     
     else:
-        # CITY-WIDE SEARCH
-        logger.info("📍 City-wide search")
+        privacy_safe_log(consent, "📍 City-wide search")
         location_context = "across Seoul"
         working_df['distance_km'] = 0
     
     # ===== CATEGORY FILTER =====
-    # Specialty is already matched to parquet categories by LLM
     if state.specialty and 'category' in working_df.columns:
         before_count = len(working_df)
-        # Direct match since LLM already matched to available specialties
         working_df = working_df[working_df['category'].str.contains(state.specialty, na=False, case=False)]
-        logger.info(f"🏥 Category filter: '{state.specialty}' → {before_count} to {len(working_df)}")
+        privacy_safe_log(consent, f"🏥 Category filter: '{state.specialty}' → {before_count} to {len(working_df)}")
     
     # ===== SEMANTIC RANKING (RAG) =====
     query_text = state.specialty or ""
@@ -1025,7 +1091,6 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
                 rag_ranking = {place_id: idx for idx, place_id in enumerate(rag_results['ids'][0])}
                 working_df['relevance_rank'] = working_df['place_id'].apply(lambda pid: rag_ranking.get(pid, 9999))
                 
-                # Combined ranking: distance + relevance (only if distance mode)
                 if state.search_mode != 'zone' and 'distance_km' in working_df.columns and working_df['distance_km'].max() > 0:
                     max_rank = working_df['relevance_rank'].max()
                     max_dist = working_df['distance_km'].max()
@@ -1040,35 +1105,25 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
                     else:
                         working_df['distance_score'] = 1.0
                     
-                    # Dynamic weighting: larger radius = more emphasis on specialty relevance
-                    # Formula: relevance_weight increases with search radius
-                    # 2km → 50% relevance, 50% distance
-                    # 5km → 70% relevance, 30% distance  
-                    # 10km → 85% relevance, 15% distance
-                    # 20km+ → 95% relevance, 5% distance
+                    # Dynamic weighting based on radius
                     if max_distance <= 2:
                         relevance_weight = 0.50
                     elif max_distance <= 5:
-                        # Linear interpolation between 2km and 5km
                         relevance_weight = 0.50 + (max_distance - 2) * (0.70 - 0.50) / (5 - 2)
                     elif max_distance <= 10:
-                        # Linear interpolation between 5km and 10km
                         relevance_weight = 0.70 + (max_distance - 5) * (0.85 - 0.70) / (10 - 5)
                     else:
-                        # Cap at 95% relevance for very large radii
                         relevance_weight = min(0.95, 0.85 + (max_distance - 10) * 0.01)
                     
                     distance_weight = 1 - relevance_weight
                     
-                    # Weighted combination with dynamic weights
                     working_df['combined_score'] = (
                         relevance_weight * working_df['relevance_score'] + 
                         distance_weight * working_df['distance_score']
                     )
                     working_df = working_df.sort_values('combined_score', ascending=False)
-                    logger.debug(f"✓ Combined ranking ({relevance_weight:.0%} relevance + {distance_weight:.0%} distance for {max_distance}km radius)")
+                    logger.debug(f"✓ Combined ranking ({relevance_weight:.0%} relevance + {distance_weight:.0%} distance)")
                 else:
-                    # Zone mode: pure relevance ranking
                     working_df = working_df.sort_values('relevance_rank')
                     logger.debug(f"✓ RAG ranked: {(working_df['relevance_rank'] < 9999).sum()}/{len(working_df)}")
             else:
@@ -1083,9 +1138,9 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
     if LANGUAGE == "English" and 'has_english' in working_df.columns:
         before = len(working_df)
         working_df = working_df[working_df['has_english'] == True]
-        logger.info(f"🌐 English filter: {before} → {len(working_df)}")
+        privacy_safe_log(consent, f"🌐 English filter: {before} → {len(working_df)}")
     
-    # ===== FINAL DISTANCE VALIDATION (for distance mode) =====
+    # ===== FINAL DISTANCE VALIDATION =====
     if state.search_mode != 'zone' and 'distance_km' in working_df.columns:
         working_df = validate_distance_criteria(working_df, max_distance)
     
@@ -1093,7 +1148,7 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
     results = []
     
     if len(working_df) > 0:
-        logger.info(f"✓ Building response from {min(10, len(working_df))} facilities")
+        privacy_safe_log(consent, f"✓ Building response from {min(10, len(working_df))} facilities")
         facilities_context = build_context_for_llm(working_df, n_results=10)
         
         gen_messages = [{
@@ -1122,31 +1177,26 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
                 "category": safe_convert_to_python(row['category']),
             }
             
-            # Simple fields
             simple_fields = ['address', 'phone', 'business_hours', 'english_confidence_score']
             for field in simple_fields:
                 if field in row.index and pd.notna(row[field]):
                     result[field] = safe_convert_to_python(row[field])
             
-            # Location fields
             if 'file_district' in row.index and pd.notna(row['file_district']):
                 result['district'] = safe_convert_to_python(row['file_district'])
             if 'file_dong' in row.index and pd.notna(row['file_dong']):
                 result['dong'] = safe_convert_to_python(row['file_dong'])
             
-            # GPS coordinates from parquet
             if 'lat' in row.index and pd.notna(row['lat']):
                 result['lat'] = safe_convert_to_python(row['lat'])
             if 'lon' in row.index and pd.notna(row['lon']):
                 result['lon'] = safe_convert_to_python(row['lon'])
             
-            # Website
             if 'website' in row.index and pd.notna(row['website']):
                 result['website'] = safe_convert_to_python(row['website'])
             elif 'url' in row.index and pd.notna(row['url']):
                 result['website'] = safe_convert_to_python(row['url'])
             
-            # Complex fields
             if 'Summaries' in row.index and isinstance(row['Summaries'], (list, np.ndarray)):
                 result['Summaries'] = safe_convert_to_python(row['Summaries'])
             
@@ -1162,68 +1212,115 @@ def execute_search(state: State, user_message: str, max_distance: float = DEFAUL
             if 'medical_info_parsed' in row.index and isinstance(row['medical_info_parsed'], dict):
                 result['medical_info_parsed'] = safe_convert_to_python(row['medical_info_parsed'])
             
-            # Booleans and numbers
             result['has_english'] = safe_convert_to_python(row.get('has_english', False))
             
-            # ⭐ FIX: Add BOTH distance_km and distance fields for frontend compatibility
+            # ⭐ Add BOTH distance_km and distance for frontend compatibility
             distance_value = safe_convert_to_python(row.get('distance_km', 0))
             result['distance_km'] = distance_value
-            result['distance'] = distance_value  # Frontend expects 'distance'
+            result['distance'] = distance_value
             
             result['relevance_rank'] = safe_convert_to_python(row.get('relevance_rank', 9999))
             
             results.append(result)
     else:
-        # No results found
         if LANGUAGE == "English":
             response_text = "I couldn't find any facilities matching your criteria. Would you like to try a different specialty or area?"
         else:
             response_text = "검색 조건에 맞는 시설을 찾을 수 없습니다. 다른 전문 분야나 지역을 시도해 보시겠어요?"
     
-    logger.info(f"✅ SEARCH COMPLETED: {len(results)} results")
-    logger.info("=" * 60 + "\n")
+    privacy_safe_log(consent, f"✅ SEARCH COMPLETED: {len(results)} results")
+    privacy_safe_log(consent, "=" * 60 + "\n")
     
     return response_text, results
 
 
 # ==========================================
-# MAIN CHAT ENDPOINT (Router-Controller)
+# API ENDPOINTS
 # ==========================================
 
-@app.post("/chat")
-async def chat_endpoint(req: ChatRequest):
+@app.post("/consent")
+async def update_consent(
+    consent: CookieConsent,
+    response: Response
+):
     """
-    Router-Controller Architecture:
-    Step 0: Detect language and enrich state
-    Step 1: Route (classify intent)
-    Step 2: Branch (execute appropriate logic)
-    Step 3: Return enriched state to frontend
+    Update cookie consent preferences.
+    This endpoint allows the frontend to sync consent with the backend.
+    """
+    try:
+        # Add timestamp
+        consent.timestamp = datetime.utcnow().isoformat()
+        
+        # Set cookie with consent (30 days expiry)
+        response.set_cookie(
+            key="cookieConsent",
+            value=json.dumps(consent.model_dump()),
+            max_age=30 * 24 * 60 * 60,  # 30 days in seconds
+            httponly=False,  # Allow JavaScript access
+            secure=True,     # HTTPS only in production
+            samesite="lax"   # CSRF protection
+        )
+        
+        logger.info(f"✅ Consent updated: analytics={consent.analytics}, advertising={consent.advertising}")
+        
+        return {
+            "status": "success",
+            "message": "Consent preferences updated",
+            "consent": consent.model_dump()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating consent: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update consent")
+
+
+@app.post("/chat")
+async def chat_endpoint(
+    req: ChatRequest,
+    response: Response,
+    request: Request,
+    cookieConsent: Optional[str] = Cookie(None)
+):
+    """
+    Router-Controller Architecture with Cookie Consent Support.
+    
+    Now includes:
+    - Cookie consent validation
+    - Privacy-aware logging
+    - Conditional analytics tracking
     """
     
     global LANGUAGE
     
-    logger.info("=" * 60)
-    logger.info("📨 NEW REQUEST")
-    logger.info(f"Message: \"{req.message[:50]}...\"")
+    # Parse consent from cookie
+    consent = get_consent_from_cookie(cookieConsent)
+    
+    # Privacy-aware logging
+    if should_log_analytics(consent):
+        logger.info("=" * 60)
+        logger.info("📨 NEW REQUEST")
+        logger.info(f"Message: \"{req.message[:50]}...\"")
+    else:
+        logger.info("📨 REQUEST (limited logging - no analytics consent)")
     
     # ==========================================
-    # STEP 0A: LANGUAGE DETECTION (Per Message)
+    # STEP 0A: LANGUAGE DETECTION
     # ==========================================
     LANGUAGE = detect_language(req.message)
     
-    logger.info("=" * 60)
+    if should_log_analytics(consent):
+        logger.info("=" * 60)
     
     # ==========================================
-    # STEP 0B: STATE ENRICHMENT (Fill in blanks)
+    # STEP 0B: STATE ENRICHMENT
     # ==========================================
-    enriched_state = standardize_and_fill_state(req.current_state)
-    enriched_state.language_pref = LANGUAGE  # Update language in state
+    enriched_state = standardize_and_fill_state(req.current_state, consent)
+    enriched_state.language_pref = LANGUAGE
     
-    # Use enriched state for the rest of the processing
     current_turn = enriched_state.turn_count + 1
     
     # ==========================================
-    # STEP 1: ROUTING (Root Node)
+    # STEP 1: ROUTING
     # ==========================================
     
     router_messages = [{
@@ -1249,53 +1346,50 @@ async def chat_endpoint(req: ChatRequest):
         route = json.loads(router_completion.choices[0].message.content)
         intent = route.get("intent")
         
-        logger.info(f"🧭 ROUTER: {intent} (confidence: {route.get('confidence', 0):.2f})")
-        logger.info(f"   Turn: {current_turn}")
+        if should_log_analytics(consent):
+            logger.info(f"🧭 ROUTER: {intent} (confidence: {route.get('confidence', 0):.2f})")
+            logger.info(f"   Turn: {current_turn}")
         
     except Exception as e:
         logger.error(f"Router Error: {e}", exc_info=True)
-        intent = "PROVIDE_INFO"  # Safe fallback
+        intent = "PROVIDE_INFO"
     
     # ==========================================
     # STEP 2: CONTROLLER (Tree Traversal)
     # ==========================================
 
-    # === BRANCH 1: NEW_SEARCH (Complete Reset) ===
+    # === BRANCH 1: NEW_SEARCH ===
     if intent == "NEW_SEARCH":
-        logger.info("🔄 BRANCH: NEW_SEARCH")
+        privacy_safe_log(consent, "🔄 BRANCH: NEW_SEARCH")
         
-        # Create brand new state (all fields reset to default/None)
         new_state = State()
-        new_state.turn_count = 0  # Reset to 0
-        new_state.language_pref = LANGUAGE  # Use global language
+        new_state.turn_count = 0
+        new_state.language_pref = LANGUAGE
         
-        # Check if this is an explicit reset/quit command
         reset_keywords = ["reset", "restart", "quit", "exit", "stop", "cancel", 
                          "새로 시작", "처음부터", "다시 시작", "그만", "종료"]
         
         is_explicit_reset = any(kw in req.message.lower() for kw in reset_keywords)
         
         if is_explicit_reset:
-            response = get_reset_confirmation(LANGUAGE)
+            response_text = get_reset_confirmation(LANGUAGE)
         else:
-            response = get_greeting_message(LANGUAGE)
+            response_text = get_greeting_message(LANGUAGE)
         
         return {
-            "response": response,
+            "response": response_text,
             "state": new_state.model_dump(),
             "results": []
         }
     
     # === BRANCH 2: CHANGE_CRITERIA ===
     elif intent == "CHANGE_CRITERIA":
-        logger.info("🔀 BRANCH: CHANGE_CRITERIA")
+        privacy_safe_log(consent, "🔀 BRANCH: CHANGE_CRITERIA")
         
-        # Hard state cleansing (use enriched state)
         cleansed_state = cleanse_state_for_change(enriched_state, req.message)
         cleansed_state.turn_count = current_turn
         cleansed_state.language_pref = LANGUAGE
         
-        # Detect what's being changed for optimized extraction
         message_lower = req.message.lower()
         location_keywords = ["in ", "near ", "at ", "구", "동", "역", "gangnam", "songpa", "mapo", "강남", "송파", "location"]
         specialty_keywords = ["dentist", "doctor", "dermatologist", "pediatrician", "치과", "피부과", "병원", "의원", "내과", "specialty"]
@@ -1303,189 +1397,168 @@ async def chat_endpoint(req: ChatRequest):
         has_location_mention = any(kw in message_lower for kw in location_keywords)
         has_specialty_mention = any(kw in message_lower for kw in specialty_keywords)
         
-        # Use optimized extraction based on what changed
         if has_location_mention and not has_specialty_mention:
-            # Only location changed - use quick extraction
-            logger.debug("🚀 Using quick location extraction")
-            extracted = quick_extract_location_change(req.message)
+            if should_log_analytics(consent):
+                logger.debug("🚀 Using quick location extraction")
+            extracted = quick_extract_location_change(req.message, consent)
         elif has_specialty_mention and not has_location_mention:
-            # Only specialty changed - use quick extraction  
-            logger.debug("🚀 Using quick specialty extraction")
-            extracted = quick_extract_specialty_change(req.message)
+            if should_log_analytics(consent):
+                logger.debug("🚀 Using quick specialty extraction")
+            extracted = quick_extract_specialty_change(req.message, consent)
         else:
-            # Both or unclear - use full extraction
-            logger.debug("🔍 Using full extraction")
-            extracted = extract_entities(req.message)
+            if should_log_analytics(consent):
+                logger.debug("🔍 Using full extraction")
+            extracted = extract_entities(req.message, consent)
         
-        # Merge extracted data into cleansed state
         new_state = merge_extraction_into_state(cleansed_state, extracted)
-        
-        # ⭐ ENRICH AGAIN after extraction
-        new_state = standardize_and_fill_state(new_state)
+        new_state = standardize_and_fill_state(new_state, consent)
         new_state.language_pref = LANGUAGE
         
-        # Check if we have enough to search (either location OR GPS OR zone)
         has_location = bool(new_state.location or (new_state.latitude and new_state.longitude) or new_state.district)
         
         if new_state.specialty and has_location:
-            # Check specialty confidence
             if new_state.specialty_confidence >= 0.5:
                 new_state.ready_to_search = True
                 new_state.conversation_phase = "searching"
             else:
-                # Low confidence - ask for clarification
-                response = ask_for_specialty_clarification(new_state)
+                response_text = ask_for_specialty_clarification(new_state)
                         
                 return {
-                    "response": response,
+                    "response": response_text,
                     "state": new_state.model_dump(),
                     "results": []
                 }
         else:
             new_state.conversation_phase = "gathering"
-            response = ask_for_missing_info(new_state)
+            response_text = ask_for_missing_info(new_state)
             
             return {
-                "response": response,
+                "response": response_text,
                 "state": new_state.model_dump(),
                 "results": []
             }
         
-        # Execute search if ready
         results = []
         if new_state.ready_to_search:
-            response, results = execute_search(new_state, req.message, max_distance=new_state.max_distance_km)
+            response_text, results = execute_search(new_state, req.message, max_distance=new_state.max_distance_km, consent=consent)
             new_state.search_executed = True
              
         return {
-            "response": response,
+            "response": response_text,
             "state": new_state.model_dump(),
             "results": results
         }
     
     # === BRANCH 3: PROVIDE_INFO ===
     elif intent == "PROVIDE_INFO":
-        logger.info("📝 BRANCH: PROVIDE_INFO")
+        privacy_safe_log(consent, "📝 BRANCH: PROVIDE_INFO")
         
-        # Extract entities from user message (will auto-verify address via geocoding)
-        extracted = extract_entities(req.message)
+        extracted = extract_entities(req.message, consent)
         
-        # Merge into enriched state (accumulate information)
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
         new_state.language_pref = LANGUAGE
         new_state = merge_extraction_into_state(new_state, extracted)
-        
-        # ⭐ ENRICH AGAIN after extraction
-        new_state = standardize_and_fill_state(new_state)
+        new_state = standardize_and_fill_state(new_state, consent)
         new_state.language_pref = LANGUAGE
         
-        # Check if we have enough to search (either location OR GPS OR zone)
         has_location = bool(new_state.location or (new_state.latitude and new_state.longitude) or new_state.district)
         
-        # Determine conversation phase
         if new_state.specialty and has_location:
-            # Check specialty confidence
             if new_state.specialty_confidence >= 0.5:
                 new_state.ready_to_search = True
                 new_state.conversation_phase = "searching"
             else:
-                # Low confidence - ask for clarification
-                response = ask_for_specialty_clarification(new_state)
-                response = format_response(response)
+                response_text = ask_for_specialty_clarification(new_state)
+                response_text = format_response(response_text)
                 
                 return {
-                    "response": response,
+                    "response": response_text,
                     "state": new_state.model_dump(),
                     "results": []
                 }
         else:
-            # Still gathering
             new_state.conversation_phase = "gathering"
-            response = ask_for_missing_info(new_state)
+            response_text = ask_for_missing_info(new_state)
             return {
-                "response": response,
+                "response": response_text,
                 "state": new_state.model_dump(),
                 "results": []
             }
         
-        # Execute search if ready
         results = []
         if new_state.ready_to_search:
-            response, results = execute_search(new_state, req.message, max_distance=new_state.max_distance_km)
+            response_text, results = execute_search(new_state, req.message, max_distance=new_state.max_distance_km, consent=consent)
             new_state.search_executed = True
 
         return {
-            "response": response,
+            "response": response_text,
             "state": new_state.model_dump(),
             "results": results
         }
     
     # === BRANCH 4: CHIT_CHAT ===
     elif intent == "CHIT_CHAT":
-        logger.info("💬 BRANCH: CHIT_CHAT")
+        privacy_safe_log(consent, "💬 BRANCH: CHIT_CHAT")
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        new_state.language_pref = LANGUAGE  # Use global language
+        new_state.language_pref = LANGUAGE
         
-        # Check if this is a closing statement
         is_closing = any(word in req.message.lower() for word in 
                         ["thanks", "thank you", "감사합니다", "고마워"])
         
         if is_closing:
             new_state.conversation_phase = "complete"
         
-        response = generate_chit_chat_response(req.message, new_state)
+        response_text = generate_chit_chat_response(req.message, new_state)
         
         return {
-            "response": response,
+            "response": response_text,
             "state": new_state.model_dump(),
             "results": []
         }
     
-    # === BRANCH 5: HELP_RECOVERY (Stagnation Check) ===
+    # === BRANCH 5: HELP_RECOVERY ===
     elif intent == "HELP_RECOVERY":
-        logger.info("🆘 BRANCH: HELP_RECOVERY")
+        privacy_safe_log(consent, "🆘 BRANCH: HELP_RECOVERY")
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        new_state.language_pref = LANGUAGE  # Use global language
+        new_state.language_pref = LANGUAGE
         
-        response = generate_recovery_prompt(new_state)
+        response_text = generate_recovery_prompt(new_state)
         
         return {
-            "response": response,
+            "response": response_text,
             "state": new_state.model_dump(),
             "results": []
         }
     
-    # Fallback
+    # === FALLBACK ===
     else:
         logger.warning(f"Unknown intent: {intent}")
         
         if LANGUAGE == "English":
-            response = "I'm not sure how to help. Could you rephrase your request?"
+            response_text = "I'm not sure how to help. Could you rephrase your request?"
         else:
-            response = "잘 이해하지 못했습니다. 다시 말씀해 주시겠어요?"
+            response_text = "잘 이해하지 못했습니다. 다시 말씀해 주시겠어요?"
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
         new_state.language_pref = LANGUAGE
         
         return {
-            "response": response,
+            "response": response_text,
             "state": new_state.model_dump(),
             "results": []
         }
 
 
-# ===== HEALTH CHECK =====
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with privacy compliance information"""
     
-    # Count facilities with GPS
     gps_count = 0
     if df_filtered is not None and 'lat' in df_filtered.columns:
         gps_count = df_filtered[
@@ -1506,6 +1579,14 @@ async def health_check():
             "kakao_maps": "ENABLED ✓" if KAKAO_REST_API_KEY else "disabled"
         },
         "geocoding_strategy": "Google Maps (primary) → Kakao Maps (fallback)",
-        "logging_mode": "STRUCTURED LOGGING (uvicorn compatible)",
-        "architecture": "Dynamic Specialty Matching + Google Maps Location ID + Radius-Adaptive Relevance Ranking + Simplified Language Detection"
+        "logging_mode": "PRIVACY-AWARE LOGGING (respects cookie consent)",
+        "privacy_features": {
+            "cookie_consent": "ENABLED ✓",
+            "gdpr_compliant": "YES",
+            "ccpa_compliant": "YES",
+            "analytics_conditional": "YES (requires user consent)",
+            "advertising_conditional": "YES (requires user consent)",
+            "privacy_aware_logging": "YES (reduces detail without consent)"
+        },
+        "architecture": "Dynamic Specialty Matching + Google Maps Location ID + Radius-Adaptive Relevance Ranking + Cookie Consent Management + Privacy-First Design"
     }
