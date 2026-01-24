@@ -90,6 +90,8 @@ export default function ChatInterface() {
   const [disclaimerVisible, setDisclaimerVisible] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const previousMessageCountRef = useRef(messages.length);
+  const isTypingRef = useRef(false);
 
   // Auto-dismiss disclaimer after 15 seconds
   useEffect(() => {
@@ -115,11 +117,18 @@ export default function ChatInterface() {
     return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Auto-scroll to bottom when new messages arrive (but not on mount)
+  // Auto-scroll ONLY when new messages arrive (not when typing)
   useEffect(() => {
-    if (messages.length > 1) {
-      scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const hasNewMessage = messages.length > previousMessageCountRef.current;
+    
+    if (hasNewMessage && !isTypingRef.current) {
+      // Small delay to ensure DOM has updated
+      setTimeout(() => {
+        scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
     }
+    
+    previousMessageCountRef.current = messages.length;
   }, [messages]);
 
   const [currentState, setCurrentState] = useState<State>({
@@ -156,6 +165,9 @@ export default function ChatInterface() {
 
   const handleSendMessage = async (text: string, stateOverride?: Partial<State>) => {
     if (!text.trim()) return;
+
+    // Reset typing flag when sending
+    isTypingRef.current = false;
 
     const userMsg: Message = { role: "user", content: text };
     if (!stateOverride) setMessages((prev) => [...prev, userMsg]);
@@ -226,6 +238,18 @@ export default function ChatInterface() {
         setLoading(false);
       }
     );
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    isTypingRef.current = true;
+    setInput(e.target.value);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage(input);
+    }
   };
 
   // Calculate disclaimer height for dynamic spacing
@@ -428,17 +452,6 @@ export default function ChatInterface() {
 
       {/* --- INPUT AREA AT BOTTOM --- */}
       <div className="flex-shrink-0 border-t border-slate-200/50 bg-white/95 backdrop-blur-md shadow-lg">
-        {/*
-        { Mobile Ad Banner }
-        <div className="block xl:hidden border-b border-slate-100">
-          <div className="w-full h-[50px] flex items-center justify-center bg-gradient-to-r from-slate-50/50 to-slate-100/50">
-            <div className="scale-[0.6] origin-center">
-              <AdSlot />
-            </div>
-          </div>
-        </div>
-        */}
-
         {/* Input Controls */}
         <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
           <div className="flex items-center gap-2 sm:gap-3">
@@ -456,8 +469,17 @@ export default function ChatInterface() {
                 className="w-full px-4 py-3 sm:px-5 sm:py-4 rounded-xl bg-white border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all text-slate-800 placeholder-slate-400 outline-none text-sm sm:text-base shadow-sm"
                 placeholder="Describe what you need..."
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSendMessage(input)}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onFocus={() => { isTypingRef.current = true; }}
+                onBlur={() => { 
+                  // Delay to allow send button click to register
+                  setTimeout(() => { 
+                    if (input.trim() === '') {
+                      isTypingRef.current = false; 
+                    }
+                  }, 200);
+                }}
               />
             </div>
 
