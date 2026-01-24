@@ -535,13 +535,17 @@ client = Groq(api_key=GROQ_API_KEY)
 # CORS with credentials enabled for cookie support
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your frontend domain
-    allow_credentials=True,  # Important: allows cookies
+    allow_origins=[
+        "http://localhost:3000",  # Local development
+        "https://seouldoc.io",     # Production domain
+        "https://www.seouldoc.io", # WWW version
+        "https://*.vercel.app",    # Vercel preview deployments
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Set-Cookie"]  # Allow frontend to read Set-Cookie header
+    expose_headers=["Set-Cookie"]
 )
-
 
 # ==========================================
 # STATE MANAGEMENT FUNCTIONS
