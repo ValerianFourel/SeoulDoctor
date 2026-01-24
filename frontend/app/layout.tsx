@@ -2,7 +2,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
-import Script from "next/script";
 
 import "./globals.css";
 import HeaderMenu from "../components/HeaderMenu";
@@ -24,11 +23,9 @@ const siteUrl =
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-
   title: "Seoul Medical Facility Finder | AI Medical Concierge",
   description:
     "Find the best English-speaking medical facilities in Seoul with AI assistance. Search by specialty, location, and language capabilities.",
-
   keywords: [
     "Seoul medical facilities",
     "English-speaking doctors Seoul",
@@ -36,11 +33,9 @@ export const metadata: Metadata = {
     "Seoul hospitals",
     "medical concierge Seoul",
   ],
-
   other: {
     "google-adsense-account": "ca-pub-2786202112029582",
   },
-
   openGraph: {
     title: "Seoul Medical Facility Finder",
     description:
@@ -50,7 +45,6 @@ export const metadata: Metadata = {
     siteName: "Seoul Medical Facility Finder",
     url: siteUrl,
   },
-
   twitter: {
     card: "summary_large_image",
     title: "Seoul Medical Facility Finder",
@@ -65,35 +59,39 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html 
+      lang="en"
+      suppressHydrationWarning={true}
+    >
       <head>
-        <Script
-          id="google-consent-mode"
-          strategy="afterInteractive"
-        >
-          {`
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){dataLayer.push(arguments);}
-            
-            gtag('consent', 'default', {
-              'ad_storage': 'denied',
-              'ad_user_data': 'denied',
-              'ad_personalization': 'denied',
-              'analytics_storage': 'denied'
-            });
-          `}
-        </Script>
-        <ConsentScripts />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){dataLayer.push(arguments);}
+              
+              gtag('consent', 'default', {
+                'ad_storage': 'denied',
+                'ad_user_data': 'denied',
+                'ad_personalization': 'denied',
+                'analytics_storage': 'denied'
+              });
+            `,
+          }}
+        />
       </head>
 
-      <body
+      <body 
         className={`${inter.className} flex flex-col min-h-screen bg-gray-50`}
+        data-gramm="false"
+        data-gramm_editor="false"
+        suppressHydrationWarning={true}
       >
         <HeaderMenu />
         
         <div className="pt-[60px]">
           <main className="flex justify-center w-full min-h-[calc(100vh-60px)]">
-            {/* Left Ad Column */}
+            {/* Left Ad */}
             <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-end pr-4 pt-6">
               <div className="sticky top-24">
                 <AdSlotWrapper />
@@ -105,7 +103,7 @@ export default function RootLayout({
               {children}
             </div>
 
-            {/* Right Ad Column */}
+            {/* Right Ad */}
             <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-start pl-4 pt-6">
               <div className="sticky top-24">
                 <AdSlotWrapper />
@@ -117,6 +115,7 @@ export default function RootLayout({
         </div>
         
         <CookieConsent />
+        <ConsentScripts />
         <Analytics />
       </body>
     </html>
