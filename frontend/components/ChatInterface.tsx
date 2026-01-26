@@ -2,34 +2,59 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, MapPin, Sparkles, Globe } from "lucide-react";
+import { Send, MapPin, Sparkles, Globe, Bug, ChevronDown, ChevronUp, X } from "lucide-react";
 import Link from 'next/link';
 
 // --- TYPES ---
 type State = {
+  // ===== SPECIALTY INFORMATION =====
   specialty: string | null;
   specialty_confidence: number;
+  
+  // ===== LOCATION INFORMATION =====
   location: string | null;
   latitude: number | null;
   longitude: number | null;
   address_korean: string | null;
   district: string | null;
   dong: string | null;
-  language_pref: string;
+  
+  // ===== SEARCH PARAMETERS =====
+  search_mode: string | null; // 'zone' or 'distance'
   max_distance_km: number;
   willingness_to_travel: string;
+  
+  // ===== KEYWORD FILTERING =====
   keywords: string[];
+  hard_keywords: string[];
+  
+  // ===== HYBRID SEARCH PARAMETERS =====
+  hybrid_alpha: number | null;
+  query_intent: string | null; // "FACTUAL" or "MIXED"
+  suggested_alpha: number | null;
+  manual_search_mode: string | null; // "FACTUAL_ONLY", "MIXED", or null
+  
+  // ===== USER PREFERENCES =====
+  language_pref: string;
+  
+  // ===== CONVERSATION FLOW =====
+  turn_count: number;
   ready_to_search: boolean;
   search_executed: boolean;
-  search_mode: string | null;
   conversation_phase: string;
-  turn_count: number;
+  
+  // ===== SEARCH RESULTS METADATA =====
+  last_search_query: string | null;
+  last_results_count: number | null;
+  last_search_timestamp: string | null;
 };
+
 
 type Message = {
   role: "user" | "ai";
   content: string;
   results?: FacilityResult[];
+  timestamp?: string;
 };
 
 type FacilityResult = {
@@ -41,6 +66,15 @@ type FacilityResult = {
   Summaries: string[];
   address?: string;
   website?: string;
+  relevance_rank?: number;
+};
+
+type DebugInfo = {
+  lastRequest?: any;
+  lastResponse?: any;
+  apiError?: string;
+  requestTimestamp?: string;
+  responseTime?: number;
 };
 
 // --- HELPER FUNCTION FOR FORMATTING AI RESPONSES ---
@@ -79,10 +113,16 @@ const getCategoryEnglish = (koreanCategory: string): string => {
 };
 
 export default function ChatInterface() {
+  // --- DEBUG MODE STATE ---
+  const [debugMode, setDebugMode] = useState(true);
+  const [debugExpanded, setDebugExpanded] = useState(true);
+  const [debugInfo, setDebugInfo] = useState<DebugInfo>({});
+
   const [messages, setMessages] = useState<Message[]>([
     { 
       role: "ai", 
-      content: "Hello! I'm SeoulMedBot, your AI medical concierge. Tell me what kind of doctor you need, and I'll find the best options for you." 
+      content: "Hello! I'm SeoulMedBot, your AI medical concierge. Tell me what kind of doctor you need, and I'll find the best options for you.",
+      timestamp: new Date().toISOString()
     }
   ]);
   const [input, setInput] = useState("");
@@ -151,23 +191,46 @@ export default function ChatInterface() {
   }, [messages]);
 
   const [currentState, setCurrentState] = useState<State>({
+    // Specialty
     specialty: null,
     specialty_confidence: 0,
+    
+    // Location
     location: null,
     latitude: null,
     longitude: null,
     address_korean: null,
     district: null,
     dong: null,
-    language_pref: "English",
+    
+    // Search parameters
+    search_mode: null,
     max_distance_km: 5,
     willingness_to_travel: "Nearby",
+    
+    // Keywords
     keywords: [],
+    hard_keywords: [],
+    
+    // Hybrid search
+    hybrid_alpha: null,
+    query_intent: null,
+    suggested_alpha: null,
+    manual_search_mode: null,
+    
+    // Preferences
+    language_pref: "English",
+    
+    // Conversation flow
+    turn_count: 0,
     ready_to_search: false,
     search_executed: false,
-    search_mode: null,
     conversation_phase: "greeting",
-    turn_count: 0,
+    
+    // Metadata
+    last_search_query: null,
+    last_results_count: null,
+    last_search_timestamp: null,
   });
 
   const toggleFacilityExpand = (placeId: string) => {
@@ -191,7 +254,11 @@ export default function ChatInterface() {
   const handleSendMessage = async (text: string, stateOverride?: Partial<State>) => {
     if (!text.trim()) return;
 
-    const userMsg: Message = { role: "user", content: text };
+    const userMsg: Message = { 
+      role: "user", 
+      content: text,
+      timestamp: new Date().toISOString()
+    };
     if (!stateOverride) setMessages((prev) => [...prev, userMsg]);
     
     setInput("");
@@ -205,17 +272,41 @@ export default function ChatInterface() {
       ...stateOverride,
     };
 
+    const requestPayload = {
+      message: text,
+      current_state: stateToSend,
+    };
+
+    // Debug: Log request
+    const requestTime = Date.now();
+    if (debugMode) {
+      setDebugInfo(prev => ({
+        ...prev,
+        lastRequest: requestPayload,
+        requestTimestamp: new Date().toISOString(),
+        apiError: undefined
+      }));
+    }
+
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          current_state: stateToSend,
-        }),
+        body: JSON.stringify(requestPayload),
       });
 
       const data = await response.json();
+      const responseTime = Date.now() - requestTime;
+
+      // Debug: Log response
+      if (debugMode) {
+        setDebugInfo(prev => ({
+          ...prev,
+          lastResponse: data,
+          responseTime: responseTime,
+          apiError: undefined
+        }));
+      }
 
       if (data.state) {
         setCurrentState(data.state);
@@ -227,6 +318,7 @@ export default function ChatInterface() {
           role: "ai",
           content: data.response,
           results: data.results,
+          timestamp: new Date().toISOString()
         },
       ]);
 
@@ -234,9 +326,23 @@ export default function ChatInterface() {
       scrollToBottom();
     } catch (error) {
       console.error("API Error:", error);
+      
+      // Debug: Log error
+      if (debugMode) {
+        setDebugInfo(prev => ({
+          ...prev,
+          apiError: error instanceof Error ? error.message : 'Unknown error',
+          responseTime: Date.now() - requestTime
+        }));
+      }
+
       setMessages((prev) => [
         ...prev,
-        { role: "ai", content: "I'm having trouble connecting right now. Please try again in a moment." },
+        { 
+          role: "ai", 
+          content: "I'm having trouble connecting right now. Please try again in a moment.",
+          timestamp: new Date().toISOString()
+        },
       ]);
       scrollToBottom();
     } finally {
@@ -250,13 +356,29 @@ export default function ChatInterface() {
       return;
     }
     
-    setMessages((prev) => [...prev, { role: "user", content: "📍 Sharing my location..." }]);
+    setMessages((prev) => [...prev, { 
+      role: "user", 
+      content: "📍 Sharing my location...",
+      timestamp: new Date().toISOString()
+    }]);
     setLoading(true);
     scrollToBottom();
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
+        
+        // Debug: Log geolocation
+        if (debugMode) {
+          setDebugInfo(prev => ({
+            ...prev,
+            lastRequest: {
+              ...prev.lastRequest,
+              geolocation: { latitude, longitude }
+            }
+          }));
+        }
+
         handleSendMessage("User shared location coordinates.", {
           latitude: latitude,
           longitude: longitude,
@@ -266,6 +388,14 @@ export default function ChatInterface() {
       (error) => {
         alert("Unable to retrieve your location.");
         setLoading(false);
+        
+        // Debug: Log geolocation error
+        if (debugMode) {
+          setDebugInfo(prev => ({
+            ...prev,
+            apiError: `Geolocation error: ${error.message}`
+          }));
+        }
       }
     );
   };
@@ -290,9 +420,416 @@ export default function ChatInterface() {
   // Calculate disclaimer height for dynamic spacing
   const disclaimerHeight = disclaimerVisible ? 56 : 0;
 
+  // Get message statistics for debug panel
+  const getMessageStats = () => {
+    const userMessages = messages.filter(m => m.role === 'user').length;
+    const aiMessages = messages.filter(m => m.role === 'ai').length;
+    const messagesWithResults = messages.filter(m => m.results && m.results.length > 0).length;
+    return { userMessages, aiMessages, messagesWithResults, total: messages.length };
+  };
+
   return (
     <div className="relative h-full w-full bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 flex flex-col">
       
+      {/* --- DEBUG TOGGLE BUTTON (Floating) --- */}
+      <button
+        onClick={() => setDebugMode(!debugMode)}
+        className={`fixed top-20 right-4 z-50 p-3 rounded-full shadow-lg transition-all ${
+          debugMode 
+            ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white' 
+            : 'bg-white text-slate-600 hover:bg-slate-50'
+        } border-2 ${debugMode ? 'border-purple-300' : 'border-slate-200'}`}
+        title={debugMode ? "Debug Mode: ON" : "Debug Mode: OFF"}
+      >
+        <Bug size={20} />
+      </button>
+
+      {/* --- DEBUG PANEL --- */}
+      {debugMode && (
+        <div className="fixed top-32 right-4 z-40 w-96 max-h-[70vh] bg-slate-900 text-slate-100 rounded-lg shadow-2xl border-2 border-purple-500 overflow-hidden flex flex-col">
+          {/* Debug Header */}
+          <div className="flex items-center justify-between p-3 bg-gradient-to-r from-purple-600 to-pink-600 border-b border-purple-400">
+            <div className="flex items-center gap-2">
+              <Bug size={16} />
+              <span className="font-bold text-sm">Debug Console</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setDebugExpanded(!debugExpanded)}
+                className="p-1 hover:bg-white/20 rounded transition-colors"
+              >
+                {debugExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+              <button
+                onClick={() => setDebugMode(false)}
+                className="p-1 hover:bg-white/20 rounded transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          {debugExpanded && (
+              <div className="overflow-y-auto flex-1 p-4 text-xs space-y-4">
+                {/* Message Statistics */}
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-purple-400 mb-2">📊 Message Stats</h3>
+                  <div className="space-y-1 text-slate-300">
+                    <div className="flex justify-between">
+                      <span>Total Messages:</span>
+                      <span className="font-mono">{getMessageStats().total}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>User Messages:</span>
+                      <span className="font-mono">{getMessageStats().userMessages}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>AI Messages:</span>
+                      <span className="font-mono">{getMessageStats().aiMessages}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>With Results:</span>
+                      <span className="font-mono">{getMessageStats().messagesWithResults}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Current State - Specialty */}
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-blue-400 mb-2">🏥 Specialty</h3>
+                  <div className="space-y-1 text-slate-300">
+                    <div className="flex justify-between">
+                      <span>Specialty:</span>
+                      <span className="font-mono text-green-400 truncate max-w-[180px]">
+                        {currentState.specialty || 'null'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Confidence:</span>
+                      <span className="font-mono text-yellow-400">
+                        {(currentState.specialty_confidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Location Information */}
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-green-400 mb-2">📍 Location</h3>
+                  <div className="space-y-1 text-slate-300">
+                    <div className="flex justify-between">
+                      <span>Location Text:</span>
+                      <span className="font-mono text-green-400 truncate max-w-[150px]">
+                        {currentState.location || 'null'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>District (구):</span>
+                      <span className="font-mono text-green-400">
+                        {currentState.district || 'null'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Dong (동):</span>
+                      <span className="font-mono text-green-400">
+                        {currentState.dong || 'null'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>GPS:</span>
+                      <span className="font-mono text-green-400 text-[10px]">
+                        {currentState.latitude && currentState.longitude 
+                          ? `${currentState.latitude.toFixed(4)}, ${currentState.longitude.toFixed(4)}`
+                          : 'null'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Address (KR):</span>
+                      <span className="font-mono text-green-400 text-[10px] truncate max-w-[150px]">
+                        {currentState.address_korean ? 
+                          (currentState.address_korean.length > 20 
+                            ? currentState.address_korean.substring(0, 20) + '...'
+                            : currentState.address_korean)
+                          : 'null'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Search Parameters */}
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-orange-400 mb-2">🔍 Search Parameters</h3>
+                  <div className="space-y-1 text-slate-300">
+                    <div className="flex justify-between">
+                      <span>Mode:</span>
+                      <span className={`font-mono ${
+                        currentState.search_mode === 'zone' ? 'text-purple-400' : 
+                        currentState.search_mode === 'distance' ? 'text-blue-400' : 
+                        'text-slate-500'
+                      }`}>
+                        {currentState.search_mode || 'auto'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Max Distance:</span>
+                      <span className="font-mono text-orange-400">
+                        {currentState.max_distance_km}km
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Travel Willingness:</span>
+                      <span className="font-mono text-cyan-400 text-[10px]">
+                        {currentState.willingness_to_travel}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Keywords */}
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-yellow-400 mb-2">🔤 Keywords</h3>
+                  <div className="space-y-1 text-slate-300">
+                    <div>
+                      <span className="text-slate-400 text-[10px]">Soft Keywords:</span>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {currentState.keywords.length > 0 ? (
+                          currentState.keywords.map((kw, idx) => (
+                            <span key={idx} className="px-1.5 py-0.5 bg-yellow-900/30 text-yellow-300 rounded text-[10px]">
+                              {kw}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-slate-500 text-[10px]">none</span>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[10px]">Hard Keywords (MUST):</span>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {currentState.hard_keywords.length > 0 ? (
+                          currentState.hard_keywords.map((kw, idx) => (
+                            <span key={idx} className="px-1.5 py-0.5 bg-red-900/30 text-red-300 rounded text-[10px] font-bold">
+                              {kw}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-slate-500 text-[10px]">none</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hybrid Search Configuration */}
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-pink-400 mb-2">🔀 Hybrid Search</h3>
+                  <div className="space-y-1 text-slate-300">
+                    <div className="flex justify-between">
+                      <span>Query Intent:</span>
+                      <span className={`font-mono ${
+                        currentState.query_intent === 'FACTUAL' ? 'text-blue-400' : 
+                        currentState.query_intent === 'MIXED' ? 'text-purple-400' : 
+                        'text-slate-500'
+                      }`}>
+                        {currentState.query_intent || 'not classified'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Suggested α:</span>
+                      <span className="font-mono text-yellow-400">
+                        {currentState.suggested_alpha !== null 
+                          ? currentState.suggested_alpha.toFixed(2) 
+                          : 'null'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Active α:</span>
+                      <span className="font-mono text-pink-400">
+                        {currentState.hybrid_alpha !== null 
+                          ? currentState.hybrid_alpha.toFixed(2) 
+                          : 'auto'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Manual Override:</span>
+                      <span className="font-mono text-cyan-400 text-[10px]">
+                        {currentState.manual_search_mode || 'none'}
+                      </span>
+                    </div>
+                    <div className="mt-2 p-2 bg-slate-900 rounded">
+                      <div className="text-[10px] text-slate-400 mb-1">Alpha Scale:</div>
+                      <div className="relative h-2 bg-slate-700 rounded">
+                        <div 
+                          className="absolute h-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded"
+                          style={{ 
+                            width: `${((currentState.hybrid_alpha || 0.5) * 100)}%` 
+                          }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[9px] text-slate-500 mt-1">
+                        <span>0.0 (keyword)</span>
+                        <span>0.5</span>
+                        <span>1.0 (semantic)</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Conversation State */}
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-cyan-400 mb-2">💬 Conversation</h3>
+                  <div className="space-y-1 text-slate-300">
+                    <div className="flex justify-between">
+                      <span>Phase:</span>
+                      <span className="font-mono text-purple-400">
+                        {currentState.conversation_phase}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Turn Count:</span>
+                      <span className="font-mono">{currentState.turn_count}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Ready to Search:</span>
+                      <span className={`font-mono ${currentState.ready_to_search ? 'text-green-400' : 'text-red-400'}`}>
+                        {currentState.ready_to_search ? 'true' : 'false'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Search Executed:</span>
+                      <span className={`font-mono ${currentState.search_executed ? 'text-green-400' : 'text-red-400'}`}>
+                        {currentState.search_executed ? 'true' : 'false'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Language:</span>
+                      <span className="font-mono text-blue-400">
+                        {currentState.language_pref}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Search Metadata */}
+                {(currentState.last_search_query || currentState.last_results_count !== null) && (
+                  <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                    <h3 className="font-bold text-indigo-400 mb-2">📊 Last Search</h3>
+                    <div className="space-y-1 text-slate-300">
+                      {currentState.last_search_query && (
+                        <div>
+                          <span className="text-slate-400 text-[10px]">Query:</span>
+                          <p className="font-mono text-indigo-300 text-[10px] break-words">
+                            {currentState.last_search_query}
+                          </p>
+                        </div>
+                      )}
+                      {currentState.last_results_count !== null && (
+                        <div className="flex justify-between">
+                          <span>Results:</span>
+                          <span className="font-mono text-green-400">
+                            {currentState.last_results_count}
+                          </span>
+                        </div>
+                      )}
+                      {currentState.last_search_timestamp && (
+                        <div className="flex justify-between">
+                          <span>Timestamp:</span>
+                          <span className="font-mono text-slate-400 text-[10px]">
+                            {new Date(currentState.last_search_timestamp).toLocaleTimeString()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* API Response Info */}
+                {debugInfo.lastResponse && (
+                  <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                    <h3 className="font-bold text-green-400 mb-2">✅ Last API Response</h3>
+                    <div className="space-y-1 text-slate-300">
+                      {debugInfo.responseTime && (
+                        <div className="flex justify-between">
+                          <span>Response Time:</span>
+                          <span className="font-mono text-yellow-400">
+                            {debugInfo.responseTime}ms
+                          </span>
+                        </div>
+                      )}
+                      {debugInfo.lastResponse.results && (
+                        <div className="flex justify-between">
+                          <span>Results Count:</span>
+                          <span className="font-mono text-green-400">
+                            {debugInfo.lastResponse.results.length}
+                          </span>
+                        </div>
+                      )}
+                      <div className="mt-2">
+                        <span className="text-slate-400">Response Preview:</span>
+                        <pre className="mt-1 p-2 bg-slate-900 rounded text-[10px] overflow-x-auto max-h-32">
+                          {JSON.stringify(debugInfo.lastResponse, null, 2).slice(0, 500)}...
+                        </pre>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Last Request */}
+                {debugInfo.lastRequest && (
+                  <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                    <h3 className="font-bold text-orange-400 mb-2">📤 Last Request</h3>
+                    <div className="space-y-1 text-slate-300">
+                      {debugInfo.requestTimestamp && (
+                        <div className="text-slate-400 text-[10px]">
+                          {new Date(debugInfo.requestTimestamp).toLocaleTimeString()}
+                        </div>
+                      )}
+                      <pre className="mt-1 p-2 bg-slate-900 rounded text-[10px] overflow-x-auto max-h-32">
+                        {JSON.stringify(debugInfo.lastRequest, null, 2).slice(0, 500)}...
+                      </pre>
+                    </div>
+                  </div>
+                )}
+
+                {/* API Error */}
+                {debugInfo.apiError && (
+                  <div className="bg-red-900/30 rounded p-3 border border-red-700">
+                    <h3 className="font-bold text-red-400 mb-2">❌ API Error</h3>
+                    <div className="text-red-300 text-xs break-words">
+                      {debugInfo.apiError}
+                    </div>
+                  </div>
+                )}
+
+                {/* Environment Info */}
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-cyan-400 mb-2">⚙️ Environment</h3>
+                  <div className="space-y-1 text-slate-300">
+                    <div className="flex justify-between">
+                      <span>API URL:</span>
+                      <span className="font-mono text-cyan-400 text-[10px] truncate max-w-[180px]">
+                        {process.env.NEXT_PUBLIC_API_URL || 'Not set'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Loading:</span>
+                      <span className={`font-mono ${loading ? 'text-yellow-400' : 'text-green-400'}`}>
+                        {loading ? 'true' : 'false'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Debug Mode:</span>
+                      <span className="font-mono text-purple-400">
+                        enabled
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+        </div>
+      )}
+
       {/* --- ELEGANT DISCLAIMER BANNER --- */}
       <div 
         className={`absolute top-0 left-0 right-0 z-20 transition-all duration-500 ease-in-out ${
@@ -371,6 +908,12 @@ export default function ChatInterface() {
                       <p className="text-sm sm:text-base leading-relaxed whitespace-pre-wrap break-words">
                         {msg.role === "ai" ? formatAIResponse(msg.content) : msg.content}
                       </p>
+                      {/* Debug: Show timestamp */}
+                      {debugMode && msg.timestamp && (
+                        <div className="mt-2 pt-2 border-t border-slate-300 text-xs text-slate-500 font-mono">
+                          {new Date(msg.timestamp).toLocaleTimeString()}
+                        </div>
+                      )}
                     </div>
 
                     {/* Results Cards */}
@@ -409,6 +952,12 @@ export default function ChatInterface() {
                                       <span className="inline-block px-2.5 py-1 bg-slate-50 text-slate-600 text-xs font-medium rounded-md">
                                         {categoryEnglish}
                                       </span>
+                                      {/* Debug: Show relevance rank */}
+                                      {debugMode && facility.relevance_rank !== undefined && (
+                                        <span className="inline-block px-2.5 py-1 bg-purple-50 text-purple-700 text-xs font-mono rounded-md">
+                                          Rank: {facility.relevance_rank}
+                                        </span>
+                                      )}
                                     </div>
                                   </div>
                                   {facility.english_confidence_score >= 4 && (
@@ -486,6 +1035,15 @@ export default function ChatInterface() {
                                     View on Map
                                   </a>
                                 </div>
+
+                                {/* Debug: Show place_id */}
+                                {debugMode && (
+                                  <div className="mt-2 pt-2 border-t border-slate-200">
+                                    <p className="text-xs text-slate-500 font-mono">
+                                      ID: {facility.place_id}
+                                    </p>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           );

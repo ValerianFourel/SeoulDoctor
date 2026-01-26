@@ -137,7 +137,7 @@ from location import (
 )
 from cookies import (
     CookieConsent, should_log_analytics, get_consent_from_cookie, 
-    should_use_advertising, privacy_safe_log
+    should_use_advertising, privacy_safe_log,ensure_consent_object
 )
 
 # Import RAG Pipeline
@@ -410,6 +410,7 @@ app.add_middleware(
     expose_headers=["Set-Cookie"]
 )
 
+consent = True
 # ==========================================
 # STATE MANAGEMENT FUNCTIONS
 # ==========================================
@@ -835,7 +836,6 @@ def validate_distance_criteria(df: pd.DataFrame, max_distance: float) -> pd.Data
     
     return df_valid
 
-
 def execute_search(
     state: State, 
     user_message: str, 
@@ -845,19 +845,40 @@ def execute_search(
     """
     Execute the actual search logic with privacy-aware logging and Hybrid RAG integration.
     
-    Uses Hybrid Search (BM25 + Vector) with automatic query routing for optimal results.
+    Features:
+    - Hybrid Search (BM25 + Vector) with automatic query routing
+    - Keyword filtering (soft and hard keywords)
+    - Complete state tracking and metadata
+    - Manual search mode overrides
+    - Privacy-aware logging
+    
+    Returns:
+        Tuple of (response_text, results_list)
     """
     global LANGUAGE, rag_pipeline
     
     if not consent:
         consent = CookieConsent()
     
+    # ===== TRACK SEARCH METADATA =====
+    state.last_search_query = user_message
+    state.last_search_timestamp = datetime.utcnow().isoformat()
+    
     privacy_safe_log(consent, "=" * 60)
     privacy_safe_log(consent, "🔍 SEARCH STARTED")
+    privacy_safe_log(consent, f"Query: \"{user_message[:50]}...\"")
     privacy_safe_log(consent, f"Specialty: {state.specialty or 'Any'}")
     privacy_safe_log(consent, f"Mode: {(state.search_mode or 'auto').upper()}")
     privacy_safe_log(consent, f"Max Distance: {max_distance}km")
     privacy_safe_log(consent, f"Language: {LANGUAGE}")
+    
+    if state.keywords:
+        privacy_safe_log(consent, f"Soft Keywords: {', '.join(state.keywords)}")
+    if state.hard_keywords:
+        privacy_safe_log(consent, f"Hard Keywords (MUST): {', '.join(state.hard_keywords)}")
+    if state.manual_search_mode:
+        privacy_safe_log(consent, f"Manual Override: {state.manual_search_mode}")
+    
     privacy_safe_log(consent, "=" * 60)
     
     working_df = df_filtered.copy()
@@ -877,6 +898,7 @@ def execute_search(
         else:
             location_context = f"in {state.district}"
         
+        # Calculate distances even in zone mode (for sorting)
         if user_lat and user_lon and 'lat' in working_df.columns and 'lon' in working_df.columns:
             def calc_distance(row):
                 if pd.notna(row['lat']) and pd.notna(row['lon']):
@@ -885,12 +907,14 @@ def execute_search(
             
             working_df['distance_km'] = working_df.apply(calc_distance, axis=1)
             working_df = working_df.sort_values('distance_km')
+            privacy_safe_log(consent, f"✓ Calculated distances for {len(working_df)} zone facilities")
         else:
             working_df['distance_km'] = 0
     
     elif user_lat and user_lon:
         privacy_safe_log(consent, f"📍 GPS search: ({user_lat:.4f}, {user_lon:.4f})")
         
+        # Reverse geocode to get human-readable location
         reverse_result = None
         if GOOGLE_MAPS_API_KEY:
             reverse_result = google_maps_reverse_geocode(user_lat, user_lon)
@@ -901,12 +925,15 @@ def execute_search(
         if reverse_result:
             location_context = f"near {reverse_result['address_korean']}"
             
+            # Update state with reverse geocoded data
             if not state.district:
                 state.district = reverse_result.get('district')
                 state.dong = reverse_result.get('dong')
+                privacy_safe_log(consent, f"✓ Reverse geocoded: {state.district} {state.dong or ''}")
         else:
             location_context = f"near your location"
         
+        # Calculate distances
         if 'lat' in working_df.columns and 'lon' in working_df.columns:
             def calc_distance(row):
                 if pd.notna(row['lat']) and pd.notna(row['lon']):
@@ -915,31 +942,36 @@ def execute_search(
             
             working_df['distance_km'] = working_df.apply(calc_distance, axis=1)
             
+            # Filter by distance
             before_count = len(working_df)
             working_df = working_df[working_df['distance_km'] < max_distance]
-            privacy_safe_log(consent, f"✓ Distance filter: {before_count} → {len(working_df)}")
+            privacy_safe_log(consent, f"✓ Distance filter ({max_distance}km): {before_count} → {len(working_df)}")
             
+            # Expand radius if no results
             if len(working_df) == 0:
                 expanded_radius = max_distance * 2
-                logger.warning(f"Expanding to {expanded_radius}km")
+                logger.warning(f"⚠️ No results within {max_distance}km, expanding to {expanded_radius}km")
                 working_df = df_filtered.copy()
                 working_df['distance_km'] = working_df.apply(calc_distance, axis=1)
                 working_df = working_df[working_df['distance_km'] < expanded_radius]
-                location_context = f"within {expanded_radius}km of your location"
+                location_context = f"within {expanded_radius}km of your location (expanded search)"
+                privacy_safe_log(consent, f"✓ Expanded search: {len(working_df)} facilities found")
             
             working_df = working_df.sort_values('distance_km')
         else:
             working_df['distance_km'] = 0
             location_context = "in Seoul"
+            logger.warning("⚠️ No GPS coordinates in dataset, using city-wide search")
     
     elif state.location:
         privacy_safe_log(consent, f"📍 Text location: {state.location}")
         working_df = fuzzy_match_location(state.location, working_df)
         location_context = f"in {state.location}"
         working_df['distance_km'] = 0
+        privacy_safe_log(consent, f"✓ Fuzzy location match: {len(working_df)} facilities")
     
     else:
-        privacy_safe_log(consent, "📍 City-wide search")
+        privacy_safe_log(consent, "📍 City-wide search (no location specified)")
         location_context = "across Seoul"
         working_df['distance_km'] = 0
     
@@ -948,51 +980,172 @@ def execute_search(
         before_count = len(working_df)
         working_df = working_df[working_df['category'].str.contains(state.specialty, na=False, case=False)]
         privacy_safe_log(consent, f"🏥 Category filter: '{state.specialty}' → {before_count} to {len(working_df)}")
+        
+        if len(working_df) == 0:
+            logger.warning(f"⚠️ No facilities found for specialty: {state.specialty}")
+    
+    # ===== HARD KEYWORDS FILTERING (MUST MATCH) =====
+    if state.hard_keywords and len(working_df) > 0:
+        privacy_safe_log(consent, f"🔒 Applying HARD keyword filter: {state.hard_keywords}")
+        
+        before_count = len(working_df)
+        
+        # Check if any of the text fields contain ALL hard keywords
+        for keyword in state.hard_keywords:
+            keyword_lower = keyword.lower()
+            
+            # Create mask for rows that contain this keyword in any searchable field
+            mask = pd.Series([False] * len(working_df), index=working_df.index)
+            
+            # Search in multiple fields
+            searchable_fields = ['name', 'category', 'address', 'Summaries', 'Key_Highlights']
+            
+            for field in searchable_fields:
+                if field not in working_df.columns:
+                    continue
+                
+                if field in ['Summaries', 'Key_Highlights']:
+                    # For list fields, convert to string
+                    def check_list_field(val):
+                        if isinstance(val, (list, np.ndarray)):
+                            return any(keyword_lower in str(item).lower() for item in val)
+                        return False
+                    
+                    mask = mask | working_df[field].apply(check_list_field)
+                else:
+                    # For string fields
+                    mask = mask | working_df[field].fillna('').astype(str).str.lower().str.contains(keyword_lower, na=False)
+            
+            # Filter by this keyword
+            working_df = working_df[mask]
+        
+        privacy_safe_log(consent, f"✓ Hard keyword filter: {before_count} → {len(working_df)}")
+        
+        if len(working_df) == 0:
+            logger.warning(f"⚠️ No facilities match hard keywords: {state.hard_keywords}")
     
     # ===== HYBRID RAG SEMANTIC RANKING (BM25 + Vector) =====
-    query_text = state.specialty or ""
+    
+    # Build query text from specialty + soft keywords
+    query_components = []
+    if state.specialty:
+        query_components.append(state.specialty)
+    if state.keywords:
+        query_components.extend(state.keywords)
+    
+    query_text = " ".join(query_components) if query_components else user_message
     
     if len(query_text.strip()) > 2 and len(working_df) > 0 and rag_pipeline:
-        # Use hybrid search with automatic query routing
         privacy_safe_log(consent, "🔀 Applying Hybrid RAG (BM25 + Vector with dynamic routing)...")
+        privacy_safe_log(consent, f"   Query text: \"{query_text}\"")
         
-        working_df = rag_pipeline.apply_combined_ranking(
-            df=working_df,
-            query_text=query_text,
-            max_distance=max_distance,
-            search_mode=state.search_mode or 'distance',
-            n_results=200,
-            use_hybrid=True,  # Enable hybrid search
-            manual_mode=None  # Let the router decide (or set 'FACTUAL_ONLY'/'MIXED' for manual override)
-        )
+        # Get query routing information
+        try:
+            route_decision = rag_pipeline.route_query(query_text)
+            
+            # Store routing information in state
+            state.query_intent = route_decision.get('intent', 'MIXED')
+            state.suggested_alpha = route_decision.get('suggested_alpha', 0.7)
+            
+            privacy_safe_log(consent, 
+                f"   🎯 Router decision: {state.query_intent} "
+                f"(suggested α={state.suggested_alpha:.2f})")
+            
+            # Calculate actual alpha (with clipping and manual override)
+            actual_alpha = rag_pipeline.calculate_alpha(
+                route_decision, 
+                state.manual_search_mode
+            )
+            state.hybrid_alpha = actual_alpha
+            
+            privacy_safe_log(consent, 
+                f"   ⚖️  Active α={actual_alpha:.2f} "
+                f"({int((1-actual_alpha)*100)}% keyword + {int(actual_alpha*100)}% semantic)")
+            
+            if state.manual_search_mode:
+                privacy_safe_log(consent, f"   🔧 Manual override: {state.manual_search_mode}")
+            
+        except Exception as e:
+            logger.error(f"Query routing error: {e}", exc_info=True)
+            state.query_intent = "MIXED"
+            state.suggested_alpha = 0.7
+            state.hybrid_alpha = 0.7
+        
+        # Apply hybrid ranking
+        try:
+            working_df = rag_pipeline.apply_combined_ranking(
+                df=working_df,
+                query_text=query_text,
+                max_distance=max_distance,
+                search_mode=state.search_mode or 'distance',
+                n_results=200,
+                use_hybrid=True,
+                manual_mode=state.manual_search_mode
+            )
+            
+            privacy_safe_log(consent, f"✓ Hybrid ranking applied to {len(working_df)} facilities")
+            
+        except Exception as e:
+            logger.error(f"Hybrid ranking error: {e}", exc_info=True)
+            # Fallback to simple distance sorting
+            working_df['relevance_rank'] = 9999
+            if 'distance_km' in working_df.columns:
+                working_df = working_df.sort_values('distance_km')
     else:
+        # No RAG pipeline or query too short - use simple sorting
         working_df['relevance_rank'] = 9999
         if 'distance_km' in working_df.columns:
             working_df = working_df.sort_values('distance_km')
+            privacy_safe_log(consent, "ℹ️  Using distance-only ranking (no semantic search)")
+        
+        # Clear hybrid search state since it wasn't used
+        state.query_intent = None
+        state.suggested_alpha = None
+        state.hybrid_alpha = None
     
-    # ===== ENGLISH FILTER =====
+    # ===== ENGLISH LANGUAGE FILTER =====
     if LANGUAGE == "English" and 'has_english' in working_df.columns:
         before = len(working_df)
         working_df = working_df[working_df['has_english'] == True]
-        privacy_safe_log(consent, f"🌐 English filter: {before} → {len(working_df)}")
+        privacy_safe_log(consent, f"🌐 English speaker filter: {before} → {len(working_df)}")
+        
+        if len(working_df) == 0:
+            logger.warning("⚠️ No English-speaking facilities found, showing all results")
+            # Revert to unfiltered results
+            working_df = df_filtered.copy()
+            if 'distance_km' in working_df.columns:
+                working_df = working_df.sort_values('distance_km').head(50)
+            else:
+                working_df = working_df.head(50)
     
     # ===== FINAL DISTANCE VALIDATION =====
     if state.search_mode != 'zone' and 'distance_km' in working_df.columns:
+        before_validation = len(working_df)
         working_df = validate_distance_criteria(working_df, max_distance)
+        if len(working_df) < before_validation:
+            privacy_safe_log(consent, 
+                f"✂️ Distance validation: {before_validation} → {len(working_df)} "
+                f"(max {max_distance}km)")
     
     # ===== GENERATE RESPONSE =====
     results = []
+    response_text = ""
     
     if len(working_df) > 0:
         privacy_safe_log(consent, f"✓ Building response from {min(10, len(working_df))} facilities")
         
         # Use RAG pipeline to build context
-        facilities_context = rag_pipeline.build_context_for_llm(
-            working_df, 
-            n_results=10,
-            language=LANGUAGE
-        )
+        try:
+            facilities_context = rag_pipeline.build_context_for_llm(
+                working_df, 
+                n_results=10,
+                language=LANGUAGE
+            )
+        except Exception as e:
+            logger.error(f"Context building error: {e}", exc_info=True)
+            facilities_context = "Error building context"
         
+        # Generate natural language response
         gen_messages = [{
             "role": "system",
             "content": GENERATION_PROMPT.format(
@@ -1003,42 +1156,54 @@ def execute_search(
             )
         }]
         
-        gen_completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=gen_messages,
-            temperature=1.0,
-            max_completion_tokens=1024
-        )
-        response_text = gen_completion.choices[0].message.content
+        try:
+            gen_completion = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=gen_messages,
+                temperature=1.0,
+                max_completion_tokens=1024
+            )
+            response_text = gen_completion.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Response generation error: {e}", exc_info=True)
+            if LANGUAGE == "English":
+                response_text = f"I found {len(working_df)} facilities matching your criteria. Here are the top results:"
+            else:
+                response_text = f"{len(working_df)}개의 시설을 찾았습니다. 상위 결과는 다음과 같습니다:"
         
-        # ===== PREPARE RESULTS =====
-        for _, row in working_df.head(3).iterrows():
+        # ===== PREPARE RESULTS FOR FRONTEND =====
+        for idx, (_, row) in enumerate(working_df.head(3).iterrows(), start=1):
             result = {
                 "place_id": safe_convert_to_python(row['place_id']),
                 "name": safe_convert_to_python(row['name']),
                 "category": safe_convert_to_python(row['category']),
             }
             
+            # Add standard fields
             simple_fields = ['address', 'phone', 'business_hours', 'english_confidence_score']
             for field in simple_fields:
                 if field in row.index and pd.notna(row[field]):
                     result[field] = safe_convert_to_python(row[field])
             
+            # Add location fields
             if 'file_district' in row.index and pd.notna(row['file_district']):
                 result['district'] = safe_convert_to_python(row['file_district'])
             if 'file_dong' in row.index and pd.notna(row['file_dong']):
                 result['dong'] = safe_convert_to_python(row['file_dong'])
             
+            # Add GPS coordinates
             if 'lat' in row.index and pd.notna(row['lat']):
                 result['lat'] = safe_convert_to_python(row['lat'])
             if 'lon' in row.index and pd.notna(row['lon']):
                 result['lon'] = safe_convert_to_python(row['lon'])
             
+            # Add website (check both 'website' and 'url' columns)
             if 'website' in row.index and pd.notna(row['website']):
                 result['website'] = safe_convert_to_python(row['website'])
             elif 'url' in row.index and pd.notna(row['url']):
                 result['website'] = safe_convert_to_python(row['url'])
             
+            # Add review summaries
             if 'Summaries' in row.index and isinstance(row['Summaries'], (list, np.ndarray)):
                 result['Summaries'] = safe_convert_to_python(row['Summaries'])
             
@@ -1048,33 +1213,68 @@ def execute_search(
             if 'Key_Highlights' in row.index and isinstance(row['Key_Highlights'], (list, np.ndarray)):
                 result['Key_Highlights'] = safe_convert_to_python(row['Key_Highlights'])
             
+            # Add amenities
             if 'amenities' in row.index:
                 result['amenities'] = safe_convert_to_python(row['amenities'])
             
+            # Add medical information
             if 'medical_info_parsed' in row.index and isinstance(row['medical_info_parsed'], dict):
                 result['medical_info_parsed'] = safe_convert_to_python(row['medical_info_parsed'])
             
+            # Add English availability
             result['has_english'] = safe_convert_to_python(row.get('has_english', False))
             
-            # ⭐ Add BOTH distance_km and distance for frontend compatibility
+            # ⭐ Add distance (BOTH distance_km and distance for frontend compatibility)
             distance_value = safe_convert_to_python(row.get('distance_km', 0))
             result['distance_km'] = distance_value
             result['distance'] = distance_value
             
+            # ⭐ Add relevance ranking
             result['relevance_rank'] = safe_convert_to_python(row.get('relevance_rank', 9999))
             
+            # ⭐ Add combined score (if available from RAG pipeline)
+            if 'combined_score' in row.index:
+                result['combined_score'] = safe_convert_to_python(row['combined_score'])
+            
             results.append(result)
-    else:
-        if LANGUAGE == "English":
-            response_text = "I couldn't find any facilities matching your criteria. Would you like to try a different specialty or area?"
-        else:
-            response_text = "검색 조건에 맞는 시설을 찾을 수 없습니다. 다른 전문 분야나 지역을 시도해 보시겠어요?"
+            
+            privacy_safe_log(consent, 
+                f"   #{idx}: {result['name']} "
+                f"(dist={distance_value:.1f}km, rank={result['relevance_rank']})")
     
-    privacy_safe_log(consent, f"✅ SEARCH COMPLETED: {len(results)} results")
+    else:
+        # No results found
+        logger.warning("⚠️ No facilities found matching all criteria")
+        
+        if LANGUAGE == "English":
+            response_text = (
+                "I couldn't find any facilities matching your criteria. "
+                "Would you like to try:\n"
+                "• A different specialty?\n"
+                "• A different area or location?\n"
+                "• Expanding your search radius?"
+            )
+        else:
+            response_text = (
+                "검색 조건에 맞는 시설을 찾을 수 없습니다. "
+                "다음을 시도해 보시겠어요?\n"
+                "• 다른 전문 분야\n"
+                "• 다른 지역이나 위치\n"
+                "• 검색 반경 확대"
+            )
+    
+    # ===== UPDATE STATE METADATA =====
+    state.last_results_count = len(results)
+    
+    privacy_safe_log(consent, "=" * 60)
+    privacy_safe_log(consent, f"✅ SEARCH COMPLETED")
+    privacy_safe_log(consent, f"   Results returned: {len(results)}")
+    privacy_safe_log(consent, f"   Total matching: {len(working_df)}")
+    privacy_safe_log(consent, f"   Query intent: {state.query_intent or 'N/A'}")
+    privacy_safe_log(consent, f"   Hybrid alpha: {state.hybrid_alpha if state.hybrid_alpha else 'N/A'}")
     privacy_safe_log(consent, "=" * 60 + "\n")
     
     return response_text, results
-
 
 # ==========================================
 # API ENDPOINTS
@@ -1137,7 +1337,8 @@ async def chat_endpoint(
     
     # Parse consent from cookie
     consent = get_consent_from_cookie(cookieConsent)
-    
+    consent = ensure_consent_object(consent)  # Extra safety check
+
     # Privacy-aware logging
     if should_log_analytics(consent):
         logger.info("=" * 60)
@@ -1401,6 +1602,10 @@ async def chat_endpoint(
 @app.get("/health")
 async def health_check():
     """Health check endpoint with privacy compliance and Hybrid RAG information"""
+
+    # Test consent parsing
+    consent = get_consent_from_cookie(cookieConsent)
+    consent_status = get_consent_summary(consent)
     
     gps_count = 0
     if df_filtered is not None and 'lat' in df_filtered.columns:
@@ -1413,6 +1618,7 @@ async def health_check():
     rag_stats = {}
     if rag_pipeline:
         rag_stats = rag_pipeline.get_statistics()
+    
     
     return {
         "status": "healthy",
@@ -1450,5 +1656,10 @@ async def health_check():
             "advertising_conditional": "YES (requires user consent)",
             "privacy_aware_logging": "YES (reduces detail without consent)"
         },
-        "architecture": "Dynamic Specialty Matching + Google Maps Location ID + HYBRID RAG (BM25 + Vector) + Query Router (FACTUAL vs MIXED) + Adaptive Alpha (0.3-1.0) + Radius-Adaptive Relevance Ranking + Cookie Consent Management + Privacy-First Design"
+        "architecture": "Dynamic Specialty Matching + Google Maps Location ID + HYBRID RAG (BM25 + Vector) + Query Router (FACTUAL vs MIXED) + Adaptive Alpha (0.3-1.0) + Radius-Adaptive Relevance Ranking + Cookie Consent Management + Privacy-First Design",
+        "consent_test": {
+            "type": str(type(consent)),
+            "is_valid": isinstance(consent, CookieConsent),
+            "status": consent_status
+        }
     }
