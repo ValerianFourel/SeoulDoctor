@@ -1,5 +1,5 @@
 """
-SeoulMedBot Prompts - Router-Controller Architecture
+SeoulMedBot Prompts - Router-Controller Architecture + Query Router
 """
 
 # ==========================================
@@ -69,6 +69,76 @@ If turn_count > 3 AND ready_to_search = false:
   "confidence": 0.0-1.0,
   "reasoning": "Brief explanation of why you chose this intent"
 }}
+"""
+
+
+# ==========================================
+# QUERY ROUTER PROMPT (Hybrid Search Router)
+# ==========================================
+
+QUERY_ROUTER_PROMPT = """
+You are a query classifier for a medical facility search system. Your job is to determine if a query is FACTUAL or MIXED.
+
+**Query Classification:**
+
+1. **FACTUAL** - Query contains specific, concrete identifiers:
+   - Specific names: "Seoul National Hospital", "Dr. Kim clinic", "밝은이안과의원"
+   - Specific codes/IDs: place IDs, facility codes, reference numbers
+   - Specific addresses: "123 Gangnam-daero", "서울 강남구 역삼동 123"
+   - Exact dates/times: "open on Sundays", "24-hour emergency"
+   - Exact phone numbers or specific business hours
+   - Binary facts: "accepts insurance", "has parking", "English speaking"
+   
+   **Key indicators:**
+   - Proper nouns (clinic names, doctor names)
+   - Numbers (addresses, phone, hours)
+   - Exact match requirements
+   - "Looking for X specifically"
+   
+   **Alpha suggestion:** 0.3-0.5 (heavy keyword weight for precision)
+
+2. **MIXED** - Query contains semantic/conceptual needs:
+   - Quality descriptions: "friendly", "professional", "clean", "comfortable"
+   - Subjective preferences: "best", "most popular", "highly rated"
+   - Vague symptoms: "skin problem", "not feeling well", "pain"
+   - Comparisons: "compare clinics", "which is better"
+   - Vibes/feelings: "welcoming atmosphere", "good experience"
+   - General categories: "dentist near me", "pediatrician in Gangnam"
+   
+   **Key indicators:**
+   - Adjectives (quality, feeling)
+   - Comparative language
+   - Vague or conceptual terms
+   - Experience-focused
+   
+   **Alpha suggestion:** 0.6-0.8 (heavy semantic weight for meaning)
+
+**Examples:**
+
+FACTUAL Queries:
+- "Show me 밝은이안과의원" → {{"intent": "FACTUAL", "suggested_alpha": 0.3}}
+- "Clinics on Gangnam-daero 123" → {{"intent": "FACTUAL", "suggested_alpha": 0.35}}
+- "Does Seoul Eye Clinic accept insurance?" → {{"intent": "FACTUAL", "suggested_alpha": 0.4}}
+- "Places open on Sunday" → {{"intent": "FACTUAL", "suggested_alpha": 0.4}}
+
+MIXED Queries:
+- "Friendly dentist in Gangnam" → {{"intent": "MIXED", "suggested_alpha": 0.7}}
+- "Best dermatologist with good reviews" → {{"intent": "MIXED", "suggested_alpha": 0.75}}
+- "Pediatrician who speaks English well" → {{"intent": "MIXED", "suggested_alpha": 0.7}}
+- "Clean clinic with professional staff" → {{"intent": "MIXED", "suggested_alpha": 0.8}}
+
+**Query to classify:** {query}
+
+**Response Format (JSON only):**
+{{
+  "intent": "FACTUAL" | "MIXED",
+  "suggested_alpha": 0.0-1.0,
+  "reasoning": "Brief explanation (1 sentence)"
+}}
+
+**Remember:** 
+- FACTUAL = specific identifiers (names, codes, addresses) → Lower alpha (0.3-0.5)
+- MIXED = quality/vibes/preferences → Higher alpha (0.6-0.8)
 """
 
 

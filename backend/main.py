@@ -110,9 +110,6 @@ if hasattr(sys.stderr, 'reconfigure'):
 import json
 import pandas as pd
 import numpy as np
-import requests
-import chromadb
-from chromadb.utils import embedding_functions
 from fastapi import FastAPI, HTTPException, Cookie, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Dict, Any, Tuple
@@ -120,10 +117,8 @@ from groq import Groq
 from contextlib import asynccontextmanager
 from huggingface_hub import hf_hub_download
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 import logging
-import re
 
 # Local imports
 from distance import haversine, fuzzy_match_location
@@ -140,22 +135,13 @@ from location import (
     google_maps_place_details, kakao_geocode, kakao_reverse_geocode,
     verify_and_standardize_address
 )
+from cookies import (
+    CookieConsent, should_log_analytics, get_consent_from_cookie, 
+    should_use_advertising, privacy_safe_log
+)
 
-# Pydantic imports
-from pydantic import BaseModel
-
-
-# ==========================================
-# COOKIE CONSENT MODEL
-# ==========================================
-
-class CookieConsent(BaseModel):
-    """Model for cookie consent settings - GDPR/CCPA compliant"""
-    necessary: bool = True
-    analytics: bool = False
-    advertising: bool = False
-    timestamp: Optional[str] = None
-
+# Import RAG Pipeline
+from rag_pipeline import RAGPipeline
 
 # ==========================================
 # LOGGING SETUP
@@ -205,61 +191,10 @@ DEFAULT_MAX_DISTANCE = 5.0  # km - default search radius
 LANGUAGE = "English"  # Semi-fixed fixture, updated per message
 
 # Global data structures
-vector_db = None
+rag_pipeline = None  # RAG Pipeline instance
 df_facilities = None  # Full dataset
 df_filtered = None    # Filtered subset (Summaries not null)
 available_specialties = []  # Unique specialties from parquet data
-
-
-# ==========================================
-# COOKIE CONSENT HELPERS
-# ==========================================
-
-def get_consent_from_cookie(cookie_value: Optional[str]) -> CookieConsent:
-    """
-    Parse cookie consent from request.
-    Returns default (all denied except necessary) if not present.
-    """
-    if not cookie_value:
-        return CookieConsent()
-    
-    try:
-        consent_data = json.loads(cookie_value)
-        return CookieConsent(**consent_data)
-    except (json.JSONDecodeError, TypeError, ValueError) as e:
-        logger.warning(f"Invalid cookieConsent format: {e}")
-        return CookieConsent()
-
-
-def should_log_analytics(consent: CookieConsent) -> bool:
-    """Check if we can log analytics data"""
-    return consent.analytics
-
-
-def should_use_advertising(consent: CookieConsent) -> bool:
-    """Check if we can use advertising features"""
-    return consent.advertising
-
-
-def privacy_safe_log(consent: CookieConsent, message: str, level: str = "info"):
-    """
-    Privacy-aware logging that respects user consent.
-    Only logs detailed information if analytics consent is given.
-    """
-    if should_log_analytics(consent):
-        if level == "info":
-            logger.info(message)
-        elif level == "debug":
-            logger.debug(message)
-        elif level == "warning":
-            logger.warning(message)
-        elif level == "error":
-            logger.error(message)
-    else:
-        # Minimal logging without user data
-        if level in ["warning", "error"]:
-            logger.log(logging.WARNING if level == "warning" else logging.ERROR, 
-                      "Operation logged (details hidden - no analytics consent)")
 
 
 # ==========================================
@@ -368,65 +303,17 @@ def download_and_cache_parquet():
     return df
 
 
-def build_context_for_llm(df_subset: pd.DataFrame, n_results: int = 10) -> str:
-    """Build rich context from filtered parquet data for LLM."""
-    context_parts = []
-    
-    for idx, row in df_subset.head(n_results).iterrows():
-        facility_info = []
-        
-        facility_info.append(f"Name: {row['name']}")
-        facility_info.append(f"Category: {row['category']}")
-        
-        if 'file_district' in row.index and pd.notna(row['file_district']):
-            facility_info.append(f"District: {row['file_district']}")
-        if 'file_dong' in row.index and pd.notna(row['file_dong']):
-            facility_info.append(f"Neighborhood: {row['file_dong']}")
-        
-        if 'distance_km' in row.index and pd.notna(row['distance_km']) and row['distance_km'] > 0:
-            facility_info.append(f"Distance: {row['distance_km']:.1f}km away")
-        
-        # Handle Summaries (ndarray)
-        if 'Summaries' in row.index:
-            summaries = row['Summaries']
-            if isinstance(summaries, (list, np.ndarray)) and len(summaries) > 0:
-                facility_info.append(f"Summary (EN): {summaries[0]}")
-        
-        # Handle Summaries_Korean (ndarray)
-        if 'Summaries_Korean' in row.index:
-            summaries_kr = row['Summaries_Korean']
-            if isinstance(summaries_kr, (list, np.ndarray)) and len(summaries_kr) > 0:
-                facility_info.append(f"Summary (KR): {summaries_kr[0]}")
-        
-        # Handle Key_Highlights (ndarray)
-        if 'Key_Highlights' in row.index:
-            highlights_data = row['Key_Highlights']
-            if isinstance(highlights_data, (list, np.ndarray)) and len(highlights_data) > 0:
-                topics = []
-                for h in highlights_data[:5]:
-                    if isinstance(h, dict) and 'topic_en' in h:
-                        topics.append(h['topic_en'])
-                if topics:
-                    facility_info.append(f"Highlights: {', '.join(topics)}")
-        
-        if 'has_english' in row.index and row['has_english']:
-            facility_info.append(f"English Speaking: Yes")
-        
-        context_parts.append("\n".join(facility_info))
-    
-    return "\n\n---\n\n".join(context_parts)
-
-
 # ==========================================
 # LIFESPAN (STARTUP/SHUTDOWN)
 # ==========================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global vector_db, df_facilities, df_filtered, available_specialties
+    global rag_pipeline, df_facilities, df_filtered, available_specialties, client
     logger.info("🚀 Booting SeoulMedBot Backend...")
 
     try:
+        # Load data
         df_facilities = download_and_cache_parquet()
         logger.info(f"✅ Loaded {len(df_facilities)} facilities from parquet")
         
@@ -470,56 +357,32 @@ async def lifespan(app: FastAPI):
         if not GOOGLE_MAPS_API_KEY and not KAKAO_REST_API_KEY:
             logger.error("❌ NO GEOCODING SERVICE CONFIGURED - Location features will be limited!")
         
-        df_filtered['place_id'] = df_filtered['place_id'].fillna('').astype(str)        
+        df_filtered['place_id'] = df_filtered['place_id'].fillna('').astype(str)
+        
+        # Initialize RAG Pipeline with Hybrid Search
+        logger.info("🤖 Initializing RAG Pipeline with Hybrid Search (BM25 + Vector)...")
+        rag_pipeline = RAGPipeline(
+            chroma_path=CHROMA_PATH,
+            openai_api_key=OPENAI_API_KEY,
+            groq_client=client,  # Pass Groq client for query routing
+            collection_name="seoul_med_v3",
+            embedding_model="text-embedding-3-small"
+        )
+        
+        # Initialize vector database collection and BM25 index
+        rag_pipeline.initialize_collection(df_filtered, force_recreate=False)
+        
+        # Log RAG statistics
+        rag_stats = rag_pipeline.get_statistics()
+        logger.info(f"✅ RAG Pipeline ready:")
+        logger.info(f"   Vector documents: {rag_stats['document_count']}")
+        logger.info(f"   BM25 documents: {rag_stats['bm25_document_count']}")
+        logger.info(f"   Hybrid search: {'ENABLED ✓' if rag_stats['hybrid_search_enabled'] else 'DISABLED'}")
+        
     except Exception as e:
-        logger.error(f"PARQUET LOAD ERROR: {e}", exc_info=True)
+        logger.error(f"STARTUP ERROR: {e}", exc_info=True)
         df_facilities = pd.DataFrame()
         df_filtered = pd.DataFrame()
-
-    # Setup RAG
-    client_chroma = chromadb.PersistentClient(path=CHROMA_PATH)
-    openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-        api_key=OPENAI_API_KEY,
-        model_name="text-embedding-3-small"
-    )
-
-    try:
-        vector_db = client_chroma.get_collection("seoul_med_v3", embedding_function=openai_ef)
-        logger.info("✅ Embeddings collection found.")
-    except:
-        logger.info("⚠️ Creating new embeddings from filtered dataset...")
-        vector_db = client_chroma.create_collection("seoul_med_v3", embedding_function=openai_ef)
-        
-        ids, docs, metas = [], [], []
-        for _, row in df_filtered.iterrows():
-            summary_en = ""
-            summary_kr = ""
-            highlights = ""
-            
-            if isinstance(row['Summaries'], (list, np.ndarray)) and len(row['Summaries']) > 0:
-                summary_en = str(row['Summaries'][0])
-            if isinstance(row['Summaries_Korean'], (list, np.ndarray)) and len(row['Summaries_Korean']) > 0:
-                summary_kr = str(row['Summaries_Korean'][0])
-            if isinstance(row['Key_Highlights'], (list, np.ndarray)) and len(row['Key_Highlights']) > 0:
-                highlights = ", ".join([h.get('topic', '') for h in row['Key_Highlights'] if isinstance(h, dict)])
-            
-            text_blob = f"{row['name']} ({row['category']}). {summary_en} {summary_kr} {highlights}"
-            
-            ids.append(str(row['place_id']))
-            docs.append(text_blob)
-            metas.append({
-                "category": row['category'],
-                "district": str(row.get('file_district', '')),
-                "has_english": bool(row.get('has_english', False))
-            })
-
-        # Batch insert
-        batch_size = 100
-        for i in range(0, len(ids), batch_size):
-            end = min(i + batch_size, len(ids))
-            vector_db.add(ids=ids[i:end], documents=docs[i:end], metadatas=metas[i:end])
-            
-        logger.info("✅ Embeddings indexed.")
 
     yield
     logger.info("🛑 Shutting down.")
@@ -539,7 +402,7 @@ app.add_middleware(
         "http://localhost:3000",  # Local development
         "https://seouldoc.io",     # Production domain
         "https://www.seouldoc.io", # WWW version
-        "https://*.vercel.app",    # Vercel preview deployments
+        "https://seoul-doctor.vercel.app",  # Vercel preview
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -979,8 +842,12 @@ def execute_search(
     max_distance: float = DEFAULT_MAX_DISTANCE,
     consent: Optional[CookieConsent] = None
 ) -> Tuple[str, List[Dict]]:
-    """Execute the actual search logic with privacy-aware logging."""
-    global LANGUAGE
+    """
+    Execute the actual search logic with privacy-aware logging and Hybrid RAG integration.
+    
+    Uses Hybrid Search (BM25 + Vector) with automatic query routing for optimal results.
+    """
+    global LANGUAGE, rag_pipeline
     
     if not consent:
         consent = CookieConsent()
@@ -1082,61 +949,26 @@ def execute_search(
         working_df = working_df[working_df['category'].str.contains(state.specialty, na=False, case=False)]
         privacy_safe_log(consent, f"🏥 Category filter: '{state.specialty}' → {before_count} to {len(working_df)}")
     
-    # ===== SEMANTIC RANKING (RAG) =====
+    # ===== HYBRID RAG SEMANTIC RANKING (BM25 + Vector) =====
     query_text = state.specialty or ""
     
-    if len(query_text.strip()) > 2 and len(working_df) > 0:
-        try:
-            logger.debug("🔍 RAG ranking...")
-            n_rag_results = min(200, len(vector_db.get()['ids']))
-            rag_results = vector_db.query(query_texts=[query_text], n_results=n_rag_results)
-            
-            if rag_results and 'ids' in rag_results and len(rag_results['ids']) > 0:
-                rag_ranking = {place_id: idx for idx, place_id in enumerate(rag_results['ids'][0])}
-                working_df['relevance_rank'] = working_df['place_id'].apply(lambda pid: rag_ranking.get(pid, 9999))
-                
-                if state.search_mode != 'zone' and 'distance_km' in working_df.columns and working_df['distance_km'].max() > 0:
-                    max_rank = working_df['relevance_rank'].max()
-                    max_dist = working_df['distance_km'].max()
-                    
-                    if max_rank > 0:
-                        working_df['relevance_score'] = 1 - (working_df['relevance_rank'] / max_rank)
-                    else:
-                        working_df['relevance_score'] = 1.0
-                    
-                    if max_dist > 0:
-                        working_df['distance_score'] = 1 - (working_df['distance_km'] / max_dist)
-                    else:
-                        working_df['distance_score'] = 1.0
-                    
-                    # Dynamic weighting based on radius
-                    if max_distance <= 2:
-                        relevance_weight = 0.50
-                    elif max_distance <= 5:
-                        relevance_weight = 0.50 + (max_distance - 2) * (0.70 - 0.50) / (5 - 2)
-                    elif max_distance <= 10:
-                        relevance_weight = 0.70 + (max_distance - 5) * (0.85 - 0.70) / (10 - 5)
-                    else:
-                        relevance_weight = min(0.95, 0.85 + (max_distance - 10) * 0.01)
-                    
-                    distance_weight = 1 - relevance_weight
-                    
-                    working_df['combined_score'] = (
-                        relevance_weight * working_df['relevance_score'] + 
-                        distance_weight * working_df['distance_score']
-                    )
-                    working_df = working_df.sort_values('combined_score', ascending=False)
-                    logger.debug(f"✓ Combined ranking ({relevance_weight:.0%} relevance + {distance_weight:.0%} distance)")
-                else:
-                    working_df = working_df.sort_values('relevance_rank')
-                    logger.debug(f"✓ RAG ranked: {(working_df['relevance_rank'] < 9999).sum()}/{len(working_df)}")
-            else:
-                working_df['relevance_rank'] = 9999
-        except Exception as e:
-            logger.warning(f"RAG error: {e}")
-            working_df['relevance_rank'] = 9999
+    if len(query_text.strip()) > 2 and len(working_df) > 0 and rag_pipeline:
+        # Use hybrid search with automatic query routing
+        privacy_safe_log(consent, "🔀 Applying Hybrid RAG (BM25 + Vector with dynamic routing)...")
+        
+        working_df = rag_pipeline.apply_combined_ranking(
+            df=working_df,
+            query_text=query_text,
+            max_distance=max_distance,
+            search_mode=state.search_mode or 'distance',
+            n_results=200,
+            use_hybrid=True,  # Enable hybrid search
+            manual_mode=None  # Let the router decide (or set 'FACTUAL_ONLY'/'MIXED' for manual override)
+        )
     else:
         working_df['relevance_rank'] = 9999
+        if 'distance_km' in working_df.columns:
+            working_df = working_df.sort_values('distance_km')
     
     # ===== ENGLISH FILTER =====
     if LANGUAGE == "English" and 'has_english' in working_df.columns:
@@ -1153,7 +985,13 @@ def execute_search(
     
     if len(working_df) > 0:
         privacy_safe_log(consent, f"✓ Building response from {min(10, len(working_df))} facilities")
-        facilities_context = build_context_for_llm(working_df, n_results=10)
+        
+        # Use RAG pipeline to build context
+        facilities_context = rag_pipeline.build_context_for_llm(
+            working_df, 
+            n_results=10,
+            language=LANGUAGE
+        )
         
         gen_messages = [{
             "role": "system",
@@ -1286,12 +1124,13 @@ async def chat_endpoint(
     cookieConsent: Optional[str] = Cookie(None)
 ):
     """
-    Router-Controller Architecture with Cookie Consent Support.
+    Router-Controller Architecture with Cookie Consent Support and Hybrid RAG.
     
-    Now includes:
+    Features:
     - Cookie consent validation
     - Privacy-aware logging
     - Conditional analytics tracking
+    - Hybrid RAG-powered semantic search (BM25 + Vector with dynamic routing)
     """
     
     global LANGUAGE
@@ -1561,7 +1400,7 @@ async def chat_endpoint(
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint with privacy compliance information"""
+    """Health check endpoint with privacy compliance and Hybrid RAG information"""
     
     gps_count = 0
     if df_filtered is not None and 'lat' in df_filtered.columns:
@@ -1570,6 +1409,11 @@ async def health_check():
             (df_filtered['lon'].notna())
         ].shape[0]
     
+    # Get RAG statistics
+    rag_stats = {}
+    if rag_pipeline:
+        rag_stats = rag_pipeline.get_statistics()
+    
     return {
         "status": "healthy",
         "facilities_loaded": len(df_filtered) if df_filtered is not None else 0,
@@ -1577,7 +1421,21 @@ async def health_check():
         "gps_coverage_percent": round(gps_count / len(df_filtered) * 100, 1) if df_filtered is not None and len(df_filtered) > 0 else 0,
         "available_specialties_count": len(available_specialties),
         "sample_specialties": available_specialties[:10] if available_specialties else [],
-        "vector_db_initialized": vector_db is not None,
+        "rag_pipeline": {
+            "initialized": rag_stats.get('initialized', False),
+            "collection_name": rag_stats.get('collection_name', 'N/A'),
+            "vector_documents": rag_stats.get('document_count', 0),
+            "bm25_documents": rag_stats.get('bm25_document_count', 0),
+            "hybrid_search": "ENABLED ✓" if rag_stats.get('hybrid_search_enabled') else "disabled",
+            "embedding_model": "text-embedding-3-small (OpenAI)",
+            "keyword_model": "BM25Okapi",
+            "query_router": "llama-3.1-8b-instant (Groq)",
+            "alpha_range": "0.3-1.0 (with dynamic routing)",
+            "search_modes": {
+                "factual": "0.3-0.5 alpha (heavy keyword weight)",
+                "mixed": "0.6-0.8 alpha (heavy semantic weight)"
+            }
+        },
         "geocoding_services": {
             "google_maps": "ENABLED ✓" if GOOGLE_MAPS_API_KEY else "disabled",
             "kakao_maps": "ENABLED ✓" if KAKAO_REST_API_KEY else "disabled"
@@ -1592,5 +1450,5 @@ async def health_check():
             "advertising_conditional": "YES (requires user consent)",
             "privacy_aware_logging": "YES (reduces detail without consent)"
         },
-        "architecture": "Dynamic Specialty Matching + Google Maps Location ID + Radius-Adaptive Relevance Ranking + Cookie Consent Management + Privacy-First Design"
+        "architecture": "Dynamic Specialty Matching + Google Maps Location ID + HYBRID RAG (BM25 + Vector) + Query Router (FACTUAL vs MIXED) + Adaptive Alpha (0.3-1.0) + Radius-Adaptive Relevance Ranking + Cookie Consent Management + Privacy-First Design"
     }

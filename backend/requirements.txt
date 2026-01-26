@@ -11,3 +11,4 @@ python-multipart
 huggingface_hub
 python-dotenv
 pyarrow
+rank-bm25
