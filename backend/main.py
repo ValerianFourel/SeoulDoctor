@@ -97,6 +97,7 @@ RAG SEMANTIC SEARCH:
 - Returns semantic relevance ranking
 - Combined with distance for final scoring
 """
+
 # FORCE UNBUFFERED OUTPUT - Must be at the very top
 import os
 import sys
@@ -908,7 +909,6 @@ def validate_distance_criteria(df: pd.DataFrame, max_distance: float) -> pd.Data
     
     return df_valid
 
-
 def execute_search(
     state: State, 
     user_message: str, 
@@ -1453,7 +1453,6 @@ def execute_search(
     privacy_safe_log(consent, "=" * 60 + "\n")
     
     return response_text, results
-
 
 # ==========================================
 # API ENDPOINTS
