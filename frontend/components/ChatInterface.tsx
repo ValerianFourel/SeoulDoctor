@@ -114,7 +114,7 @@ const getCategoryEnglish = (koreanCategory: string): string => {
 
 export default function ChatInterface() {
   // --- DEBUG MODE STATE ---
-  const [debugMode, setDebugMode] = useState(true);
+  const [debugMode, setDebugMode] = useState(true); // true for it to work
   const [debugExpanded, setDebugExpanded] = useState(true);
   const [debugInfo, setDebugInfo] = useState<DebugInfo>({});
 

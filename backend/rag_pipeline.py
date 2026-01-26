@@ -26,7 +26,6 @@ import json
 
 logger = logging.getLogger(__name__)
 
-
 class RAGPipeline:
     """
     Manages the RAG pipeline with hybrid search (BM25 + Vector) for semantic search 
