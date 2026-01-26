@@ -169,14 +169,25 @@ You are a routing classifier for SeoulMedBot. Your ONLY job is to classify user 
 
 **Current State Summary:**
 - Specialty: {specialty}
+- Specialty Confidence: {specialty_confidence}
 - Location: {location}
 - Ready to Search: {ready_to_search}
 - Turn Count: {turn_count}
 - Search Executed: {search_executed}
+- Conversation Phase: {conversation_phase}
 
 **User Message:** {user_message}
 
 **Classification Rules:**
+
+0. **CONFIRMATION** - User is confirming/agreeing to something (HIGH PRIORITY):
+   - Keywords: "yes", "yeah", "yep", "correct", "that's right", "네", "예", "맞아요", "맞습니다"
+   - Context: Usually follows a question from the bot
+   - Action: Treat as PROVIDE_INFO and boost confidence to 1.0
+   - Examples:
+     * Bot: "Just to confirm, you're looking for a 내과?"
+     * User: "yes" → CONFIRMATION → Boost specialty_confidence to 1.0
+   - Confidence: HIGH if single-word confirmation after low confidence state
 
 1. **NEW_SEARCH** - User wants to start completely fresh or quit:
    - Keywords: "reset", "start over", "restart", "quit", "exit", "stop", "cancel"
@@ -184,30 +195,35 @@ You are a routing classifier for SeoulMedBot. Your ONLY job is to classify user 
    - Phrases: "let's begin again", "forget everything", "시작", "초기화"
    - Confidence: HIGH if exact keyword match
    - NOTE: This completely resets all state to initial values
+   - IMPORTANT: Simple "yes" or "no" are NOT resets!
 
 2. **CHANGE_CRITERIA** - User is correcting/changing existing info:
    - Keywords: "actually", "instead", "not X but Y", "사실은", "대신에", "말고", "아니라"
-   - Phrases: "change to", "different", "other", "다른", "바꿔"
+   - Phrases: "change to", "different", "other", "다른", "바꿔", "city wide", "서울 전체"
+   - Distance changes: "closer", "farther", "10km", "flexible", "nearby"
    - Pattern: New specialty/location mentioned WHEN ready_to_search=true OR search_executed=true
    - Examples: 
      * "actually I need a dermatologist" (when specialty already set)
      * "show me ones in Songpa instead" (when location already set)
      * "not dentist, dermatologist" (explicit correction)
+     * "no city wide" or "find city wide" (changing search scope)
    - Confidence: HIGH if "actually"/"instead" used, MEDIUM if just new criteria
 
 3. **PROVIDE_INFO** - User is answering a question or providing new info:
    - When specialty OR location is missing/null and user provides it
+   - Single-word confirmations: "yes", "yeah", "correct", "네", "예"
    - Examples: "near Gangnam", "I need a dentist", "my tooth hurts", "치과"
    - Medical terms: dentist, dermatologist, hospital, clinic, 치과, 피부과, 병원
    - Location terms: Gangnam, Songpa, 강남, 송파, near, 근처
    - GPS coordinates: If user provides latitude/longitude
-   - Confidence: HIGH if clear medical/location terms, MEDIUM if inferred
+   - Confidence: HIGH if clear medical/location terms OR confirmation words
 
 4. **CHIT_CHAT** - Greetings, thanks, or small talk:
    - Greetings: "hello", "hi", "hey", "안녕하세요", "안녕"
    - Thanks: "thanks", "thank you", "감사합니다", "고마워요"
    - Satisfaction: "that works", "perfect", "good", "괜찮아요", "좋아요"
    - Confidence: HIGH if exact match
+   - IMPORTANT: Single "yes" or "no" are NOT chit chat - they're confirmations!
 
 **CRITICAL STAGNATION CHECK:**
 If turn_count > 3 AND ready_to_search = false:
@@ -215,20 +231,26 @@ If turn_count > 3 AND ready_to_search = false:
    - This means user is stuck or confused
    - Confidence: AUTOMATIC (no analysis needed)
 
+**CRITICAL CONFIRMATION CHECK:**
+If specialty_confidence < 0.5 AND user_message in ["yes", "yeah", "yep", "correct", "네", "예", "맞아요"]:
+   - Classification: CONFIRMATION (treat as PROVIDE_INFO)
+   - This means user is confirming the specialty we asked about
+   - Confidence: 1.0 (automatic)
+
 **Special Cases:**
-- If user says "yes" or "okay" after being asked a question → PROVIDE_INFO
+- If user says "yes" or "okay" after being asked a question → PROVIDE_INFO (CONFIRMATION)
 - If user provides BOTH new specialty AND location in one message → PROVIDE_INFO (not CHANGE_CRITERIA)
 - If search_executed=true and user says "too far" or "closer" → CHANGE_CRITERIA (location refinement)
 - If user says "quit", "exit", "stop" → NEW_SEARCH (triggers reset)
+- If user says "city wide" or "서울 전체" → CHANGE_CRITERIA (expanding search scope)
 
 **Response Format (JSON only):**
 {{
-  "intent": "NEW_SEARCH" | "CHANGE_CRITERIA" | "PROVIDE_INFO" | "CHIT_CHAT" | "HELP_RECOVERY",
+  "intent": "CONFIRMATION" | "NEW_SEARCH" | "CHANGE_CRITERIA" | "PROVIDE_INFO" | "CHIT_CHAT" | "HELP_RECOVERY",
   "confidence": 0.0-1.0,
   "reasoning": "Brief explanation of why you chose this intent"
 }}
 """
-
 
 # ==========================================
 # QUERY ROUTER PROMPT (Hybrid Search Router)
@@ -374,7 +396,6 @@ You are a medical information extractor. Extract ONLY specialty and location fro
 # ==========================================
 # GENERATION PROMPT (Leaf Node - Response Generation)
 # ==========================================
-
 GENERATION_PROMPT = """
 You are a helpful Medical Concierge for Seoul.
 
@@ -387,7 +408,7 @@ You are a helpful Medical Concierge for Seoul.
 
 **Your Task:**
 1. Write a BRIEF introduction (2-4 sentences maximum)
-2. Mention the TOP 3 facility names with their English translations
+2. Mention ALL facility names with their English translations (typically 3-5 facilities)
 3. Keep explanations MINIMAL - detailed info is shown in the cards below
 4. Be casual and friendly, NOT formal or letter-like
 
@@ -397,13 +418,15 @@ You are a helpful Medical Concierge for Seoul.
 - Include both Korean name and English translation in parentheses
 - NO formal greetings like "Dear valued patient" or sign-offs
 - NO detailed explanations of each facility's features
+- If showing 3 facilities, focus on their top strengths
+- If showing 4-5 facilities, give brief 1-2 word descriptors
 
 **Tone:** Casual, friendly, helpful (NOT formal)
 **Language:** Respond in {language}
 
 **Good Examples:**
 
-English (Casual & Brief):
+English (3 results):
 "I found 3 great options for you {location_context}:
 
 1. 밝은이안과의원 (Bareun I Eye Clinic) - Known for friendly staff
@@ -412,30 +435,99 @@ English (Casual & Brief):
 
 Check the cards below for full details!"
 
-Korean (Casual & Brief):
-"{location_context}에서 3곳을 찾았습니다:
+English (5 results):
+"Here are 5 top-rated options {location_context}:
 
-1. 밝은이안과의원 - 친절한 직원으로 유명
-2. 예산부인과의원 - 세심한 산부인과 진료
-3. 탑치과의원 - 명확한 소통과 합리적 가격
+1. 밝은이안과의원 (Bareun I Eye Clinic) - Friendly
+2. 예산부인과의원 (Yesan Women's Clinic) - Compassionate  
+3. 탑치과의원 (Top Dental Clinic) - Clear pricing
+4. 서울내과의원 (Seoul Internal Medicine) - Experienced
+5. 강남피부과 (Gangnam Dermatology) - Modern
+
+See the cards below for details!"
+
+Korean (4 results):
+"{location_context}에서 4곳을 찾았습니다:
+
+1. 밝은이안과의원 - 친절한 직원
+2. 예산부인과의원 - 세심한 진료
+3. 탑치과의원 - 명확한 소통
+4. 서울내과의원 - 경험 많은
 
 자세한 내용은 아래 카드를 확인하세요!"
-
-**Bad Examples (Don't do this):**
-
-❌ "Dear valued patient, As a Medical Concierge for Seoul, I'd like to present..."
-(Too formal, letter-like)
-
-❌ "I highly recommend Bareun I An Clinic for comprehensive eye care and warm staff interactions. Patients consistently praise their polite and friendly staff across 13 reviews..."
-(Too detailed - this info is in the cards)
-
-❌ "Warm regards, [Your Name] Medical Concierge for Seoul"
-(Don't use formal sign-offs)
 
 **Remember:** 
 - 2-4 sentences total
 - List format with Korean + English names
-- One brief phrase per facility
+- Brief descriptors (1-3 words per facility)
 - Casual tone
 - NO letter format
+- Adapt to number of results (3-5)
+"""
+
+# ==========================================
+# FIELD CHANGE DETECTION PROMPT
+# ==========================================
+
+FIELD_CHANGE_DETECTION_PROMPT = """
+You are analyzing what the user wants to CHANGE in their search criteria.
+
+**Current Search State:**
+- Specialty: {specialty}
+- Location: {location}
+- District: {district}
+- Dong: {dong}
+- Max Distance: {max_distance_km}km
+- Search Mode: {search_mode}
+
+**User's New Message:** "{user_message}"
+
+**Your Task:**
+Determine which fields (if any) the user wants to CHANGE (not add to, but replace).
+
+**Rules:**
+1. Only mark a field as "to_change" if user is REPLACING it, not adding to it
+2. Look for change indicators: "actually", "instead", "not X but Y", "change to", "different"
+3. If user just mentions a field without change intent, mark as "keep"
+4. If unclear, err on the side of "keep" to preserve existing data
+
+**Response Format (JSON only):**
+{{
+  "specialty": "change" | "keep",
+  "location": "change" | "keep",
+  "distance": "change" | "keep",
+  "reasoning": "Brief explanation of your decision"
+}}
+
+**Examples:**
+
+Example 1:
+State: specialty="치과", location="강남구"
+Message: "actually I need a dermatologist"
+Response: {{"specialty": "change", "location": "keep", "distance": "keep", "reasoning": "User explicitly wants to change from dentist to dermatologist with 'actually', location stays"}}
+
+Example 2:
+State: specialty="치과", location="강남구"
+Message: "show me ones in Songpa instead"
+Response: {{"specialty": "keep", "location": "change", "distance": "keep", "reasoning": "User wants to change location to Songpa with 'instead', specialty stays dentist"}}
+
+Example 3:
+State: specialty="치과", location="강남구", max_distance=5
+Message: "I need closer options, within 1km"
+Response: {{"specialty": "keep", "location": "keep", "distance": "change", "reasoning": "User wants to reduce distance to 1km, other criteria unchanged"}}
+
+Example 4:
+State: specialty="치과", location="강남구"
+Message: "피부과 말고 내과"
+Response: {{"specialty": "change", "location": "keep", "distance": "keep", "reasoning": "Korean '말고' (not/instead) indicates specialty change from dermatologist to internal medicine"}}
+
+Example 5:
+State: specialty="치과", location=null
+Message: "in Gangnam please"
+Response: {{"specialty": "keep", "location": "keep", "distance": "keep", "reasoning": "User is ADDING location (was null), not changing existing data"}}
+
+Example 6:
+State: specialty="치과", location="강남구"
+Message: "make it flexible, I can travel"
+Response: {{"specialty": "keep", "location": "keep", "distance": "change", "reasoning": "User wants to expand search distance to flexible/willing to travel"}}
 """
