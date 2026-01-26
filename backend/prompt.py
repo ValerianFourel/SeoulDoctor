@@ -6,6 +6,164 @@ SeoulMedBot Prompts - Router-Controller Architecture + Query Router
 # ROUTER PROMPT (Root Node - Intent Classification)
 # ==========================================
 
+"""
+SeoulMedBot Prompts - Enhanced with Keyword Extraction
+"""
+
+# ==========================================
+# ENHANCED EXTRACTION PROMPT WITH KEYWORDS
+# ==========================================
+
+EXTRACTION_PROMPT_WITH_KEYWORDS = """
+You are a medical information extractor. Extract specialty, location, AND keywords from user input.
+
+**User Message:** {user_message}
+
+**Extraction Rules:**
+
+1. **Specialty Detection:**
+   - Medical categories: "dentist", "dermatologist", "pediatrician", "ophthalmologist", "ENT"
+   - Korean terms: "치과" (dentist), "피부과" (dermatologist), "소아과" (pediatrician), "안과" (ophthalmology)
+   - Confidence levels:
+     * 1.0 = Explicit mention ("I need a dentist")
+     * 0.7 = Clear symptom ("my tooth hurts")
+     * 0.3 = Vague ("doctor", "hospital")
+
+2. **Location Detection:**
+   - Seoul districts: Gangnam, Songpa, Mapo, Jung, Jongno, Yongsan
+   - Korean: 강남, 송파, 마포, 중구, 종로, 용산
+   - Landmarks: "Seoul Station", "City Hall", "Gangnam Station"
+   - Proximity phrases: "near X", "close to X", "X 근처"
+
+3. **Soft Keywords (for semantic ranking):**
+   - Quality descriptors: "friendly", "professional", "clean", "experienced"
+   - Service preferences: "quick", "thorough", "gentle", "caring"
+   - Atmosphere: "comfortable", "welcoming", "modern", "traditional"
+   - These enhance search relevance but don't filter results
+   - Examples: ["friendly", "professional", "clean"]
+
+4. **Hard Keywords (MUST match - strict filter):**
+   - Explicit requirements that MUST be present
+   - Identified by phrases like:
+     * "MUST have", "필수", "꼭", "반드시"
+     * "only if", "오직", "만"
+     * "required", "필요", "요구"
+   - Examples from user: 
+     * "MUST speak English" → ["English"]
+     * "필수로 주차 가능한" → ["주차", "parking"]
+     * "only clinics with X-ray" → ["X-ray", "엑스레이"]
+
+**Response Format (JSON only):**
+{{
+  "specialty": "extracted specialty or null",
+  "specialty_confidence": 0.0-1.0,
+  "location": "extracted location or null",
+  "soft_keywords": ["keyword1", "keyword2"],
+  "hard_keywords": ["must_have1", "must_have2"],
+  "language_pref": "Korean" | "English Preferred"
+}}
+
+**Examples:**
+
+Input: "I need a friendly dentist in Gangnam with parking"
+Output: {{
+  "specialty": "dentist",
+  "specialty_confidence": 1.0,
+  "location": "Gangnam",
+  "soft_keywords": ["friendly"],
+  "hard_keywords": ["parking"],
+  "language_pref": "English Preferred"
+}}
+
+Input: "강남에서 친절한 치과, 반드시 영어 가능한 곳"
+Output: {{
+  "specialty": "치과",
+  "specialty_confidence": 1.0,
+  "location": "강남",
+  "soft_keywords": ["친절한", "friendly"],
+  "hard_keywords": ["영어", "English"],
+  "language_pref": "Korean"
+}}
+
+Input: "Professional dermatologist, MUST have Saturday hours"
+Output: {{
+  "specialty": "dermatologist", 
+  "specialty_confidence": 1.0,
+  "location": null,
+  "soft_keywords": ["professional"],
+  "hard_keywords": ["Saturday"],
+  "language_pref": "English Preferred"
+}}
+"""
+
+
+# ==========================================
+# TARGETED EXTRACTION PROMPTS (Single Field)
+# ==========================================
+
+EXTRACT_SPECIALTY_ONLY_PROMPT = """
+Extract ONLY the medical specialty from this message: "{user_message}"
+
+**Available Specialties:**
+{specialty_list}
+
+**Response Format (JSON only):**
+{{
+  "specialty": "matched specialty or null",
+  "specialty_confidence": 0.0-1.0
+}}
+
+Match Korean/English names. Examples:
+- "dentist" → "치과" (confidence: 1.0)
+- "my tooth hurts" → "치과" (confidence: 0.7)
+- "dermatologist" → "피부과" (confidence: 1.0)
+"""
+
+
+EXTRACT_LOCATION_ONLY_PROMPT = """
+Extract ONLY the location from this message: "{user_message}"
+
+**Response Format (JSON only):**
+{{
+  "location": "extracted location or null",
+  "district": "district name or null",
+  "dong": "dong name or null"
+}}
+
+Extract: districts (구), neighborhoods (동), addresses, place names, landmarks.
+Examples:
+- "in Gangnam" → {{"location": "Gangnam", "district": "강남구"}}
+- "near Seoul Station" → {{"location": "Seoul Station"}}
+- "강남구 역삼동" → {{"location": "강남구 역삼동", "district": "강남구", "dong": "역삼동"}}
+"""
+
+
+EXTRACT_KEYWORDS_ONLY_PROMPT = """
+Extract ONLY keywords (requirements and preferences) from this message: "{user_message}"
+
+**Soft Keywords** (preferences for ranking):
+- Quality: friendly, professional, clean, experienced
+- Service: quick, thorough, gentle, caring
+- Atmosphere: comfortable, welcoming, modern
+
+**Hard Keywords** (MUST match - strict requirements):
+- Identified by: "MUST", "필수", "꼭", "only if", "required"
+- Examples: English speaking, parking, weekend hours, insurance
+
+**Response Format (JSON only):**
+{{
+  "soft_keywords": ["keyword1", "keyword2"],
+  "hard_keywords": ["must1", "must2"]
+}}
+
+Examples:
+- "friendly with parking" → {{"soft_keywords": ["friendly"], "hard_keywords": ["parking"]}}
+- "MUST speak English" → {{"soft_keywords": [], "hard_keywords": ["English"]}}
+- "professional, 필수 주차" → {{"soft_keywords": ["professional"], "hard_keywords": ["주차", "parking"]}}
+"""
+
+# Keep existing ROUTER_PROMPT and GENERATION_PROMPT...
+
 ROUTER_PROMPT = """
 You are a routing classifier for SeoulMedBot. Your ONLY job is to classify user intent.
 
