@@ -180,75 +180,63 @@ You are a routing classifier for SeoulMedBot. Your ONLY job is to classify user 
 
 **Classification Rules:**
 
-0. **CONFIRMATION** - User is confirming/agreeing to something (HIGH PRIORITY):
-   - Keywords: "yes", "yeah", "yep", "correct", "that's right", "네", "예", "맞아요", "맞습니다"
-   - Context: Usually follows a question from the bot
-   - Action: Treat as PROVIDE_INFO and boost confidence to 1.0
-   - Examples:
-     * Bot: "Just to confirm, you're looking for a 내과?"
-     * User: "yes" → CONFIRMATION → Boost specialty_confidence to 1.0
-   - Confidence: HIGH if single-word confirmation after low confidence state
+0. **CONFIRMATION** - User is confirming/agreeing (HIGHEST PRIORITY):
+   - Single-word confirmations: "yes", "yeah", "yep", "yup", "correct", "right", "okay", "ok", "sure"
+   - Korean: "네", "예", "맞아요", "맞습니다", "응", "그래요"
+   - Context: Usually follows a question from bot, especially when specialty_confidence < 0.5
+   - **CRITICAL**: If specialty_confidence < 0.5 AND message is confirmation word → ALWAYS CONFIRMATION
+   - Confidence: HIGH (1.0) for single-word confirmations after low-confidence state
 
 1. **NEW_SEARCH** - User wants to start completely fresh or quit:
    - Keywords: "reset", "start over", "restart", "quit", "exit", "stop", "cancel"
    - Korean: "새로 시작", "처음부터", "다시 시작", "그만", "종료", "취소"
-   - Phrases: "let's begin again", "forget everything", "시작", "초기화"
+   - **CRITICAL**: "no" by itself or "no" followed by medical terms is NOT a reset!
+   - **CRITICAL**: "no I need X" or "no I want Y" is CHANGE_CRITERIA or PROVIDE_INFO, NOT NEW_SEARCH
+   - Only true reset keywords trigger this
    - Confidence: HIGH if exact keyword match
-   - NOTE: This completely resets all state to initial values
-   - IMPORTANT: Simple "yes" or "no" are NOT resets!
 
-2. **CHANGE_CRITERIA** - User is correcting/changing existing info:
-   - Keywords: "actually", "instead", "not X but Y", "사실은", "대신에", "말고", "아니라"
-   - Phrases: "change to", "different", "other", "다른", "바꿔", "city wide", "서울 전체"
-   - Distance changes: "closer", "farther", "10km", "flexible", "nearby"
-   - Pattern: New specialty/location mentioned WHEN ready_to_search=true OR search_executed=true
+2. **CHANGE_CRITERIA** - User is correcting/changing existing info OR providing info after results:
+   - Negation corrections: "no", "not X", "no I need Y", "no I want Z"
+   - Change keywords: "actually", "instead", "not X but Y", "사실은", "대신에", "말고", "아니라"
+   - Distance changes: "closer", "farther", "10km", "flexible", "nearby", "city wide"
+   - Pattern: User says "no" + new criteria AFTER search_executed=true OR when specialty already set
    - Examples: 
+     * "no i need a internal doctor" (correcting previous specialty)
+     * "no i need a internal doctor who does colonoscopy" (correction with detail)
      * "actually I need a dermatologist" (when specialty already set)
-     * "show me ones in Songpa instead" (when location already set)
-     * "not dentist, dermatologist" (explicit correction)
-     * "no city wide" or "find city wide" (changing search scope)
-   - Confidence: HIGH if "actually"/"instead" used, MEDIUM if just new criteria
+     * "show me ones in Songpa instead" (location change)
+   - Confidence: HIGH if "no" + medical terms OR "actually"/"instead"
 
 3. **PROVIDE_INFO** - User is answering a question or providing new info:
    - When specialty OR location is missing/null and user provides it
-   - Single-word confirmations: "yes", "yeah", "correct", "네", "예"
-   - Examples: "near Gangnam", "I need a dentist", "my tooth hurts", "치과"
-   - Medical terms: dentist, dermatologist, hospital, clinic, 치과, 피부과, 병원
-   - Location terms: Gangnam, Songpa, 강남, 송파, near, 근처
-   - GPS coordinates: If user provides latitude/longitude
-   - Confidence: HIGH if clear medical/location terms OR confirmation words
+   - Single location responses: "Gangnam", "강남", "Geumcheon gu" (when location is missing)
+   - Medical info with location: "internal doctor in Gangnam", "colonoscopy in Geumcheon"
+   - Examples: "near Gangnam", "I need a dentist", "my tooth hurts", "치과", "colonoscopy"
+   - **CRITICAL**: If user was just asked for location and responds with just a location → PROVIDE_INFO
+   - Medical terms: dentist, dermatologist, hospital, clinic, 치과, 피부과, 병원, colonoscopy, endoscopy, internal
+   - Confidence: HIGH if clear medical/location terms OR answering missing field
 
-4. **CHIT_CHAT** - Greetings, thanks, or small talk:
+4. **CHIT_CHAT** - Greetings, thanks, or small talk (NOT negations or confirmations):
    - Greetings: "hello", "hi", "hey", "안녕하세요", "안녕"
    - Thanks: "thanks", "thank you", "감사합니다", "고마워요"
    - Satisfaction: "that works", "perfect", "good", "괜찮아요", "좋아요"
-   - Confidence: HIGH if exact match
-   - IMPORTANT: Single "yes" or "no" are NOT chit chat - they're confirmations!
+   - **CRITICAL**: "yes", "no", "okay" after questions are CONFIRMATIONS or CHANGE_CRITERIA, not chit chat!
+   - Confidence: HIGH if exact greeting/thanks match
 
-**CRITICAL STAGNATION CHECK:**
-If turn_count > 3 AND ready_to_search = false:
-   - Override classification to "HELP_RECOVERY"
-   - This means user is stuck or confused
-   - Confidence: AUTOMATIC (no analysis needed)
-
-**CRITICAL CONFIRMATION CHECK:**
-If specialty_confidence < 0.5 AND user_message in ["yes", "yeah", "yep", "correct", "네", "예", "맞아요"]:
-   - Classification: CONFIRMATION (treat as PROVIDE_INFO)
-   - This means user is confirming the specialty we asked about
-   - Confidence: 1.0 (automatic)
-
-**Special Cases:**
-- If user says "yes" or "okay" after being asked a question → PROVIDE_INFO (CONFIRMATION)
-- If user provides BOTH new specialty AND location in one message → PROVIDE_INFO (not CHANGE_CRITERIA)
-- If search_executed=true and user says "too far" or "closer" → CHANGE_CRITERIA (location refinement)
-- If user says "quit", "exit", "stop" → NEW_SEARCH (triggers reset)
-- If user says "city wide" or "서울 전체" → CHANGE_CRITERIA (expanding search scope)
+**CRITICAL DECISION TREE:**
+1. Is message "yes"/"yeah"/"correct" AND specialty_confidence < 0.5? → CONFIRMATION
+2. Does message start with "no" but include medical terms (dentist, internal, 치과, colonoscopy)? → CHANGE_CRITERIA or PROVIDE_INFO (not NEW_SEARCH!)
+3. Is message just a location name (Gangnam, 강남구) AND location is null? → PROVIDE_INFO
+4. Does message have reset keywords (reset, quit, exit, cancel)? → NEW_SEARCH
+5. Does message change existing criteria with "actually", "instead", "city wide"? → CHANGE_CRITERIA
+6. Does message provide new specialty or location? → PROVIDE_INFO
+7. Is message greeting or thanks? → CHIT_CHAT
 
 **Response Format (JSON only):**
 {{
   "intent": "CONFIRMATION" | "NEW_SEARCH" | "CHANGE_CRITERIA" | "PROVIDE_INFO" | "CHIT_CHAT" | "HELP_RECOVERY",
   "confidence": 0.0-1.0,
-  "reasoning": "Brief explanation of why you chose this intent"
+  "reasoning": "Brief explanation (one sentence)"
 }}
 """
 
@@ -327,70 +315,183 @@ MIXED Queries:
 # ==========================================
 
 EXTRACTION_PROMPT_V2 = """
-You are a medical information extractor. Extract ONLY specialty and location from user input.
+You are a medical information extractor. Extract specialty, location, and travel preferences from user input.
 
 **User Message:** {user_message}
 
-**Extraction Rules:**
+**CRITICAL NEGATION HANDLING:**
+- If message starts with "no", "not", "아니" - IGNORE the negation and extract what comes AFTER
+- "no i need X" → extract X (the "no" is correcting previous info)
+- "not dentist, internal medicine" → extract "internal medicine" (ignore "not dentist")
+- Focus on what the user WANTS, not what they don't want
 
-1. **Specialty Detection:**
-   - Medical categories: "dentist", "dermatologist", "pediatrician", "ophthalmologist", "ENT", "내과", "외과"
-   - Korean terms: "치과" (dentist), "피부과" (dermatologist), "소아과" (pediatrician), "안과" (ophthalmologist), "이비인후과" (ENT)
-   - Symptom inference:
-     * "tooth hurts/pain" → "dentist" (confidence: 0.7)
-     * "skin problem/rash" → "dermatologist" (confidence: 0.7)
-     * "eye problem" → "ophthalmologist" (confidence: 0.7)
-     * "ear/nose/throat" → "ENT" (confidence: 0.7)
-   - Confidence levels:
-     * 1.0 = Explicit mention ("I need a dentist")
-     * 0.7 = Clear symptom ("my tooth hurts")
-     * 0.3 = Vague ("doctor", "hospital")
+**AVAILABLE SPECIALTIES (match from actual data):**
+{specialty_list}
 
-2. **Location Detection:**
-   - Seoul districts: Gangnam, Songpa, Mapo, Jung, Jongno, Yongsan, etc.
-   - Korean districts: 강남, 송파, 마포, 중구, 종로, 용산, etc.
-   - Landmarks/stations: "Seoul Station", "City Hall", "Gangnam Station"
-   - Proximity phrases: "near X", "close to X", "X 근처"
-   - Extract the actual location name, not the proximity phrase
+**1. Specialty Detection:**
 
-3. **GPS Coordinates (NEW - Now Supported):**
-   - Extract if user explicitly provides coordinates
-   - Format: latitude (float), longitude (float)
-   - Example: "37.5219, 126.9243" or "lat: 37.5219, lon: 126.9243"
-   - Most queries will still be text-based, but GPS is now available
+**Explicit Medical Terms:**
+- Korean: 치과 (dentist), 피부과 (dermatology), 내과 (internal medicine), 소아과 (pediatrics), 안과 (ophthalmology), 이비인후과 (ENT), 외과 (surgery), 정형외과 (orthopedics), 산부인과 (obstetrics/gynecology), 한의원 (oriental medicine)
+- English: dentist, dermatologist, internal medicine, internal doctor, pediatrician, ophthalmologist, ENT, surgeon, orthopedist, gynecologist
 
-4. **Language Detection:**
-   - Korean characters (한글) → "Korean"
-   - English words → "English Preferred"
-   - Mixed → Prefer the dominant language
+**Procedure-to-Specialty Mapping (HIGH CONFIDENCE 0.9):**
+- "colonoscopy", "endoscopy", "gastroscopy", "stomach scope" → "내과" (Internal Medicine)
+- "tooth", "dental", "cavity", "root canal", "braces" → "치과" (Dentist)
+- "skin", "acne", "rash", "mole removal", "laser" → "피부과" (Dermatology)
+- "eye exam", "glasses", "contacts", "vision test", "cataract" → "안과" (Ophthalmology)
+- "pregnancy", "prenatal", "delivery", "birth" → "산부인과" (OB/GYN)
+- "back pain", "joint pain", "fracture", "sprain" → "정형외과" (Orthopedics)
+- "ear infection", "sore throat", "sinus", "hearing" → "이비인후과" (ENT)
 
-5. **Available Travel Labels (Pick ONE):**
-   - "Walking Distance": User wants it extremely close, 500m or less.
-   - "Nearby": Within 1km, short walk or very quick taxi.
-   - "Close": Within 2km.
-   - "Moderate": Within 5km (Default).
-   - "Flexible": Within 10km.
-   - "Willing to Travel": Within 15km, okay with a longer commute.
-   - "Anywhere in Seoul": User says "anywhere", "doesn't matter", "any district".
+**Symptom-to-Specialty Mapping (MEDIUM CONFIDENCE 0.7):**
+- "tooth hurts", "toothache", "gum bleeding" → "치과" (Dentist)
+- "skin problem", "itchy", "rash" → "피부과" (Dermatology)
+- "eye pain", "blurry vision", "red eyes" → "안과" (Ophthalmology)
+- "stomach pain", "digestion", "acid reflux" → "내과" (Internal Medicine)
 
-**DO NOT:**
-- Make assumptions about user intent or conversation flow
-- Determine if search should execute (that's the controller's job)
-- Generate conversational responses
-- Analyze previous state or context
-- Try to detect changes or corrections
+**Confidence Levels:**
+- 1.0 = Explicit specialty name ("I need a dentist", "내과 찾아줘")
+- 0.9 = Specific procedure that maps directly ("colonoscopy" → internal medicine)
+- 0.8 = Common symptom with clear specialty ("toothache" → dentist)
+- 0.7 = General symptom ("stomach issues" → internal medicine)
+- 0.5 = Vague ("doctor for checkup")
+- 0.3 = Very vague ("hospital", "clinic")
+- 0.0 = No medical intent
+
+**2. Location Detection:**
+
+**Seoul Districts (구):**
+- English: Gangnam, Songpa, Mapo, Jung, Jongno, Yongsan, Geumcheon, Gwanak, Seocho, etc.
+- Korean: 강남구, 송파구, 마포구, 중구, 종로구, 용산구, 금천구, 관악구, 서초구, etc.
+
+**Single-Word Location Responses:**
+- If message is JUST a location name (e.g., "Gangnam", "금천구") → STILL extract it!
+- User may be answering bot's question "Which area?"
+- Examples: "Gangnam" → "강남", "Geumcheon gu" → "금천구", "강남" → "강남"
+
+**Location Formats:**
+- District only: "Gangnam", "강남구"
+- District + Dong: "Gangnam-gu Yeoksam-dong", "강남구 역삼동"
+- Proximity: "near Gangnam Station" → extract "강남"
+- Full address: "123 Gangnam-daero, Gangnam-gu" → extract "강남구"
+
+**Normalization:**
+- "Gangnam" → "강남"
+- "Gangnam gu" / "Gangnam-gu" → "강남구"
+- "Geumcheon" / "Geumcheon gu" → "금천구"
+- Always extract the Korean name when possible
+
+**3. Travel Distance Preferences:**
+
+**Available Labels (pick ONE):**
+- "Walking Distance" (0.5km): "walking distance", "very close", "right here", "500m"
+- "Nearby" (1km): "nearby", "near me", "close by", "1km"
+- "Close" (2km): "close", "not too far", "2km"
+- "Moderate" (5km): **DEFAULT** if nothing specified
+- "Flexible" (10km): "flexible", "don't mind traveling", "10km"
+- "Willing to Travel" (15km): "willing to travel", "can go far", "15km"
+- "Anywhere in Seoul" (25km): "anywhere", "doesn't matter", "any district", "city wide"
+
+**4. Language Detection:**
+- If 50%+ Korean characters (한글) → "Korean"
+- If 50%+ English/ASCII → "English Preferred"
+
+**5. GPS Coordinates (Optional):**
+- Only extract if user explicitly provides coordinates
+- Format: "37.5219, 126.9243" or "lat: 37.5219, lon: 126.9243"
+- Most queries won't have this
 
 **Response Format (JSON only):**
 {{
-  "specialty": "extracted specialty or null",
+  "specialty": "matched specialty from list or null",
   "specialty_confidence": 0.0-1.0,
-  "location": "extracted location or null",
+  "location": "extracted location (preferably Korean name) or null",
   "latitude": null or float,
   "longitude": null or float,
-  "travel_label": "Choose from the list above",
-  "language_pref": "Korean" | "English Preferred",
-  "extracted_keywords": ["keyword1", "keyword2"]
+  "travel_label": "one label from list above",
+  "language_pref": "Korean" | "English Preferred"
 }}
+
+**Examples:**
+
+Input: "no i need a internal doctor who does colonoscopy"
+Output: {{
+  "specialty": "내과",
+  "specialty_confidence": 0.9,
+  "location": null,
+  "travel_label": "Moderate",
+  "language_pref": "English Preferred"
+}}
+Reason: "no" ignored, "colonoscopy" maps to 내과 with 0.9 confidence
+
+Input: "Gangnam"
+Output: {{
+  "specialty": null,
+  "specialty_confidence": 0.0,
+  "location": "강남",
+  "travel_label": "Moderate",
+  "language_pref": "English Preferred"
+}}
+Reason: Single-word location response
+
+Input: "Geumcheon gu"
+Output: {{
+  "specialty": null,
+  "specialty_confidence": 0.0,
+  "location": "금천구",
+  "travel_label": "Moderate",
+  "language_pref": "English Preferred"
+}}
+Reason: Normalized to Korean district name
+
+Input: "internal doctor in Geumcheon gu who does colonoscopy"
+Output: {{
+  "specialty": "내과",
+  "specialty_confidence": 1.0,
+  "location": "금천구",
+  "travel_label": "Moderate",
+  "language_pref": "English Preferred"
+}}
+Reason: Explicit specialty + location both extracted
+
+Input: "not dentist, dermatologist"
+Output: {{
+  "specialty": "피부과",
+  "specialty_confidence": 1.0,
+  "location": null,
+  "travel_label": "Moderate",
+  "language_pref": "English Preferred"
+}}
+Reason: Negation ignored, extracted what user wants
+
+Input: "치과 강남에서"
+Output: {{
+  "specialty": "치과",
+  "specialty_confidence": 1.0,
+  "location": "강남",
+  "travel_label": "Moderate",
+  "language_pref": "Korean"
+}}
+
+Input: "I need a dentist nearby in Gangnam"
+Output: {{
+  "specialty": "치과",
+  "specialty_confidence": 0.9,
+  "location": "강남",
+  "travel_label": "Nearby",
+  "language_pref": "English Preferred"
+}}
+Reason: "nearby" detected → travel_label = "Nearby"
+
+Input: "flexible with location, internal medicine"
+Output: {{
+  "specialty": "내과",
+  "specialty_confidence": 1.0,
+  "location": null,
+  "travel_label": "Flexible",
+  "language_pref": "English Preferred"
+}}
+Reason: "flexible" detected → travel_label = "Flexible"
 """
 
 # ==========================================
