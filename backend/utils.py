@@ -2,6 +2,16 @@ import pandas as pd
 import numpy as np
 from typing import List, Optional, Dict, Any
 
+# Mapping semantic labels to numerical search radii
+DISTANCE_MAPPING = {
+    "Walking Distance": 0.5,  # 500m
+    "Nearby": 1.0,           # 1km
+    "Close": 2.0,            # 2km
+    "Moderate": 5.0,         # 5km
+    "Flexible": 10.0,        # 10km
+    "Willing to Travel": 15.0, # 15km
+    "Anywhere in Seoul": 25.0  # 25km (Approx max radius for Seoul)
+}
 
 
 

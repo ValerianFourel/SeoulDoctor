@@ -342,6 +342,15 @@ You are a medical information extractor. Extract ONLY specialty and location fro
    - English words → "English Preferred"
    - Mixed → Prefer the dominant language
 
+5. **Available Travel Labels (Pick ONE):**
+   - "Walking Distance": User wants it extremely close, 500m or less.
+   - "Nearby": Within 1km, short walk or very quick taxi.
+   - "Close": Within 2km.
+   - "Moderate": Within 5km (Default).
+   - "Flexible": Within 10km.
+   - "Willing to Travel": Within 15km, okay with a longer commute.
+   - "Anywhere in Seoul": User says "anywhere", "doesn't matter", "any district".
+
 **DO NOT:**
 - Make assumptions about user intent or conversation flow
 - Determine if search should execute (that's the controller's job)
@@ -356,6 +365,7 @@ You are a medical information extractor. Extract ONLY specialty and location fro
   "location": "extracted location or null",
   "latitude": null or float,
   "longitude": null or float,
+  "travel_label": "Choose from the list above",
   "language_pref": "Korean" | "English Preferred",
   "extracted_keywords": ["keyword1", "keyword2"]
 }}

@@ -28,11 +28,9 @@ class State(BaseModel):
     search_mode: Optional[str] = None  # 'zone' or 'distance'
     
     # Maximum search distance (km) for distance-based search
-    max_distance_km: float = Field(default=5.0, ge=0.5, le=50.0)
-    
-    # User's willingness to travel (semantic label)
-    willingness_to_travel: str = "Nearby"  # "Nearby", "Moderate", "Willing to travel"
-    
+    max_distance_km: float = 5.0
+    # User's travel label (semantic label)
+    travel_label: str = "Moderate"  # Default label
     # ===== KEYWORD FILTERING =====
     # Soft keywords: used for semantic search and ranking
     keywords: List[str] = Field(default_factory=list)

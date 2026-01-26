@@ -123,7 +123,7 @@ import logging
 # Local imports
 from distance import haversine, fuzzy_match_location
 from models import ChatRequest, State
-from utils import safe_convert_to_python
+from utils import safe_convert_to_python, DISTANCE_MAPPING
 from prompt import ROUTER_PROMPT, EXTRACTION_PROMPT_V2, GENERATION_PROMPT
 from deterministic import (
     get_greeting_message, get_reset_confirmation, generate_change_acknowledgment,
@@ -787,7 +787,13 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any]) -> Stat
     
     if extracted.get('dong'):
         state.dong = extracted['dong']
-    
+
+    if extracted.get('travel_label'):
+        state.travel_label = extracted['travel_label']
+        if extracted['travel_label'] in DISTANCE_MAPPING:
+                state.max_distance_km = DISTANCE_MAPPING[state.travel_label]
+                logger.info(f"📏 Distance updated: {state.travel_label} -> {state.max_distance_km}km")
+
     if state.location:
         state.search_mode = detect_search_mode(state.location, state)
     
