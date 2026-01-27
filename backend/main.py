@@ -916,13 +916,18 @@ def execute_search(
     consent: Optional[CookieConsent] = None
 ) -> Tuple[str, List[Dict]]:
     """
-    Execute search with Hybrid RAG (BM25 + Vector) and keyword filtering.
+    HYBRID SEARCH: Path A (strict) + Path B (additive) fallback.
+    
+    Strategy:
+    1. Path A: Try strict hard keyword filtering first (best precision)
+    2. If Path A returns < 3 results: Run Path B with additive scoring to fill gap
+    3. Merge results, deduplicate, ensure 3-5 total results
     
     Features:
-    - Hard keywords: MUST-HAVE requirements (override specialty, not distance)
-    - Soft keywords: Preferences for semantic ranking
-    - Hybrid search with query routing (FACTUAL α=0.3 vs MIXED α=0.7)
-    - Specialty-preserving fallbacks
+    - Hard keywords: Strict filter (Path A), fallback to priority boost (Path B)
+    - Soft keywords: Always semantic ranking
+    - Specialty-preserving with radius expansion
+    - Intelligent result merging without duplicates
     """
     global LANGUAGE, rag_pipeline
     
@@ -933,7 +938,7 @@ def execute_search(
     state.last_search_timestamp = datetime.utcnow().isoformat()
     
     privacy_safe_log(consent, "=" * 60)
-    privacy_safe_log(consent, "🔍 SEARCH STARTED")
+    privacy_safe_log(consent, "🔍 HYBRID SEARCH STARTED (Path A → Path B fallback)")
     privacy_safe_log(consent, f"Query: \"{user_message[:50]}...\"")
     privacy_safe_log(consent, f"Specialty: {state.specialty or 'Any'}")
     privacy_safe_log(consent, f"Mode: {(state.search_mode or 'auto').upper()}")
@@ -943,7 +948,7 @@ def execute_search(
     if state.keywords:
         privacy_safe_log(consent, f"💭 Soft Keywords: {', '.join(state.keywords)}")
     if state.hard_keywords:
-        privacy_safe_log(consent, f"🔒 Hard Keywords (MUST): {', '.join(state.hard_keywords)}")
+        privacy_safe_log(consent, f"🔒 Hard Keywords: {', '.join(state.hard_keywords)}")
     if state.manual_search_mode:
         privacy_safe_log(consent, f"Manual Override: {state.manual_search_mode}")
     
@@ -953,14 +958,12 @@ def execute_search(
     location_context = ""
     user_lat = state.latitude
     user_lon = state.longitude
-    
     relaxed_filters = []
     
-    # ===== LOCATION FILTERING =====
+    # ===== LOCATION FILTERING (SHARED BY BOTH PATHS) =====
     
     if state.search_mode == 'zone' and state.district:
         privacy_safe_log(consent, f"🏘️ Zone search: {state.district} {state.dong or ''}")
-        
         working_df = filter_by_zone(working_df, state.district, state.dong)
         
         if state.dong:
@@ -992,7 +995,6 @@ def execute_search(
         
         if reverse_result:
             location_context = f"near {reverse_result['address_korean']}"
-            
             if not state.district:
                 state.district = reverse_result.get('district')
                 state.dong = reverse_result.get('dong')
@@ -1007,11 +1009,9 @@ def execute_search(
                 return 999.0
             
             working_df['distance_km'] = working_df.apply(calc_distance, axis=1)
-            
             before_count = len(working_df)
             working_df = working_df[working_df['distance_km'] < max_distance]
             privacy_safe_log(consent, f"✓ Distance filter ({max_distance}km): {before_count} → {len(working_df)}")
-            
             working_df = working_df.sort_values('distance_km')
         else:
             working_df['distance_km'] = 0
@@ -1030,7 +1030,7 @@ def execute_search(
         location_context = "across Seoul"
         working_df['distance_km'] = 0
     
-    # ===== CATEGORY FILTER (SPECIALTY-PRESERVING) =====
+    # ===== SPECIALTY FILTER WITH EXPANSION (SHARED) =====
     
     if state.specialty and 'category' in working_df.columns:
         before_count = len(working_df)
@@ -1052,13 +1052,7 @@ def execute_search(
                 expanded_df['distance_km'] = expanded_df.apply(calc_distance_expanded, axis=1)
                 expanded_df = expanded_df.sort_values('distance_km')
                 
-                expansion_radii = [
-                    max_distance * 1.5,
-                    max_distance * 2,
-                    max_distance * 3,
-                    max_distance * 5,
-                    50
-                ]
+                expansion_radii = [max_distance * 1.5, max_distance * 2, max_distance * 3, max_distance * 5, 50]
                 
                 for expanded_radius in expansion_radii:
                     expanded_working = expanded_df[expanded_df['distance_km'] < expanded_radius].copy()
@@ -1074,42 +1068,33 @@ def execute_search(
                     working_df = expanded_df.head(10)
                     location_context = f"across Seoul"
                     privacy_safe_log(consent, f"⚠️ Limited {state.specialty} availability: showing {len(working_df)} closest")
-            
-            else:
-                logger.warning(f"⚠️ No {state.specialty} facilities found in entire dataset!")
-                privacy_safe_log(consent, f"❌ Specialty '{state.specialty}' not available in database")
         
         if len(working_df) == 0:
             logger.warning(f"⚠️ No {state.specialty} facilities found")
             privacy_safe_log(consent, f"❌ No {state.specialty} available")
     
-    # ===== HARD KEYWORDS FILTERING (OVERRIDES EVERYTHING EXCEPT DISTANCE) =====
-    pre_hard_keyword_df = working_df.copy()
+    # ===== PATH A: STRICT HARD KEYWORD FILTERING =====
+    
+    path_a_results_df = pd.DataFrame()
+    path_a_place_ids = set()
     
     if state.hard_keywords and len(working_df) > 0:
-        privacy_safe_log(consent, f"🔒 Applying HARD keyword filter (MUST requirements): {state.hard_keywords}")
+        privacy_safe_log(consent, "🎯 PATH A: Strict hard keyword filtering")
         
-        before_count = len(working_df)
-        
-        # ⭐ CRITICAL: Search in ALL facilities (override specialty), but keep distance
         search_df = df_filtered.copy()
         
         # Preserve distance filter
-        if 'distance_km' in working_df.columns:
-            max_distance_to_use = max_distance
+        if 'distance_km' in working_df.columns and user_lat and user_lon:
+            def calc_distance(row):
+                if pd.notna(row['lat']) and pd.notna(row['lon']):
+                    return haversine(user_lat, user_lon, row['lat'], row['lon'])
+                return 999.0
             
-            # Recalculate distances for all facilities
-            if user_lat and user_lon:
-                def calc_distance(row):
-                    if pd.notna(row['lat']) and pd.notna(row['lon']):
-                        return haversine(user_lat, user_lon, row['lat'], row['lon'])
-                    return 999.0
-                
-                search_df['distance_km'] = search_df.apply(calc_distance, axis=1)
-                search_df = search_df[search_df['distance_km'] < max_distance_to_use]
-                privacy_safe_log(consent, f"✓ Distance preserved: {len(search_df)} facilities within {max_distance_to_use}km")
+            search_df['distance_km'] = search_df.apply(calc_distance, axis=1)
+            search_df = search_df[search_df['distance_km'] < max_distance]
+            privacy_safe_log(consent, f"   Distance preserved: {len(search_df)} facilities within {max_distance}km")
         
-        # Apply hard keyword filter to ALL fields
+        # Apply strict hard keyword filter
         for keyword in state.hard_keywords:
             keyword_lower = keyword.lower()
             mask = pd.Series([False] * len(search_df), index=search_df.index)
@@ -1125,42 +1110,200 @@ def execute_search(
                         if isinstance(val, (list, np.ndarray)):
                             return any(keyword_lower in str(item).lower() for item in val)
                         return False
-                    
                     mask = mask | search_df[field].apply(check_list_field)
+                
                 elif field == 'amenities':
                     def check_amenities(val):
                         if isinstance(val, dict):
                             return any(keyword_lower in str(v).lower() for v in val.values())
                         return False
-                    
                     mask = mask | search_df[field].apply(check_amenities)
+                
                 else:
                     mask = mask | search_df[field].fillna('').astype(str).str.lower().str.contains(keyword_lower, na=False)
             
             search_df = search_df[mask]
         
-        privacy_safe_log(consent, f"✓ Hard keyword filter: {before_count} → {len(search_df)} (OVERRIDE specialty if needed)")
+        privacy_safe_log(consent, f"   Path A result: {len(search_df)} facilities match ALL hard keywords")
         
-        # ⭐ Use hard keyword results if we got 3+
         if len(search_df) >= 3:
-            working_df = search_df
-            if state.specialty:
-                privacy_safe_log(consent, f"ℹ️  Hard keywords may have overridden specialty '{state.specialty}' filter")
+            path_a_results_df = search_df.copy()
+            path_a_place_ids = set(path_a_results_df['place_id'].tolist())
+            privacy_safe_log(consent, f"✓ Path A SUCCESS: {len(path_a_results_df)} results (≥3)")
         else:
-            logger.warning(f"⚠️ Hard keyword filter too strict ({len(search_df)} results)")
-            
+            privacy_safe_log(consent, f"⚠️ Path A insufficient: {len(search_df)} results (<3) → Will try Path B")
             if len(search_df) > 0:
-                working_df = search_df
-                privacy_safe_log(consent, f"✓ Using {len(search_df)} hard keyword matches")
-            else:
-                privacy_safe_log(consent, f"🔄 No hard keyword matches, treating as soft keywords")
-                state.keywords.extend(state.hard_keywords)
-                state.hard_keywords = []
-                relaxed_filters.append("treated strict requirements as preferences")
+                path_a_results_df = search_df.copy()
+                path_a_place_ids = set(path_a_results_df['place_id'].tolist())
+    else:
+        # No hard keywords, use working_df directly
+        path_a_results_df = working_df.copy()
+        path_a_place_ids = set(path_a_results_df['place_id'].tolist()) if len(path_a_results_df) > 0 else set()
+        privacy_safe_log(consent, f"ℹ️  No hard keywords → Path A uses {len(path_a_results_df)} specialty-filtered results")
     
-    # ===== HYBRID RAG SEMANTIC RANKING (BM25 + Vector) =====
+    # ===== PATH B: ADDITIVE SCORING (ONLY IF PATH A < 3) =====
     
-    # Build query from specialty + soft keywords (NOT hard keywords - already filtered)
+    path_b_results_df = pd.DataFrame()
+    needs_path_b = len(path_a_results_df) < 3
+    
+    if needs_path_b:
+        privacy_safe_log(consent, f"🔄 PATH B: Additive scoring to fill gap to 3-5 results")
+        
+        # Start with full working_df (exclude Path A results)
+        path_b_pool = working_df[~working_df['place_id'].isin(path_a_place_ids)].copy()
+        privacy_safe_log(consent, f"   Path B pool: {len(path_b_pool)} facilities (excluding Path A results)")
+        
+        if len(path_b_pool) > 0:
+            # Robust keyword matching function
+            def calculate_field_boost(value, keyword_lower: str) -> bool:
+                """
+                Robust keyword matching across all field types (str, list, dict, np.ndarray, pd.Series).
+                Fixes ValueError: "truth value of array with >1 element is ambiguous"
+                """
+                # Handle NumPy arrays explicitly (common source of the error)
+                if isinstance(value, np.ndarray):
+                    if value.size == 0:
+                        return False
+                    # Check each element in flattened array
+                    for item in value.flat:
+                        if not pd.isna(item) and keyword_lower in str(item).lower():
+                            return True
+                    return False
+                
+                # Handle pandas Series (sometimes appears in apply operations)
+                if isinstance(value, pd.Series):
+                    if value.empty:
+                        return False
+                    for item in value.values:
+                        if not pd.isna(item) and keyword_lower in str(item).lower():
+                            return True
+                    return False
+                
+                # Handle scalar NaN/None first (MUST come before pd.isna check)
+                if value is None or value == "":
+                    return False
+                
+                # Safe scalar NaN check
+                try:
+                    if pd.isna(value):
+                        return False
+                except (ValueError, TypeError):
+                    # pd.isna failed on this type, continue processing
+                    pass
+                
+                # Handle lists/tuples
+                if isinstance(value, (list, tuple)):
+                    for item in value:
+                        try:
+                            if pd.isna(item):
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+                        if keyword_lower in str(item).lower():
+                            return True
+                    return False
+                
+                # Handle dicts (amenities, medical_info_parsed)
+                if isinstance(value, dict):
+                    for v in value.values():
+                        # ⭐ CRITICAL FIX: Recursively handle complex dict values (arrays, nested dicts)
+                        if isinstance(v, (np.ndarray, list, tuple, dict, pd.Series)):
+                            if calculate_field_boost(v, keyword_lower):
+                                return True
+                        else:
+                            # Scalar value in dict
+                            try:
+                                if pd.isna(v):
+                                    continue
+                            except (ValueError, TypeError):
+                                pass
+                            if keyword_lower in str(v).lower():
+                                return True
+                    return False
+                
+                # Handle strings/scalars
+                return keyword_lower in str(value).lower()
+
+            
+            def apply_keyword_boost(df: pd.DataFrame, keywords: List[str], weight: float, label: str) -> pd.Series:
+                boost = pd.Series(0.0, index=df.index)
+                searchable_fields = ['name', 'category', 'address', 'Summaries', 'Summaries_Korean', 'Key_Highlights', 'amenities', 'medical_info_parsed']
+                
+                for kw in keywords:
+                    kw_lower = str(kw).lower().strip()
+                    if not kw_lower:
+                        continue
+                    
+                    field_matches = pd.Series(False, index=df.index)
+                    for field in searchable_fields:
+                        if field in df.columns:
+                            field_matches |= df[field].apply(lambda x, kw=kw_lower: calculate_field_boost(x, kw))
+                    
+                    boost[field_matches] += weight
+                    matched_count = field_matches.sum()
+                    if matched_count > 0:
+                        privacy_safe_log(consent, f"      +{weight} → '{kw}' matched {matched_count} facilities ({label})")
+                
+                return boost
+            
+            # Initialize scoring
+            path_b_pool['relevance_boost'] = 0.0
+            
+            # 1. Hard keywords: Priority boost
+            if state.hard_keywords:
+                path_b_pool['relevance_boost'] += apply_keyword_boost(path_b_pool, state.hard_keywords, 500.0, "HARD")
+            
+            # 2. Soft keywords: Preference boost
+            if state.keywords:
+                path_b_pool['relevance_boost'] += apply_keyword_boost(path_b_pool, state.keywords, 50.0, "SOFT")
+            
+            # 3. Specialty match boost
+            if state.specialty:
+                spec_mask = path_b_pool['category'].fillna('').astype(str).str.lower().str.contains(state.specialty.lower(), na=False)
+                path_b_pool.loc[spec_mask, 'relevance_boost'] += 200.0
+            
+            # 4. Distance decay
+            if 'distance_km' in path_b_pool.columns:
+                max_dist = path_b_pool['distance_km'].max() or 1.0
+                if max_dist > 0:
+                    distance_penalty = (path_b_pool['distance_km'] / max_dist) * 30
+                    path_b_pool['relevance_boost'] -= distance_penalty
+            
+            # Sort by boost then distance
+            path_b_pool = path_b_pool.sort_values(by=['relevance_boost', 'distance_km'], ascending=[False, True]).reset_index(drop=True)
+            
+            path_b_results_df = path_b_pool.copy()
+            privacy_safe_log(consent, f"✓ Path B scored {len(path_b_results_df)} facilities")
+    
+    # ===== MERGE PATH A + PATH B RESULTS =====
+    
+    if len(path_a_results_df) >= 3:
+        # Path A sufficient
+        final_df = path_a_results_df.copy()
+        privacy_safe_log(consent, f"✅ Using Path A only: {len(final_df)} results")
+    
+    elif len(path_a_results_df) > 0 and len(path_b_results_df) > 0:
+        # Merge: Path A first, then Path B to fill gap
+        needed = 5 - len(path_a_results_df)
+        path_b_top = path_b_results_df.head(needed)
+        
+        final_df = pd.concat([path_a_results_df, path_b_top], ignore_index=True)
+        privacy_safe_log(consent, f"✅ MERGED: {len(path_a_results_df)} from Path A + {len(path_b_top)} from Path B = {len(final_df)} total")
+        relaxed_filters.append(f"included {len(path_b_top)} additional results using priority scoring")
+    
+    elif len(path_b_results_df) > 0:
+        # Only Path B (Path A failed completely)
+        final_df = path_b_results_df.copy()
+        privacy_safe_log(consent, f"✅ Using Path B only: {len(final_df)} results")
+        relaxed_filters.append("used priority scoring (strict filtering found no matches)")
+    
+    else:
+        # Both failed
+        final_df = working_df.copy()
+        privacy_safe_log(consent, f"⚠️ Both paths failed, using {len(final_df)} base results")
+    
+    # ===== HYBRID RAG SEMANTIC RANKING =====
+    
     query_components = []
     if state.specialty:
         query_components.append(state.specialty)
@@ -1169,41 +1312,21 @@ def execute_search(
     
     query_text = " ".join(query_components) if query_components else user_message
     
-    privacy_safe_log(consent, f"🔍 Semantic query: \"{query_text}\"")
-    if state.hard_keywords:
-        privacy_safe_log(consent, f"🔒 Hard keywords (already filtered): {state.hard_keywords}")
-    
-    if len(query_text.strip()) > 2 and len(working_df) > 0 and rag_pipeline:
+    if len(query_text.strip()) > 2 and len(final_df) > 0 and rag_pipeline:
         privacy_safe_log(consent, "🔀 Applying Hybrid RAG (BM25 + Vector)...")
         
         try:
             route_decision = rag_pipeline.route_query(query_text)
-            
             state.query_intent = route_decision.get('intent', 'MIXED')
             state.suggested_alpha = route_decision.get('suggested_alpha', 0.7)
             
-            privacy_safe_log(consent, 
-                f"   🎯 Router: {state.query_intent} (α={state.suggested_alpha:.2f})")
-            
-            actual_alpha = rag_pipeline.calculate_alpha(
-                route_decision, 
-                state.manual_search_mode
-            )
+            actual_alpha = rag_pipeline.calculate_alpha(route_decision, state.manual_search_mode)
             state.hybrid_alpha = actual_alpha
             
-            privacy_safe_log(consent, 
-                f"   ⚖️  Active α={actual_alpha:.2f} "
-                f"({int((1-actual_alpha)*100)}% keyword + {int(actual_alpha*100)}% semantic)")
+            privacy_safe_log(consent, f"   🎯 Router: {state.query_intent} (α={actual_alpha:.2f})")
             
-        except Exception as e:
-            logger.error(f"Query routing error: {e}", exc_info=True)
-            state.query_intent = "MIXED"
-            state.suggested_alpha = 0.7
-            state.hybrid_alpha = 0.7
-        
-        try:
-            working_df = rag_pipeline.apply_combined_ranking(
-                df=working_df,
+            final_df = rag_pipeline.apply_combined_ranking(
+                df=final_df,
                 query_text=query_text,
                 max_distance=max_distance,
                 search_mode=state.search_mode or 'distance',
@@ -1212,58 +1335,46 @@ def execute_search(
                 manual_mode=state.manual_search_mode
             )
             
-            privacy_safe_log(consent, f"✓ Hybrid ranking applied to {len(working_df)} facilities")
+            privacy_safe_log(consent, f"✓ Hybrid ranking applied")
             
         except Exception as e:
             logger.error(f"Hybrid ranking error: {e}", exc_info=True)
-            working_df['relevance_rank'] = 9999
-            if 'distance_km' in working_df.columns:
-                working_df = working_df.sort_values('distance_km')
+            final_df['relevance_rank'] = 9999
+            if 'distance_km' in final_df.columns:
+                final_df = final_df.sort_values('distance_km')
     else:
-        working_df['relevance_rank'] = 9999
-        if 'distance_km' in working_df.columns:
-            working_df = working_df.sort_values('distance_km')
-            privacy_safe_log(consent, "ℹ️  Using distance-only ranking")
-        
         state.query_intent = None
         state.suggested_alpha = None
         state.hybrid_alpha = None
     
-    # ===== ENGLISH LANGUAGE FILTER (with fallback) =====
-    pre_english_df = working_df.copy()
+    # ===== ENGLISH FILTER (with fallback) =====
     
-    if LANGUAGE == "English" and 'has_english' in working_df.columns:
-        before = len(working_df)
-        working_df = working_df[working_df['has_english'] == True]
-        privacy_safe_log(consent, f"🌐 English speaker filter: {before} → {len(working_df)}")
+    pre_english_df = final_df.copy()
+    
+    if LANGUAGE == "English" and 'has_english' in final_df.columns:
+        before = len(final_df)
+        final_df = final_df[final_df['has_english'] == True]
+        privacy_safe_log(consent, f"🌐 English filter: {before} → {len(final_df)}")
         
-        if len(working_df) < 3:
-            logger.warning(f"⚠️ English filter too strict, including all facilities")
-            working_df = pre_english_df
+        if len(final_df) < 3:
+            final_df = pre_english_df
             relaxed_filters.append("included facilities with limited English")
-        
-        if len(working_df) == 0:
-            logger.warning("⚠️ No English facilities, reverting")
-            working_df = pre_english_df
     
-    # ===== FINAL DISTANCE VALIDATION (with fallback) =====
-    if state.search_mode != 'zone' and 'distance_km' in working_df.columns:
-        before_validation = len(working_df)
-        pre_validation_df = working_df.copy()
+    # ===== FINAL DISTANCE VALIDATION =====
+    
+    if state.search_mode != 'zone' and 'distance_km' in final_df.columns:
+        pre_validation_df = final_df.copy()
+        final_df = final_df[final_df['distance_km'] < max_distance]
         
-        working_df = validate_distance_criteria(working_df, max_distance)
-        
-        if len(working_df) < 3 and len(pre_validation_df) >= 3:
-            logger.warning(f"⚠️ Distance validation too strict, keeping closest")
-            working_df = pre_validation_df.head(5)
+        if len(final_df) < 3 and len(pre_validation_df) >= 3:
+            final_df = pre_validation_df.head(5)
             relaxed_filters.append("included slightly farther facilities")
     
-    # ===== SMART RESULT SELECTION (3-5 RESULTS) =====
+    # ===== RESULT SELECTION (3-5) =====
+    
     def select_optimal_result_count(df: pd.DataFrame, min_results: int = 3, max_results: int = 5) -> int:
         total = len(df)
-        
         if total < min_results:
-            logger.warning(f"⚠️ Only {total} results (target: {min_results}-{max_results})")
             return total
         elif total <= max_results:
             return total
@@ -1273,20 +1384,16 @@ def execute_search(
             return max_results
     
     # ===== GENERATE RESPONSE =====
+    
     results = []
     response_text = ""
     
-    if len(working_df) > 0:
-        n_results = select_optimal_result_count(working_df, min_results=3, max_results=5)
-        
-        privacy_safe_log(consent, f"✓ Selecting {n_results} results from {len(working_df)} facilities")
+    if len(final_df) > 0:
+        n_results = select_optimal_result_count(final_df, min_results=3, max_results=5)
+        privacy_safe_log(consent, f"✓ Selecting {n_results} results from {len(final_df)} facilities")
         
         try:
-            facilities_context = rag_pipeline.build_context_for_llm(
-                working_df, 
-                n_results=n_results,
-                language=LANGUAGE
-            )
+            facilities_context = rag_pipeline.build_context_for_llm(final_df, n_results=n_results, language=LANGUAGE)
         except Exception as e:
             logger.error(f"Context building error: {e}", exc_info=True)
             facilities_context = "Error building context"
@@ -1313,8 +1420,8 @@ def execute_search(
             # Add disclaimers
             if len(relaxed_filters) > 0 and n_results >= 3:
                 if LANGUAGE == "English":
-                    if any(state.specialty in f for f in relaxed_filters if "expanded search" in f):
-                        disclaimer = f"\n\n💡 Note: I expanded the search area to find more {state.specialty} options for you."
+                    if any("expanded search" in f for f in relaxed_filters):
+                        disclaimer = f"\n\n💡 Note: I expanded the search area to find more options for you."
                     else:
                         disclaimer = "\n\n💡 Note: To show you 3+ options, I " + " and ".join(relaxed_filters) + "."
                 else:
@@ -1323,19 +1430,20 @@ def execute_search(
             
             elif n_results < 3:
                 if LANGUAGE == "English":
-                    response_text += f"\n\n⚠️ Limited availability: Only {n_results} {state.specialty or 'facilities'} found. Consider expanding your search area."
+                    response_text += f"\n\n⚠️ Limited availability: Only {n_results} facilities found. Consider expanding your search area."
                 else:
-                    response_text += f"\n\n⚠️ 제한된 옵션: {state.specialty or '시설'}을(를) {n_results}개만 찾았습니다. 검색 범위를 확대해 보세요."
+                    response_text += f"\n\n⚠️ 제한된 옵션: {n_results}개만 찾았습니다. 검색 범위를 확대해 보세요."
             
         except Exception as e:
             logger.error(f"Response generation error: {e}", exc_info=True)
             if LANGUAGE == "English":
-                response_text = f"I found {len(working_df)} facilities. Here are the top {n_results}:"
+                response_text = f"I found {len(final_df)} facilities. Here are the top {n_results}:"
             else:
-                response_text = f"{len(working_df)}개의 시설을 찾았습니다. 상위 {n_results}개:"
+                response_text = f"{len(final_df)}개의 시설을 찾았습니다. 상위 {n_results}개:"
         
         # ===== PREPARE RESULTS FOR FRONTEND =====
-        for idx, (_, row) in enumerate(working_df.head(n_results).iterrows(), start=1):
+        
+        for idx, (_, row) in enumerate(final_df.head(n_results).iterrows(), start=1):
             result = {
                 "place_id": safe_convert_to_python(row['place_id']),
                 "name": safe_convert_to_python(row['name']),
@@ -1385,14 +1493,17 @@ def execute_search(
             
             result['relevance_rank'] = safe_convert_to_python(row.get('relevance_rank', 9999))
             
+            if 'relevance_boost' in row.index:
+                result['relevance_boost'] = safe_convert_to_python(row['relevance_boost'])
+            
             if 'combined_score' in row.index:
                 result['combined_score'] = safe_convert_to_python(row['combined_score'])
             
             results.append(result)
             
-            privacy_safe_log(consent, 
-                f"   #{idx}: {result['name']} ({result['category']}) "
-                f"dist={distance_value:.1f}km")
+            boost_value = result.get('relevance_boost')
+            boost_info = f" boost={boost_value:.1f}" if boost_value is not None else ""
+            privacy_safe_log(consent, f"   #{idx}: {result['name']} ({result['category']}) dist={distance_value:.1f}km{boost_info}")
     
     else:
         logger.warning("⚠️ No facilities found")
@@ -1401,55 +1512,31 @@ def execute_search(
             if LANGUAGE == "English":
                 response_text = (
                     f"I couldn't find any {state.specialty} facilities in your search area.\n\n"
-                    f"This might mean:\n"
-                    f"• There are no {state.specialty} facilities in {location_context}\n"
-                    f"• Try expanding your search radius\n"
-                    f"• Try a different area in Seoul\n\n"
-                    f"Would you like to search in a different location?"
+                    f"Try expanding your search radius or choosing a different area."
                 )
             else:
-                response_text = (
-                    f"검색 지역에서 {state.specialty} 시설을 찾을 수 없습니다.\n\n"
-                    f"가능한 이유:\n"
-                    f"• {location_context}에 {state.specialty} 시설이 없음\n"
-                    f"• 검색 범위 확대 필요\n"
-                    f"• 서울의 다른 지역 시도\n\n"
-                    f"다른 지역에서 검색하시겠어요?"
-                )
+                response_text = f"검색 지역에서 {state.specialty} 시설을 찾을 수 없습니다.\n\n검색 범위를 확대해 보세요."
         else:
             if LANGUAGE == "English":
-                response_text = (
-                    "I couldn't find any facilities matching your criteria.\n\n"
-                    "Try:\n"
-                    "• A different location\n"
-                    "• Expanding your search area\n"
-                    "• Adjusting your requirements"
-                )
+                response_text = "I couldn't find any facilities matching your criteria.\n\nTry adjusting your search."
             else:
-                response_text = (
-                    "조건에 맞는 시설을 찾을 수 없습니다.\n\n"
-                    "시도해보세요:\n"
-                    "• 다른 지역\n"
-                    "• 검색 범위 확대\n"
-                    "• 요구사항 조정"
-                )
+                response_text = "조건에 맞는 시설을 찾을 수 없습니다.\n\n검색 조건을 조정해 보세요."
     
     # ===== UPDATE STATE METADATA =====
+    
     state.last_results_count = len(results)
     
     privacy_safe_log(consent, "=" * 60)
-    privacy_safe_log(consent, f"✅ SEARCH COMPLETED")
-    privacy_safe_log(consent, f"   Results returned: {len(results)}")
-    privacy_safe_log(consent, f"   Total matching: {len(working_df)}")
-    if state.specialty:
-        privacy_safe_log(consent, f"   Specialty preserved: {state.specialty}")
-    privacy_safe_log(consent, f"   Query intent: {state.query_intent or 'N/A'}")
-    if state.hybrid_alpha:
-        privacy_safe_log(consent, f"   Hybrid alpha: {state.hybrid_alpha:.2f}")
+    privacy_safe_log(consent, f"✅ HYBRID SEARCH COMPLETED")
+    privacy_safe_log(consent, f"   Path A results: {len(path_a_results_df)}")
+    privacy_safe_log(consent, f"   Path B results: {len(path_b_results_df)}")
+    privacy_safe_log(consent, f"   Final returned: {len(results)}")
+    if state.query_intent:
+        privacy_safe_log(consent, f"   Query intent: {state.query_intent} (α={state.hybrid_alpha:.2f})")
     if relaxed_filters:
         privacy_safe_log(consent, f"   Adjustments: {', '.join(relaxed_filters)}")
     if len(results) < 3:
-        privacy_safe_log(consent, f"   ⚠️ WARNING: Only {len(results)} results (target: 3-5)")
+        privacy_safe_log(consent, f"   ⚠️ WARNING: Only {len(results)} results")
     privacy_safe_log(consent, "=" * 60 + "\n")
     
     return response_text, results
