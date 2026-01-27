@@ -84,23 +84,79 @@ const formatAIResponse = (text: string): string => {
   return formatted;
 };
 
+
 // --- CATEGORY TRANSLATION HELPER ---
 const getCategoryEnglish = (koreanCategory: string): string => {
   const categoryMap: Record<string, string> = {
-    '치과': 'Dentist',
-    '피부과': 'Dermatology',
+    // --- Core medical specialties ---
     '내과': 'Internal Medicine',
-    '소아과': 'Pediatrics',
+    '치과': 'Dentist',
+    '산부인과': 'OB/GYN',
     '정형외과': 'Orthopedics',
+    '피부과': 'Dermatology',
     '안과': 'Ophthalmology',
     '이비인후과': 'ENT',
-    '산부인과': 'OB/GYN',
-    '성형외과': 'Plastic Surgery',
+    '외과': 'Surgery',
     '신경과': 'Neurology',
+    '신경외과': 'Neurosurgery',
     '정신건강의학과': 'Psychiatry',
     '가정의학과': 'Family Medicine',
-    '외과': 'Surgery',
+    '비뇨의학과': 'Urology',
     '비뇨기과': 'Urology',
+    '소아청소년과': 'Pediatrics',
+    '마취통증의학과': 'Anesthesiology & Pain Medicine',
+    '재활의학과': 'Rehabilitation Medicine',
+    '영상의학과': 'Radiology',
+    '흉부외과': 'Thoracic Surgery',
+    '대장,항문과': 'Colorectal Surgery',
+
+    // --- Hospitals & facilities ---
+    '병원,의원': 'Clinic / Hospital',
+    '종합병원': 'General Hospital',
+    '국립병원': 'National Hospital',
+    '시립,도립병원': 'Public Hospital',
+    '요양병원': 'Long-Term Care Hospital',
+    '노인전문병원': 'Geriatric Hospital',
+    '여성전문병원': 'Women’s Hospital',
+    '보훈병원': 'Veterans Hospital',
+    '병원부속시설': 'Hospital Facility',
+    '응급실': 'Emergency Room',
+
+    // --- Public health ---
+    '보건소': 'Public Health Center',
+    '보건지소': 'Community Health Subcenter',
+
+    // --- Traditional medicine ---
+    '한의원': 'Korean Medicine Clinic',
+    '한방병원': 'Korean Medicine Hospital',
+
+    // --- Health services (non-department) ---
+    '건강검진': 'Health Checkup',
+    '건강관리': 'Health Management',
+    '조산원': 'Birthing Center',
+    '모유수유': 'Breastfeeding Support',
+    '언어치료': 'Speech Therapy',
+    '치료,재활': 'Therapy & Rehabilitation',
+    '아동,청소년상담': 'Child & Adolescent Counseling',
+
+    // --- Non-medical but present in data ---
+    '장례식장': 'Funeral Hall',
+    '보험': 'Insurance',
+    '종합대행업체': 'General Service Agency',
+    '건물,빌딩': 'Building',
+    'N/A': 'Unknown',
+
+    // --- Clearly non-medical noise (keep explicit) ---
+    '백숙,삼계탕': 'Restaurant (Chicken Soup)',
+    '자동차정비,수리': 'Auto Repair',
+    '미용실': 'Hair Salon',
+    '머리염색': 'Hair Coloring',
+    '미용': 'Beauty Services',
+    '피부,체형관리': 'Skin & Body Care',
+    '미용기기,재료': 'Beauty Equipment & Supplies',
+    '세탁소': 'Laundry',
+    '헬스장': 'Gym',
+    '교습학원,교습소': 'Academy / Tutoring Institute',
   };
 
   for (const [korean, english] of Object.entries(categoryMap)) {

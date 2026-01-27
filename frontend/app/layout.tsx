@@ -64,7 +64,12 @@ export default function RootLayout({
       lang="en"
       suppressHydrationWarning={true}
     >
-      <head />
+      <head>
+      <meta 
+  name="viewport" 
+  content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+/>
+      </head>
 
       <body 
         className={`${inter.className} flex flex-col min-h-screen bg-gray-50`}

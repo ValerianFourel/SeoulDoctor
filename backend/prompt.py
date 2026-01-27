@@ -1,16 +1,6 @@
 """
-SeoulMedBot Prompts - Router-Controller Architecture + Query Router
+SeoulMedBot Prompts - Router-Controller Architecture + Query Router + EMERGENCY MODE
 """
-
-# ==========================================
-# ROUTER PROMPT (Root Node - Intent Classification)
-# ==========================================
-
-"""
-SeoulMedBot Prompts - Enhanced with Keyword Extraction
-"""
-
-# Add this to prompt.py
 
 # ==========================================
 # QUERY ROUTER PROMPT (for RAG Hybrid Search)
@@ -75,11 +65,8 @@ Query: "trustworthy dermatologist with good bedside manner"
 """
 
 # ==========================================
-# TARGETED EXTRACTION PROMPTS (Single Field)
+# ROUTER PROMPT (Root Node - Intent Classification)
 # ==========================================
-
-
-# Keep existing ROUTER_PROMPT and GENERATION_PROMPT...
 
 ROUTER_PROMPT = """
 You are a routing classifier for SeoulMedBot. Your ONLY job is to classify user intent.
@@ -97,7 +84,7 @@ You are a routing classifier for SeoulMedBot. Your ONLY job is to classify user 
 
 **Classification Rules:**
 
-0. **CONFIRMATION** - User is confirming/agreeing (HIGHEST PRIORITY):
+0. **CONFIRMATION** - User is confirming/agreeing (HIGH PRIORITY):
    - Single-word confirmations: "yes", "yeah", "yep", "yup", "correct", "right", "okay", "ok", "sure"
    - Korean: "네", "예", "맞아요", "맞습니다", "응", "그래요"
    - Context: Usually follows a question from bot, especially when specialty_confidence < 0.5
@@ -140,6 +127,13 @@ You are a routing classifier for SeoulMedBot. Your ONLY job is to classify user 
    - **CRITICAL**: "yes", "no", "okay" after questions are CONFIRMATIONS or CHANGE_CRITERIA, not chit chat!
    - Confidence: HIGH if exact greeting/thanks match
 
+5. **EMERGENCY** - User has a medical emergency:
+   - Keywords: "emergency", "urgent", "911", "119", "ambulance", "critical", "serious", "dying", "heart attack", "stroke", "bleeding", "unconscious", "can't breathe", "severe pain", "chest pain", "seizure"
+   - Korean: "응급", "긴급", "위급", "119", "구급차", "심각", "위험", "쓰러짐", "의식불명", "숨", "출혈", "심장", "뇌졸중", "발작", "중증", "급해요", "응급실"
+   - Phrases: "need emergency room", "where is nearest ER", "urgent medical help", "응급실 어디", "빨리", "위급해요", "emergency room", "ER"
+   - **CRITICAL**: ANY indication of life-threatening situation → EMERGENCY
+   - Confidence: HIGHEST (1.0) for any emergency keyword
+
 **CRITICAL DECISION TREE:**
 1. Is message "yes"/"yeah"/"correct" AND specialty_confidence < 0.5? → CONFIRMATION
 2. Does message start with "no" but include medical terms (dentist, internal, 치과, colonoscopy)? → CHANGE_CRITERIA or PROVIDE_INFO (not NEW_SEARCH!)
@@ -148,14 +142,16 @@ You are a routing classifier for SeoulMedBot. Your ONLY job is to classify user 
 5. Does message change existing criteria with "actually", "instead", "city wide"? → CHANGE_CRITERIA
 6. Does message provide new specialty or location? → PROVIDE_INFO
 7. Is message greeting or thanks? → CHIT_CHAT
+8. Is message about emergency, urgent care, or 119? → EMERGENCY
 
 **Response Format (JSON only):**
 {{
-  "intent": "CONFIRMATION" | "NEW_SEARCH" | "CHANGE_CRITERIA" | "PROVIDE_INFO" | "CHIT_CHAT" | "HELP_RECOVERY",
+  "intent": | "CONFIRMATION" | "NEW_SEARCH" | "CHANGE_CRITERIA" | "PROVIDE_INFO" | "CHIT_CHAT" | "HELP_RECOVERY" | "EMERGENCY",
   "confidence": 0.0-1.0,
   "reasoning": "Brief explanation (one sentence)"
 }}
 """
+
 # ==========================================
 # UNIFIED EXTRACTION PROMPT (Complete)
 # ==========================================
@@ -490,6 +486,7 @@ Reason: Procedures/features are hard, qualities are soft, "flexible" detected fo
 # ==========================================
 # GENERATION PROMPT (Leaf Node - Response Generation)
 # ==========================================
+
 GENERATION_PROMPT = """
 You are a helpful Medical Concierge for Seoul.
 
@@ -601,27 +598,27 @@ Message: "actually I need a dermatologist"
 Response: {{"specialty": "change", "location": "keep", "distance": "keep", "reasoning": "User explicitly wants to change from dentist to dermatologist with 'actually', location stays"}}
 
 Example 2:
-State: specialty="치과", location="강남구"
+State: specialty="외과", location="광진구"
 Message: "show me ones in Songpa instead"
 Response: {{"specialty": "keep", "location": "change", "distance": "keep", "reasoning": "User wants to change location to Songpa with 'instead', specialty stays dentist"}}
 
 Example 3:
-State: specialty="치과", location="강남구", max_distance=5
+State: specialty="마취통증의학과", location="서울 강북구 도봉로 178 4층", max_distance=5
 Message: "I need closer options, within 1km"
 Response: {{"specialty": "keep", "location": "keep", "distance": "change", "reasoning": "User wants to reduce distance to 1km, other criteria unchanged"}}
 
 Example 4:
-State: specialty="치과", location="강남구"
+State: specialty="신경과", location="서울 도봉구 도봉로 468 홍일빌딩 301호"
 Message: "피부과 말고 내과"
 Response: {{"specialty": "change", "location": "keep", "distance": "keep", "reasoning": "Korean '말고' (not/instead) indicates specialty change from dermatologist to internal medicine"}}
 
 Example 5:
-State: specialty="치과", location=null
-Message: "in Gangnam please"
-Response: {{"specialty": "keep", "location": "keep", "distance": "keep", "reasoning": "User is ADDING location (was null), not changing existing data"}}
+State: specialty="정신건강의학과", location=null
+Message: "in Geumcheon please"
+Response: {{"specialty": "keep", "location": "change", "distance": "keep", "reasoning": "User is ADDING location (was null), not changing existing data"}}
 
 Example 6:
-State: specialty="치과", location="강남구"
+State: specialty="영상의학과", location="서울 동대문구 사가정로 225 2 층"
 Message: "make it flexible, I can travel"
 Response: {{"specialty": "keep", "location": "keep", "distance": "change", "reasoning": "User wants to expand search distance to flexible/willing to travel"}}
 """

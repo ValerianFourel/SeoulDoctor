@@ -870,7 +870,201 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any]) -> Stat
 # ==========================================
 # SEARCH FUNCTIONS
 # ==========================================
-
+def execute_emergency_search(
+    state: State, 
+    user_message: str,
+    consent: Optional[CookieConsent] = None
+) -> Tuple[str, List[Dict]]:
+    """
+    EMERGENCY MODE: Find the closest emergency room (응급실).
+    
+    Returns:
+    - Pre-recorded emergency message
+    - ONLY the #1 closest emergency room
+    - Urgent "CALL 119" instructions
+    """
+    global LANGUAGE, df_filtered
+    
+    if not consent:
+        consent = CookieConsent()
+    
+    privacy_safe_log(consent, "=" * 60)
+    privacy_safe_log(consent, "🚨 EMERGENCY SEARCH ACTIVATED")
+    privacy_safe_log(consent, "=" * 60)
+    
+    # Filter for emergency rooms only (응급실 category)
+    emergency_df = df_filtered[df_filtered['category'] == '응급실'].copy()
+    
+    privacy_safe_log(consent, f"🏥 Found {len(emergency_df)} emergency rooms in database")
+    
+    if len(emergency_df) == 0:
+        logger.error("❌ CRITICAL: No emergency rooms in database!")
+        
+        if LANGUAGE == "English":
+            response_text = (
+                "🚨 **CALL 119 IMMEDIATELY!**\n\n"
+                "I couldn't find emergency room data in the system.\n"
+                "Please call 119 (Korea's emergency number) right now.\n\n"
+                "If you can share your location, I can help find the nearest hospital."
+            )
+        else:
+            response_text = (
+                "🚨 **지금 바로 119에 전화하세요!**\n\n"
+                "시스템에서 응급실 데이터를 찾을 수 없습니다.\n"
+                "한국 응급 전화번호 119로 즉시 연락하세요.\n\n"
+                "위치를 공유하시면 가장 가까운 병원을 찾아드리겠습니다."
+            )
+        
+        return response_text, []
+    
+    # Check if we have user location
+    user_lat = state.latitude
+    user_lon = state.longitude
+    
+    if not (user_lat and user_lon):
+        # No location provided yet - request it
+        privacy_safe_log(consent, "⚠️ No location data - requesting from user")
+        
+        if LANGUAGE == "English":
+            response_text = (
+                "🚨 **MEDICAL EMERGENCY**\n\n"
+                "1️⃣ **CALL 119 NOW** (Korea's emergency number)\n\n"
+                "2️⃣ Share your location to find the nearest emergency room:\n"
+                "   • Click the location button below\n"
+                "   • Or type your address/district\n\n"
+                "⚠️ **If life-threatening: CALL 119 FIRST**, then share location"
+            )
+        else:
+            response_text = (
+                "🚨 **응급 상황**\n\n"
+                "1️⃣ **지금 바로 119에 전화하세요** (한국 응급 전화번호)\n\n"
+                "2️⃣ 가장 가까운 응급실을 찾기 위해 위치를 공유해 주세요:\n"
+                "   • 아래 위치 버튼을 클릭\n"
+                "   • 또는 주소/구 이름을 입력\n\n"
+                "⚠️ **생명이 위급한 경우: 먼저 119에 전화**한 후 위치를 공유하세요"
+            )
+        
+        return response_text, []
+    
+    # Calculate distances to all emergency rooms
+    privacy_safe_log(consent, f"📍 User location: ({user_lat:.4f}, {user_lon:.4f})")
+    
+    def calc_distance(row):
+        if pd.notna(row['lat']) and pd.notna(row['lon']):
+            return haversine(user_lat, user_lon, row['lat'], row['lon'])
+        return 999.0
+    
+    emergency_df['distance_km'] = emergency_df.apply(calc_distance, axis=1)
+    
+    # Sort by distance
+    emergency_df = emergency_df.sort_values('distance_km').reset_index(drop=True)
+    
+    # Get the closest one
+    if len(emergency_df) == 0 or emergency_df.iloc[0]['distance_km'] >= 999.0:
+        logger.error("❌ No emergency rooms with valid GPS coordinates!")
+        
+        if LANGUAGE == "English":
+            response_text = (
+                "🚨 **CALL 119 IMMEDIATELY!**\n\n"
+                "I couldn't find GPS data for emergency rooms.\n"
+                "Please call 119 (Korea's emergency number) right now."
+            )
+        else:
+            response_text = (
+                "🚨 **지금 바로 119에 전화하세요!**\n\n"
+                "응급실의 GPS 데이터를 찾을 수 없습니다.\n"
+                "한국 응급 전화번호 119로 즉시 연락하세요."
+            )
+        
+        return response_text, []
+    
+    closest_er = emergency_df.iloc[0]
+    distance = closest_er['distance_km']
+    
+    privacy_safe_log(consent, f"✅ Closest ER: {closest_er['name']} ({distance:.2f}km)")
+    
+    # Build result object
+    result = {
+        "place_id": safe_convert_to_python(closest_er['place_id']),
+        "name": safe_convert_to_python(closest_er['name']),
+        "category": "응급실",
+        "distance_km": safe_convert_to_python(distance),
+        "distance": safe_convert_to_python(distance),
+        "is_emergency": True,  # ⭐ Flag for frontend to style differently
+    }
+    
+    # Add optional fields
+    simple_fields = ['address', 'phone', 'business_hours']
+    for field in simple_fields:
+        if field in closest_er.index and pd.notna(closest_er[field]):
+            result[field] = safe_convert_to_python(closest_er[field])
+    
+    if 'file_district' in closest_er.index and pd.notna(closest_er['file_district']):
+        result['district'] = safe_convert_to_python(closest_er['file_district'])
+    
+    if 'lat' in closest_er.index and pd.notna(closest_er['lat']):
+        result['lat'] = safe_convert_to_python(closest_er['lat'])
+    if 'lon' in closest_er.index and pd.notna(closest_er['lon']):
+        result['lon'] = safe_convert_to_python(closest_er['lon'])
+    
+    # ⭐ GENERATE EMERGENCY RESPONSE WITH RECORDED MESSAGE
+    if LANGUAGE == "English":
+        response_text = (
+            f"🚨 **EMERGENCY: NEAREST HOSPITAL**\n\n"
+            f"📢 **Pre-recorded message:** \"This is an emergency. I need immediate medical assistance. My location is near {result.get('district', 'Seoul')}.\"\n\n"
+            f"1️⃣ **CALL 119 NOW** if life-threatening\n\n"
+            f"2️⃣ **Closest Emergency Room:**\n"
+            f"   🏥 {result['name']}\n"
+            f"   📍 Distance: **{distance:.2f} km**\n"
+        )
+        
+        if result.get('address'):
+            response_text += f"   📫 Address: {result['address']}\n"
+        
+        if result.get('phone'):
+            response_text += f"   ☎️ Phone: **{result['phone']}**\n"
+        
+        response_text += (
+            f"\n⚠️ **For life-threatening emergencies:**\n"
+            f"   • Call 119 immediately\n"
+            f"   • Stay calm and provide your location\n"
+            f"   • Follow dispatcher instructions\n"
+            f"   • Have someone flag down the ambulance\n\n"
+            f"🗺️ See the card below for map and directions."
+        )
+    
+    else:  # Korean
+        response_text = (
+            f"🚨 **응급: 가장 가까운 병원**\n\n"
+            f"📢 **녹음된 메시지:** \"응급 상황입니다. 즉시 의료 지원이 필요합니다. 제 위치는 {result.get('district', '서울')} 근처입니다.\"\n\n"
+            f"1️⃣ **생명이 위급하면 지금 바로 119에 전화하세요**\n\n"
+            f"2️⃣ **가장 가까운 응급실:**\n"
+            f"   🏥 {result['name']}\n"
+            f"   📍 거리: **{distance:.2f} km**\n"
+        )
+        
+        if result.get('address'):
+            response_text += f"   📫 주소: {result['address']}\n"
+        
+        if result.get('phone'):
+            response_text += f"   ☎️ 전화: **{result['phone']}**\n"
+        
+        response_text += (
+            f"\n⚠️ **생명이 위급한 응급 상황:**\n"
+            f"   • 즉시 119에 전화하세요\n"
+            f"   • 침착하게 위치를 알려주세요\n"
+            f"   • 상황실의 지시를 따르세요\n"
+            f"   • 구급차를 맞이할 준비를 하세요\n\n"
+            f"🗺️ 자세한 지도와 경로는 아래 카드를 확인하세요."
+        )
+    
+    privacy_safe_log(consent, "=" * 60)
+    privacy_safe_log(consent, "✅ EMERGENCY SEARCH COMPLETED")
+    privacy_safe_log(consent, f"   Returned: {result['name']} ({distance:.2f}km)")
+    privacy_safe_log(consent, "=" * 60 + "\n")
+    
+    return response_text, [result]
+    
 def filter_by_zone(df: pd.DataFrame, district: str, dong: Optional[str] = None) -> pd.DataFrame:
     """Filter facilities by zone (district and optionally dong)."""
     if not district:
@@ -1647,8 +1841,38 @@ async def chat_endpoint(
     
     # ===== CONTROLLER =====
     
+    # EMERGENCY (HIGHEST PRIORITY)
+    if intent == "EMERGENCY":
+        privacy_safe_log(consent, "🚨 BRANCH: EMERGENCY")
+        
+        new_state = enriched_state.model_copy()
+        new_state.turn_count = current_turn
+        new_state.language_pref = LANGUAGE
+        new_state.conversation_phase = "emergency"
+        
+        # Try to extract location if provided in emergency message
+        if not (new_state.latitude and new_state.longitude):
+            privacy_safe_log(consent, "Checking for location in emergency message...")
+            extracted = extract_entities(req.message, consent)
+            
+            if extracted.get('location') or extracted.get('latitude'):
+                new_state = merge_extraction_into_state(new_state, extracted)
+                new_state = standardize_and_fill_state(new_state, consent)
+        
+        # Execute emergency search
+        response_text, results = execute_emergency_search(
+            new_state,
+            req.message,
+            consent=consent
+        )
+        
+        return {
+            "response": response_text,
+            "state": new_state.model_dump(),
+            "results": results
+        }
     # CONFIRMATION
-    if intent == "CONFIRMATION":
+    elif intent == "CONFIRMATION":
         privacy_safe_log(consent, "✅ BRANCH: CONFIRMATION")
         
         new_state = enriched_state.model_copy()
