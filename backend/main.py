@@ -1833,7 +1833,9 @@ async def chat_endpoint(
                 response_text = "What type of medical facility are you looking for? (or 'any' for all types)"
             else:
                 response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (또는 '상관없음')"
-            
+            new_state.specialty = "병원,의원"
+            new_state.specialty_confidence = 0.5
+
             return {
                 "response": response_text,
                 "state": new_state.model_dump(),
