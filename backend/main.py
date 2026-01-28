@@ -1834,7 +1834,7 @@ async def chat_endpoint(
             else:
                 response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (또는 '상관없음')"
             new_state.specialty = "병원,의원"
-            new_state.specialty_confidence = 0.5
+            new_state.specialty_confidence = 0.2
 
             return {
                 "response": response_text,
