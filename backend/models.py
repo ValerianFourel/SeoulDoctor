@@ -31,12 +31,17 @@ class State(BaseModel):
     max_distance_km: float = 5.0
     # User's travel label (semantic label)
     travel_label: str = "Moderate"  # Default label
+    
     # ===== KEYWORD FILTERING =====
-    # Soft keywords: used for semantic search and ranking
+    # Soft keywords: used for semantic search and ranking (POSITIVE preferences)
     keywords: List[str] = Field(default_factory=list)
     
-    # Hard keywords: MUST appear in results (strict filtering)
+    # Hard keywords: MUST appear in results (strict filtering) (POSITIVE requirements)
     hard_keywords: List[str] = Field(default_factory=list)
+    
+    # ⭐ NEW: Negative keywords (things to AVOID)
+    negative_keywords: List[str] = Field(default_factory=list)  # Soft negatives (avoid these qualities)
+    negative_hard_keywords: List[str] = Field(default_factory=list)  # Hard negatives (must NOT have)
     
     # ===== HYBRID SEARCH PARAMETERS =====
     # Alpha coefficient for hybrid search (0.0 = pure keyword, 1.0 = pure semantic)
@@ -70,18 +75,6 @@ class State(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-
-class ChatRequest(BaseModel):
-    """Request model for chat endpoint."""
-    message: str
-    current_state: State
-
-
-class ChatResponse(BaseModel):
-    """Response model for chat endpoint."""
-    response: str
-    state: State
-    results: List[dict] = []
 
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""

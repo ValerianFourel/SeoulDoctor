@@ -5,7 +5,6 @@ import { useState, useRef, useEffect } from "react";
 import { Send, MapPin, Sparkles, Globe, Bug, ChevronDown, ChevronUp, X } from "lucide-react";
 import Link from 'next/link';
 
-// --- TYPES ---
 type State = {
   // ===== SPECIALTY INFORMATION =====
   specialty: string | null;
@@ -27,6 +26,8 @@ type State = {
   // ===== KEYWORD FILTERING =====
   keywords: string[];
   hard_keywords: string[];
+  negative_keywords: string[];  // ← ADD THIS
+  negative_hard_keywords: string[];  // ← ADD THIS
   
   // ===== HYBRID SEARCH PARAMETERS =====
   hybrid_alpha: number | null;
@@ -170,8 +171,8 @@ const getCategoryEnglish = (koreanCategory: string): string => {
 
 export default function ChatInterface() {
   // --- DEBUG MODE STATE ---
-  const [debugMode, setDebugMode] = useState(true); // true for it to work
-  const [debugExpanded, setDebugExpanded] = useState(true);
+  const [debugMode, setDebugMode] = useState(false); // true for it to work
+  const [debugExpanded, setDebugExpanded] = useState(false);
   const [debugInfo, setDebugInfo] = useState<DebugInfo>({});
 
   const [messages, setMessages] = useState<Message[]>([
@@ -247,47 +248,49 @@ export default function ChatInterface() {
   }, [messages]);
 
   const [currentState, setCurrentState] = useState<State>({
-    // Specialty
-    specialty: null,
-    specialty_confidence: 0,
-    
-    // Location
-    location: null,
-    latitude: null,
-    longitude: null,
-    address_korean: null,
-    district: null,
-    dong: null,
-    
-    // Search parameters
-    search_mode: null,
-    max_distance_km: 5,
-    willingness_to_travel: "Nearby",
-    
-    // Keywords
-    keywords: [],
-    hard_keywords: [],
-    
-    // Hybrid search
-    hybrid_alpha: null,
-    query_intent: null,
-    suggested_alpha: null,
-    manual_search_mode: null,
-    
-    // Preferences
-    language_pref: "English",
-    
-    // Conversation flow
-    turn_count: 0,
-    ready_to_search: false,
-    search_executed: false,
-    conversation_phase: "greeting",
-    
-    // Metadata
-    last_search_query: null,
-    last_results_count: null,
-    last_search_timestamp: null,
-  });
+  // Specialty
+  specialty: null,
+  specialty_confidence: 0,
+  
+  // Location
+  location: null,
+  latitude: null,
+  longitude: null,
+  address_korean: null,
+  district: null,
+  dong: null,
+  
+  // Search parameters
+  search_mode: null,
+  max_distance_km: 5,
+  willingness_to_travel: "Nearby",
+  
+  // Keywords
+  keywords: [],
+  hard_keywords: [],
+  negative_keywords: [],  // ← ADD THIS
+  negative_hard_keywords: [],  // ← ADD THIS
+  
+  // Hybrid search
+  hybrid_alpha: null,
+  query_intent: null,
+  suggested_alpha: null,
+  manual_search_mode: null,
+  
+  // Preferences
+  language_pref: "English",
+  
+  // Conversation flow
+  turn_count: 0,
+  ready_to_search: false,
+  search_executed: false,
+  conversation_phase: "greeting",
+  
+  // Metadata
+  last_search_query: null,
+  last_results_count: null,
+  last_search_timestamp: null,
+});
 
   const toggleFacilityExpand = (placeId: string) => {
     setExpandedFacilities(prev => {
@@ -641,40 +644,72 @@ export default function ChatInterface() {
                   </div>
                 </div>
 
-                {/* Keywords */}
-                <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                  <h3 className="font-bold text-yellow-400 mb-2">🔤 Keywords</h3>
-                  <div className="space-y-1 text-slate-300">
-                    <div>
-                      <span className="text-slate-400 text-[10px]">Soft Keywords:</span>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {currentState.keywords.length > 0 ? (
-                          currentState.keywords.map((kw, idx) => (
-                            <span key={idx} className="px-1.5 py-0.5 bg-yellow-900/30 text-yellow-300 rounded text-[10px]">
-                              {kw}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-slate-500 text-[10px]">none</span>
-                        )}
-                      </div>
+              {/* Keywords */}
+              <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                <h3 className="font-bold text-yellow-400 mb-2">🔤 Keywords</h3>
+                <div className="space-y-1 text-slate-300">
+                  <div>
+                    <span className="text-slate-400 text-[10px]">Soft Keywords (prefer):</span>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {currentState.keywords.length > 0 ? (
+                        currentState.keywords.map((kw, idx) => (
+                          <span key={idx} className="px-1.5 py-0.5 bg-yellow-900/30 text-yellow-300 rounded text-[10px]">
+                            {kw}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-slate-500 text-[10px]">none</span>
+                      )}
                     </div>
-                    <div>
-                      <span className="text-slate-400 text-[10px]">Hard Keywords (MUST):</span>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {currentState.hard_keywords.length > 0 ? (
-                          currentState.hard_keywords.map((kw, idx) => (
-                            <span key={idx} className="px-1.5 py-0.5 bg-red-900/30 text-red-300 rounded text-[10px] font-bold">
-                              {kw}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-slate-500 text-[10px]">none</span>
-                        )}
-                      </div>
+                  </div>
+                  
+                  <div>
+                    <span className="text-slate-400 text-[10px]">Hard Keywords (MUST have):</span>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {currentState.hard_keywords.length > 0 ? (
+                        currentState.hard_keywords.map((kw, idx) => (
+                          <span key={idx} className="px-1.5 py-0.5 bg-red-900/30 text-red-300 rounded text-[10px] font-bold">
+                            {kw}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-slate-500 text-[10px]">none</span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* ⭐ ADD NEGATIVE KEYWORDS SECTION */}
+                  <div>
+                    <span className="text-slate-400 text-[10px]">Negative Keywords (avoid):</span>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {currentState.negative_keywords.length > 0 ? (
+                        currentState.negative_keywords.map((kw, idx) => (
+                          <span key={idx} className="px-1.5 py-0.5 bg-orange-900/30 text-orange-300 rounded text-[10px]">
+                            🚫 {kw}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-slate-500 text-[10px]">none</span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <span className="text-slate-400 text-[10px]">Hard Negatives (MUST NOT have):</span>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {currentState.negative_hard_keywords.length > 0 ? (
+                        currentState.negative_hard_keywords.map((kw, idx) => (
+                          <span key={idx} className="px-1.5 py-0.5 bg-red-900/50 text-red-200 rounded text-[10px] font-bold">
+                            ⛔ {kw}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-slate-500 text-[10px]">none</span>
+                      )}
                     </div>
                   </div>
                 </div>
+              </div>
 
                 {/* Hybrid Search Configuration */}
                 <div className="bg-slate-800 rounded p-3 border border-slate-700">
