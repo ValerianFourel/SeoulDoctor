@@ -187,9 +187,6 @@ NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
-HF_REPO_ID = "ValerianFourel/seoul-medical-facilities"
-HF_FILENAME = "facilities_metareviews_rag_ready.parquet"
-
 CHROMA_PATH = "./chroma_db"
 
 # Defaults
