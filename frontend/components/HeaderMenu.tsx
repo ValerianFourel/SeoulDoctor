@@ -32,18 +32,19 @@ export default function HeaderMenu() {
     <header className="fixed top-0 left-0 right-0 z-[100] bg-white border-b border-gray-200 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
         {/* Logo/Brand */}
-        <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-          <div className="bg-gradient-to-br from-blue-500 to-purple-600 p-2 rounded-lg">
-            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-          </div>
-          <div>
-            <h1 className="font-bold text-lg bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
-              Seoul Medical Finder
-            </h1>
-          </div>
-        </Link>
+          <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+            {/* I removed the div with the gradient background here */}
+            <img 
+              src="img/logo_v3.svg" 
+              alt="Logo" 
+              className="w-8 h-8 object-contain" // Slightly increased size since the padding is gone
+            />
+            <div>
+              <h1 className="font-bold text-lg bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
+                Seoul Medical Finder
+              </h1>
+            </div>
+          </Link>
 
         {/* Menu Button */}
         <div 

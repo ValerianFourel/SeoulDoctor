@@ -178,7 +178,7 @@ export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
     { 
       role: "ai", 
-      content: "Hello! I'm SeoulMedBot, your AI medical concierge. Tell me what kind of doctor you need, and I'll find the best options for you.",
+      content: "Hello! I'm Seoul Med Match, your medical concierge. Tell me what kind of doctor you need, and I'll find the best options for you.",
       timestamp: new Date().toISOString()
     }
   ]);

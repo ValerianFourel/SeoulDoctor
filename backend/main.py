@@ -134,7 +134,6 @@ from utils import (
 from prompt import (
     ROUTER_PROMPT, 
     EXTRACTION_PROMPT_V2, 
-    EXTRACTION_PROMPT_V1,
     GENERATION_PROMPT
     )
 from deterministic import (
@@ -173,7 +172,6 @@ logging.getLogger("chromadb").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-EXTRACTION_PROMPT_V2 = EXTRACTION_PROMPT_V1
 # ==========================================
 # CONFIGURATION
 # ==========================================
@@ -316,7 +314,7 @@ def calculate_field_boost(value, keyword_lower: str) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global rag_pipeline, df_facilities, df_filtered, available_specialties, client
-    logger.info("🚀 Booting SeoulMedBot Backend...")
+    logger.info("🚀 Booting Seoul Med Match Backend...")
 
     try:
         df_facilities = download_and_cache_parquet()
