@@ -664,3 +664,57 @@ def state_to_extraction_context_json(state: State) -> str:
     
     import json
     return f"**CURRENT PARAMETERS:**\n```json\n{json.dumps(context, ensure_ascii=False, indent=2)}\n```\n\n**NOTE:** Extract ALL changes from user message. Multiple parameters can update simultaneously."
+
+
+
+def clean_llm_response(response_text: str) -> str:
+    """
+    Remove common LLM formatting issues that break the output.
+    
+    ⭐ Fixes:
+    - "Introduction" headers
+    - Excessive bold formatting
+    - Code blocks
+    - Multiple blank lines
+    """
+    import re
+    
+    # Remove "Introduction" or "Facilities:" headers
+    response_text = re.sub(r'^#+\s*(Introduction|Facilities|Options|Results).*?\n', '', response_text, flags=re.MULTILINE | re.IGNORECASE)
+    
+    # Remove excessive bold formatting (keep some for emphasis)
+    # Only remove bold from first line (intro)
+    lines = response_text.split('\n')
+    if lines:
+        lines[0] = re.sub(r'\*\*([^*]+)\*\*', r'\1', lines[0])
+    response_text = '\n'.join(lines)
+    
+    # Remove code blocks (```python, ```typescript, etc.)
+    response_text = re.sub(r'```[a-z]*\n?', '', response_text)
+    response_text = re.sub(r'```', '', response_text)
+    
+    # Remove inline code formatting for non-technical content
+    response_text = re.sub(r'`([^`]+)`', r'\1', response_text)
+    
+    # Remove multiple blank lines (keep max 2)
+    response_text = re.sub(r'\n{3,}', '\n\n', response_text)
+    
+    # Remove leading/trailing whitespace
+    response_text = response_text.strip()
+    
+    # Remove checkmarks/crosses if they appear outside of lists
+    lines = response_text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        # Keep checkmarks in numbered lists
+        if re.match(r'^\d+\.', line.strip()):
+            cleaned_lines.append(line)
+        else:
+            # Remove checkmarks from intro/outro
+            line = re.sub(r'[✓✗❌✅⭐]', '', line)
+            cleaned_lines.append(line)
+    
+    response_text = '\n'.join(cleaned_lines)
+    
+    return response_text
+

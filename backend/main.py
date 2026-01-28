@@ -125,7 +125,7 @@ import logging
 from distance import haversine, fuzzy_match_location
 from models import ChatRequest, State
 from utils import (
-    safe_convert_to_python, DISTANCE_MAPPING,
+    safe_convert_to_python, DISTANCE_MAPPING, clean_llm_response,
     standardize_and_fill_state,detect_search_mode,detect_language,
     smart_cleanse_state,detect_field_changes,print_separator,
     has_vague_medical_term,user_wants_any_specialty, 
@@ -1385,7 +1385,8 @@ def execute_search(
                 max_completion_tokens=1024
             )
             response_text = gen_completion.choices[0].message.content
-            
+            response_text = re.sub(r'[\u0400-\u04FF]+', 'Seoul', response_text)
+
             # Add disclaimers
             if len(relaxed_filters) > 0 and n_results >= 3:
                 if LANGUAGE == "English":
@@ -1507,7 +1508,8 @@ def execute_search(
     if len(results) < 3:
         privacy_safe_log(consent, f"   ⚠️ WARNING: Only {len(results)} results")
     privacy_safe_log(consent, "=" * 60 + "\n")
-    
+
+    response_text = clean_llm_response(response_text)
     return response_text, results
 
 
@@ -2144,10 +2146,10 @@ async def chat_endpoint(
             new_state.conversation_phase = "gathering"
             
             if LANGUAGE == "English":
-                response_text = "What type of medical facility are you looking for? (e.g., dentist, dermatologist, internal medicine, or 'any')"
+                response_text = "What type of medical facility are you looking for? (e.g., clinic, hospital, dentist, dermatologist, internal medicine, or 'any')"
             else:
-                response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (예: 치과, 피부과, 내과, 또는 '상관없음')"
-            
+                response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (예: 의원, 병원, 치과, 피부과, 내과, 또는 '상관없음')"
+
             return {
                 "response": response_text,
                 "state": new_state.model_dump(),
