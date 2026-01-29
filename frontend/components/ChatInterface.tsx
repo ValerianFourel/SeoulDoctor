@@ -178,7 +178,7 @@ export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
     { 
       role: "ai", 
-      content: "Hello! I'm Seoul Med Match, your medical concierge. Tell me what kind of doctor you need, and I'll find the best options for you.",
+      content: "Hello! I'm Seoul Med Match. Tell me what kind of doctor you need, and I'll find the best options for you given your preferences. You can also share your location using the location button or by typing it in.",
       timestamp: new Date().toISOString()
     }
   ]);
@@ -1109,24 +1109,39 @@ export default function ChatInterface() {
                                     )}
                                   </div>
                                 )}
+                                {/* Replace the entire footer div with this: */}
 
-                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-100">
-                                  <div className="flex items-center gap-2 text-slate-500">
-                                    <MapPin size={16} className="text-blue-500 flex-shrink-0" />
-                                    <span className="text-sm sm:text-base font-medium">
-                                      {facility.distance != null ? `${facility.distance.toFixed(1)} km away` : 'Distance N/A'}
-                                    </span>
-                                  </div>
-                                  <a 
-                                    href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
-                                  >
-                                    View on Map
-                                  </a>
-                                </div>
-
+                                    {currentState.location?.toLowerCase().trim() === 'seoul' || currentState.location?.toLowerCase().trim() === '서울' ? (
+                                      // Seoul city-wide: Only show map button (no distance)
+                                      <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+                                        <a 
+                                          href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
+                                        >
+                                          View on Map
+                                        </a>
+                                      </div>
+                                    ) : (
+                                      // Specific location: Show distance + map button
+                                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-100">
+                                        <div className="flex items-center gap-2 text-slate-500">
+                                          <MapPin size={16} className="text-blue-500 flex-shrink-0" />
+                                          <span className="text-sm sm:text-base font-medium">
+                                            {facility.distance != null ? `${facility.distance.toFixed(1)} km away` : 'Distance N/A'}
+                                          </span>
+                                        </div>
+                                        <a 
+                                          href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
+                                        >
+                                          View on Map
+                                        </a>
+                                      </div>
+                                    )}
                                 {/* Debug: Show place_id */}
                                 {debugMode && (
                                   <div className="mt-2 pt-2 border-t border-slate-200">
