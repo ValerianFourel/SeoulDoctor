@@ -713,8 +713,9 @@ def execute_emergency_search(
 ) -> Tuple[str, List[Dict]]:
     """
     EMERGENCY MODE: Find the closest emergency room (응급실).
+    Uses full dataset (df_facilities) to ensure all ERs are included.
     """
-    global LANGUAGE, df_filtered
+    global LANGUAGE, df_facilities  # ⭐ CHANGED: Use df_facilities instead of df_filtered
     
     if not consent:
         consent = CookieConsent()
@@ -723,8 +724,8 @@ def execute_emergency_search(
     privacy_safe_log(consent, "🚨 EMERGENCY SEARCH ACTIVATED")
     privacy_safe_log(consent, "=" * 60)
     
-    # Filter for emergency rooms only
-    emergency_df = df_filtered[df_filtered['category'] == '응급실'].copy()
+    # ⭐ CHANGED: Filter from FULL dataset (includes ERs without summaries)
+    emergency_df = df_facilities[df_facilities['category'] == '응급실'].copy()
     
     privacy_safe_log(consent, f"🏥 Found {len(emergency_df)} emergency rooms in database")
     
@@ -810,9 +811,9 @@ def execute_emergency_search(
     
     privacy_safe_log(consent, f"✅ Closest ER: {closest_er['name']} ({distance:.2f}km)")
     
-    # Build result
+    # ⭐ Build result - gracefully handles missing summaries
     result = {
-        "place_id": safe_convert_to_python(closest_er['place_id']),
+        "place_id": safe_convert_to_python(closest_er.get('place_id', '')),
         "name": safe_convert_to_python(closest_er['name']),
         "category": "응급실",
         "distance_km": safe_convert_to_python(distance),
@@ -820,18 +821,33 @@ def execute_emergency_search(
         "is_emergency": True,
     }
     
-    simple_fields = ['address', 'phone', 'business_hours']
+    # Add optional fields (works even if missing)
+    simple_fields = ['address', 'phone', 'business_hours', 'website', 'url']
     for field in simple_fields:
         if field in closest_er.index and pd.notna(closest_er[field]):
-            result[field] = safe_convert_to_python(closest_er[field])
+            value = safe_convert_to_python(closest_er[field])
+            if value:  # Only add non-empty values
+                if field == 'url' and 'website' not in result:
+                    result['website'] = value
+                else:
+                    result[field] = value
     
+    # Add district info
     if 'file_district' in closest_er.index and pd.notna(closest_er['file_district']):
         result['district'] = safe_convert_to_python(closest_er['file_district'])
     
+    # Add GPS coordinates
     if 'lat' in closest_er.index and pd.notna(closest_er['lat']):
         result['lat'] = safe_convert_to_python(closest_er['lat'])
     if 'lon' in closest_er.index and pd.notna(closest_er['lon']):
         result['lon'] = safe_convert_to_python(closest_er['lon'])
+    
+    # ⭐ Add summaries if they exist (but don't fail if missing)
+    if 'Summaries' in closest_er.index and pd.notna(closest_er['Summaries']):
+        result['Summaries'] = safe_convert_to_python(closest_er['Summaries'])
+    
+    if 'Summaries_Korean' in closest_er.index and pd.notna(closest_er['Summaries_Korean']):
+        result['Summaries_Korean'] = safe_convert_to_python(closest_er['Summaries_Korean'])
     
     # Generate response
     if LANGUAGE == "English":
@@ -890,7 +906,6 @@ def execute_emergency_search(
     privacy_safe_log(consent, "=" * 60 + "\n")
     
     return response_text, [result]
-
 
 def filter_by_zone(df: pd.DataFrame, district: str, dong: Optional[str] = None) -> pd.DataFrame:
     """Filter facilities by zone (district and optionally dong)."""
@@ -1377,7 +1392,6 @@ def execute_search(
                 actual_alpha = rag_pipeline.calculate_alpha(
                     route_decision, 
                     state.manual_search_mode,
-                    specialty_confidence=specialty_conf
                 )
                 state.hybrid_alpha = actual_alpha
                 
