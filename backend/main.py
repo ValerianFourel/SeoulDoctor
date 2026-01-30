@@ -97,7 +97,6 @@ RAG SEMANTIC SEARCH:
 - Returns semantic relevance ranking
 - Combined with distance for final scoring
 """
-
 # FORCE UNBUFFERED OUTPUT - Must be at the very top
 import os
 import sys
@@ -218,6 +217,7 @@ def ensure_city_wide_defaults(state: State, consent: CookieConsent) -> State:
         state.max_distance_km = 25.0
         state.search_mode = 'distance'
         state.travel_label = "Anywhere in Seoul"
+        state.travel_confidence = 1.0  # High confidence for default
     
     return state
 
@@ -626,17 +626,26 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any], replace
     if extracted.get('dong'):
         state.dong = extracted['dong']
 
-    # ===== TRAVEL LABEL =====
+    # ===== TRAVEL LABEL & CONFIDENCE =====
     if extracted.get('travel_label'):
         state.travel_label = extracted['travel_label']
         
+        # ⭐ NEW: Set confidence based on how it was provided
+        if extracted.get('travel_confidence'):
+            # Explicitly set (from widget = 1.0)
+            state.travel_confidence = extracted['travel_confidence']
+        else:
+            # From text extraction = 0.6
+            state.travel_confidence = 0.6
+        
         if state.travel_label in DISTANCE_MAPPING:
             state.max_distance_km = DISTANCE_MAPPING[state.travel_label]
-            logger.info(f"📏 Distance updated: {state.travel_label} → {state.max_distance_km}km")
+            logger.info(f"📏 Distance updated: {state.travel_label} → {state.max_distance_km}km (confidence: {state.travel_confidence})")
         else:
             logger.warning(f"⚠️ Unknown travel label '{state.travel_label}', using default 5km")
             state.travel_label = "Moderate"
             state.max_distance_km = 5.0
+            state.travel_confidence = 0.5
     
     # ===== KEYWORDS (POSITIVE) =====
     if replace_keywords:
@@ -933,6 +942,7 @@ def execute_search(
     privacy_safe_log(consent, f"Specialty: {state.specialty or 'ANY (no filter)'}")
     privacy_safe_log(consent, f"Mode: {(state.search_mode or 'auto').upper()}")
     privacy_safe_log(consent, f"Max Distance: {max_distance}km")
+    privacy_safe_log(consent, f"Travel Confidence: {state.travel_confidence:.2f}")
     privacy_safe_log(consent, f"Language: {LANGUAGE}")
     
     if state.keywords:
@@ -1549,6 +1559,53 @@ async def update_consent(
         raise HTTPException(status_code=500, detail="Failed to update consent")
 
 
+# ⭐ NEW ENDPOINT: Set Travel Preference from Widget
+@app.post("/set_travel_preference")
+async def set_travel_preference(
+    req: dict,
+    cookieConsent: Optional[str] = Cookie(None)
+):
+    """Direct endpoint for setting travel preference from UI widget."""
+    global LANGUAGE
+    
+    consent = get_consent_from_cookie(cookieConsent)
+    consent = ensure_consent_object(consent)
+    
+    travel_label = req.get('travel_label')
+    current_state_dict = req.get('current_state', {})
+    
+    if not travel_label or travel_label not in DISTANCE_MAPPING:
+        raise HTTPException(status_code=400, detail="Invalid travel label")
+    
+    # Reconstruct state
+    try:
+        state = State(**current_state_dict)
+    except Exception as e:
+        logger.error(f"State reconstruction error: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid state")
+    
+    # Update travel preferences with HIGH confidence (widget-based)
+    state.travel_label = travel_label
+    state.travel_confidence = 1.0  # ⭐ HIGH confidence from widget
+    state.max_distance_km = DISTANCE_MAPPING[travel_label]
+    
+    # Detect language from state
+    LANGUAGE = state.language_pref or "English"
+    
+    privacy_safe_log(consent, f"✅ Travel preference set via widget: {travel_label} → {state.max_distance_km}km (confidence: 1.0)")
+    
+    # Generate response
+    if LANGUAGE == "English":
+        response_text = f"Got it! I'll search within {state.max_distance_km}km ({travel_label})."
+    else:
+        response_text = f"알겠습니다! {state.max_distance_km}km 반경으로 검색하겠습니다 ({travel_label})."
+    
+    return {
+        "response": response_text,
+        "state": state.model_dump()
+    }
+
+
 # Seoul district names for early detection
 SEOUL_DISTRICTS = {
     "gangnam", "songpa", "mapo", "jongno", "yongsan", "seodaemun", 
@@ -1625,6 +1682,7 @@ async def chat_endpoint(
         new_state.longitude = 126.9780
         new_state.max_distance_km = 25.0
         new_state.travel_label = "Anywhere in Seoul"
+        new_state.travel_confidence = 0.6  # Text-based
         new_state.search_mode = 'distance'
         
         # ⭐ FIX: Allow null specialty if user wants "any"
@@ -1800,15 +1858,15 @@ async def chat_endpoint(
         
         if new_state.specialty and new_state.specialty_confidence < 1.0:
             old_confidence = new_state.specialty_confidence
-            new_state.specialty_confidence = 1.0
-            privacy_safe_log(consent, f"📈 Confidence boosted: {old_confidence:.2f} → 1.0")
-        
+            # new_state.specialty_confidence = 0.8
+            # privacy_safe_log(consent, f"📈 Confidence boosted: {old_confidence:.2f} → 0.8")
+
         new_state = ensure_city_wide_defaults(new_state, consent)
         
         # ⭐ FIX: Allow null specialty
         can_proceed = (
-            (new_state.specialty and new_state.specialty_confidence >= 0.5) or
-            (not new_state.specialty and new_state.specialty_confidence >= 0.3)
+            (new_state.specialty and new_state.specialty_confidence >= 0.3) or
+            (not new_state.specialty and new_state.specialty_confidence >= 0.2)
         )
         
         if can_proceed:
@@ -1834,7 +1892,7 @@ async def chat_endpoint(
                 response_text = "What type of medical facility are you looking for? (or 'any' for all types)"
             else:
                 response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (또는 '상관없음')"
-            new_state.specialty = "병원,의원"
+            new_state.specialty = "null"
             new_state.specialty_confidence = 0.2
 
             return {
@@ -1896,6 +1954,7 @@ async def chat_endpoint(
             
             if extracted.get('travel_label'):
                 new_state.travel_label = extracted['travel_label']
+                new_state.travel_confidence = 0.6  # Text-based
                 if new_state.travel_label in DISTANCE_MAPPING:
                     new_state.max_distance_km = DISTANCE_MAPPING[new_state.travel_label]
             
@@ -1924,7 +1983,7 @@ async def chat_endpoint(
                     "state": new_state.model_dump(),
                     "results": results
                 }
-            elif new_state.specialty and new_state.specialty_confidence < 0.5:
+            elif new_state.specialty and new_state.specialty_confidence < 0.3:
                 response_text = ask_for_specialty_clarification(new_state)
                 return {
                     "response": response_text,
@@ -1956,6 +2015,7 @@ async def chat_endpoint(
             new_state.search_mode = 'distance'
             new_state.max_distance_km = 25.0
             new_state.travel_label = "Anywhere in Seoul"
+            new_state.travel_confidence = 0.6  # Text-based
             new_state.location = "Seoul"
             new_state.latitude = 37.5665
             new_state.longitude = 126.9780
@@ -2038,6 +2098,7 @@ async def chat_endpoint(
         if change_detection.get('distance') == 'keep':
             new_state.max_distance_km = enriched_state.max_distance_km
             new_state.travel_label = enriched_state.travel_label
+            new_state.travel_confidence = enriched_state.travel_confidence
             privacy_safe_log(consent, f"✓ Preserved distance: {new_state.max_distance_km}km")
         
         new_state = standardize_and_fill_state(new_state, consent)
@@ -2068,7 +2129,7 @@ async def chat_endpoint(
                 "state": new_state.model_dump(),
                 "results": results
             }
-        elif new_state.specialty and new_state.specialty_confidence < 0.5:
+        elif new_state.specialty and new_state.specialty_confidence < 0.3:
             response_text = ask_for_specialty_clarification(new_state)
             return {
                 "response": response_text,
@@ -2136,7 +2197,7 @@ async def chat_endpoint(
                 "state": new_state.model_dump(),
                 "results": results
             }
-        elif new_state.specialty and new_state.specialty_confidence < 0.5:
+        elif new_state.specialty and new_state.specialty_confidence < 0.3:
             response_text = ask_for_specialty_clarification(new_state)
             response_text = format_response(response_text)
             

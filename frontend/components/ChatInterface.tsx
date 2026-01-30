@@ -22,12 +22,13 @@ type State = {
   search_mode: string | null; // 'zone' or 'distance'
   max_distance_km: number;
   willingness_to_travel: string;
+  travel_confidence: number;
   
   // ===== KEYWORD FILTERING =====
   keywords: string[];
   hard_keywords: string[];
-  negative_keywords: string[];  // ← ADD THIS
-  negative_hard_keywords: string[];  // ← ADD THIS
+  negative_keywords: string[];
+  negative_hard_keywords: string[];
   
   // ===== HYBRID SEARCH PARAMETERS =====
   hybrid_alpha: number | null;
@@ -49,7 +50,6 @@ type State = {
   last_results_count: number | null;
   last_search_timestamp: string | null;
 };
-
 
 type Message = {
   role: "user" | "ai";
@@ -78,13 +78,23 @@ type DebugInfo = {
   responseTime?: number;
 };
 
+// --- TRAVEL OPTIONS CONFIGURATION ---
+const TRAVEL_OPTIONS = [
+  { label: "Walking Distance", distance: "0.5km", emoji: "🚶", value: 0.5 },
+  { label: "Nearby", distance: "1km", emoji: "🏃", value: 1 },
+  { label: "Close", distance: "2km", emoji: "🚲", value: 2 },
+  { label: "Moderate", distance: "5km", emoji: "🚗", value: 5 },
+  { label: "Flexible", distance: "10km", emoji: "🚙", value: 10 },
+  { label: "Willing to Travel", distance: "15km", emoji: "🚕", value: 15 },
+  { label: "Anywhere in Seoul", distance: "25km", emoji: "🚇", value: 25 }
+];
+
 // --- HELPER FUNCTION FOR FORMATTING AI RESPONSES ---
 const formatAIResponse = (text: string): string => {
   let formatted = text.replace(/\*\*([^*]+)\*\*/g, '$1\n');
   formatted = formatted.replace(/(\d+\.)/g, '\n$1');
   return formatted;
 };
-
 
 // --- CATEGORY TRANSLATION HELPER ---
 const getCategoryEnglish = (koreanCategory: string): string => {
@@ -118,7 +128,7 @@ const getCategoryEnglish = (koreanCategory: string): string => {
     '시립,도립병원': 'Public Hospital',
     '요양병원': 'Long-Term Care Hospital',
     '노인전문병원': 'Geriatric Hospital',
-    '여성전문병원': 'Women’s Hospital',
+    '여성전문병원': 'Women\'s Hospital',
     '보훈병원': 'Veterans Hospital',
     '병원부속시설': 'Hospital Facility',
     '응급실': 'Emergency Room',
@@ -171,14 +181,18 @@ const getCategoryEnglish = (koreanCategory: string): string => {
 
 export default function ChatInterface() {
   // --- DEBUG MODE STATE ---
-  const [debugMode, setDebugMode] = useState(false); // true for it to work
+  const [debugMode, setDebugMode] = useState(false);
   const [debugExpanded, setDebugExpanded] = useState(false);
   const [debugInfo, setDebugInfo] = useState<DebugInfo>({});
+
+  // --- TRAVEL SLIDER STATE ---
+  const [showTravelSlider, setShowTravelSlider] = useState(false);
+  const [selectedTravelIndex, setSelectedTravelIndex] = useState(3); // Default to "Moderate" (index 3)
 
   const [messages, setMessages] = useState<Message[]>([
     { 
       role: "ai", 
-      content: "Hello! I'm Seoul Med Match. Tell me what kind of doctor you need, and I'll find the best options for you given your preferences. You can also share your location using the location button or by typing it in.",
+      content: "Hello, this is Val from SeoulDoc.io. Tell me what kind of doctor you need, and I'll find the best options for you given your preferences. You can also share your location using the location button or by typing it in.",
       timestamp: new Date().toISOString()
     }
   ]);
@@ -248,49 +262,50 @@ export default function ChatInterface() {
   }, [messages]);
 
   const [currentState, setCurrentState] = useState<State>({
-  // Specialty
-  specialty: null,
-  specialty_confidence: 0,
-  
-  // Location
-  location: null,
-  latitude: null,
-  longitude: null,
-  address_korean: null,
-  district: null,
-  dong: null,
-  
-  // Search parameters
-  search_mode: null,
-  max_distance_km: 5,
-  willingness_to_travel: "Nearby",
-  
-  // Keywords
-  keywords: [],
-  hard_keywords: [],
-  negative_keywords: [],  // ← ADD THIS
-  negative_hard_keywords: [],  // ← ADD THIS
-  
-  // Hybrid search
-  hybrid_alpha: null,
-  query_intent: null,
-  suggested_alpha: null,
-  manual_search_mode: null,
-  
-  // Preferences
-  language_pref: "English",
-  
-  // Conversation flow
-  turn_count: 0,
-  ready_to_search: false,
-  search_executed: false,
-  conversation_phase: "greeting",
-  
-  // Metadata
-  last_search_query: null,
-  last_results_count: null,
-  last_search_timestamp: null,
-});
+    // Specialty
+    specialty: null,
+    specialty_confidence: 0,
+    
+    // Location
+    location: null,
+    latitude: null,
+    longitude: null,
+    address_korean: null,
+    district: null,
+    dong: null,
+    
+    // Search parameters
+    search_mode: null,
+    max_distance_km: 5,
+    willingness_to_travel: "Moderate",
+    travel_confidence: 0.5,
+    
+    // Keywords
+    keywords: [],
+    hard_keywords: [],
+    negative_keywords: [],
+    negative_hard_keywords: [],
+    
+    // Hybrid search
+    hybrid_alpha: null,
+    query_intent: null,
+    suggested_alpha: null,
+    manual_search_mode: null,
+    
+    // Preferences
+    language_pref: "English",
+    
+    // Conversation flow
+    turn_count: 0,
+    ready_to_search: false,
+    search_executed: false,
+    conversation_phase: "greeting",
+    
+    // Metadata
+    last_search_query: null,
+    last_results_count: null,
+    last_search_timestamp: null,
+  });
 
   const toggleFacilityExpand = (placeId: string) => {
     setExpandedFacilities(prev => {
@@ -308,6 +323,35 @@ export default function ChatInterface() {
     setTimeout(() => {
       scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }, 100);
+  };
+
+  // ⭐ HANDLE TRAVEL SLIDER CHANGE - NO MESSAGE ADDED
+  const handleTravelSliderChange = async (index: number) => {
+    setSelectedTravelIndex(index);
+    const option = TRAVEL_OPTIONS[index];
+    
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/set_travel_preference`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          travel_label: option.label,
+          current_state: currentState
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (data.state) {
+        setCurrentState(data.state);
+      }
+      
+      // ❌ REMOVED: No AI confirmation message added
+      
+    } catch (error) {
+      console.error("Travel preference error:", error);
+      alert("Failed to update travel preference. Please try again.");
+    }
   };
 
   const handleSendMessage = async (text: string, stateOverride?: Partial<State>) => {
@@ -529,120 +573,130 @@ export default function ChatInterface() {
           </div>
 
           {debugExpanded && (
-              <div className="overflow-y-auto flex-1 p-4 text-xs space-y-4">
-                {/* Message Statistics */}
-                <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                  <h3 className="font-bold text-purple-400 mb-2">📊 Message Stats</h3>
-                  <div className="space-y-1 text-slate-300">
-                    <div className="flex justify-between">
-                      <span>Total Messages:</span>
-                      <span className="font-mono">{getMessageStats().total}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>User Messages:</span>
-                      <span className="font-mono">{getMessageStats().userMessages}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>AI Messages:</span>
-                      <span className="font-mono">{getMessageStats().aiMessages}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>With Results:</span>
-                      <span className="font-mono">{getMessageStats().messagesWithResults}</span>
-                    </div>
+            <div className="overflow-y-auto flex-1 p-4 text-xs space-y-4">
+              {/* Message Statistics */}
+              <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                <h3 className="font-bold text-purple-400 mb-2">📊 Message Stats</h3>
+                <div className="space-y-1 text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Total Messages:</span>
+                    <span className="font-mono">{getMessageStats().total}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>User Messages:</span>
+                    <span className="font-mono">{getMessageStats().userMessages}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>AI Messages:</span>
+                    <span className="font-mono">{getMessageStats().aiMessages}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>With Results:</span>
+                    <span className="font-mono">{getMessageStats().messagesWithResults}</span>
                   </div>
                 </div>
+              </div>
 
-                {/* Current State - Specialty */}
-                <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                  <h3 className="font-bold text-blue-400 mb-2">🏥 Specialty</h3>
-                  <div className="space-y-1 text-slate-300">
-                    <div className="flex justify-between">
-                      <span>Specialty:</span>
-                      <span className="font-mono text-green-400 truncate max-w-[180px]">
-                        {currentState.specialty || 'null'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Confidence:</span>
-                      <span className="font-mono text-yellow-400">
-                        {(currentState.specialty_confidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
+              {/* Current State - Specialty */}
+              <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                <h3 className="font-bold text-blue-400 mb-2">🏥 Specialty</h3>
+                <div className="space-y-1 text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Specialty:</span>
+                    <span className="font-mono text-green-400 truncate max-w-[180px]">
+                      {currentState.specialty || 'null'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Confidence:</span>
+                    <span className="font-mono text-yellow-400">
+                      {(currentState.specialty_confidence * 100).toFixed(0)}%
+                    </span>
                   </div>
                 </div>
+              </div>
 
-                {/* Location Information */}
-                <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                  <h3 className="font-bold text-green-400 mb-2">📍 Location</h3>
-                  <div className="space-y-1 text-slate-300">
-                    <div className="flex justify-between">
-                      <span>Location Text:</span>
-                      <span className="font-mono text-green-400 truncate max-w-[150px]">
-                        {currentState.location || 'null'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>District (구):</span>
-                      <span className="font-mono text-green-400">
-                        {currentState.district || 'null'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Dong (동):</span>
-                      <span className="font-mono text-green-400">
-                        {currentState.dong || 'null'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>GPS:</span>
-                      <span className="font-mono text-green-400 text-[10px]">
-                        {currentState.latitude && currentState.longitude 
-                          ? `${currentState.latitude.toFixed(4)}, ${currentState.longitude.toFixed(4)}`
-                          : 'null'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Address (KR):</span>
-                      <span className="font-mono text-green-400 text-[10px] truncate max-w-[150px]">
-                        {currentState.address_korean ? 
-                          (currentState.address_korean.length > 20 
-                            ? currentState.address_korean.substring(0, 20) + '...'
-                            : currentState.address_korean)
-                          : 'null'}
-                      </span>
-                    </div>
+              {/* Location Information */}
+              <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                <h3 className="font-bold text-green-400 mb-2">📍 Location</h3>
+                <div className="space-y-1 text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Location Text:</span>
+                    <span className="font-mono text-green-400 truncate max-w-[150px]">
+                      {currentState.location || 'null'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>District (구):</span>
+                    <span className="font-mono text-green-400">
+                      {currentState.district || 'null'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Dong (동):</span>
+                    <span className="font-mono text-green-400">
+                      {currentState.dong || 'null'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>GPS:</span>
+                    <span className="font-mono text-green-400 text-[10px]">
+                      {currentState.latitude && currentState.longitude 
+                        ? `${currentState.latitude.toFixed(4)}, ${currentState.longitude.toFixed(4)}`
+                        : 'null'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Address (KR):</span>
+                    <span className="font-mono text-green-400 text-[10px] truncate max-w-[150px]">
+                      {currentState.address_korean ? 
+                        (currentState.address_korean.length > 20 
+                          ? currentState.address_korean.substring(0, 20) + '...'
+                          : currentState.address_korean)
+                        : 'null'}
+                    </span>
                   </div>
                 </div>
+              </div>
 
-                {/* Search Parameters */}
-                <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                  <h3 className="font-bold text-orange-400 mb-2">🔍 Search Parameters</h3>
-                  <div className="space-y-1 text-slate-300">
-                    <div className="flex justify-between">
-                      <span>Mode:</span>
-                      <span className={`font-mono ${
-                        currentState.search_mode === 'zone' ? 'text-purple-400' : 
-                        currentState.search_mode === 'distance' ? 'text-blue-400' : 
-                        'text-slate-500'
-                      }`}>
-                        {currentState.search_mode || 'auto'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Max Distance:</span>
-                      <span className="font-mono text-orange-400">
-                        {currentState.max_distance_km}km
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Travel Willingness:</span>
-                      <span className="font-mono text-cyan-400 text-[10px]">
-                        {currentState.willingness_to_travel}
-                      </span>
-                    </div>
+              {/* Search Parameters */}
+              <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                <h3 className="font-bold text-orange-400 mb-2">🔍 Search Parameters</h3>
+                <div className="space-y-1 text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Mode:</span>
+                    <span className={`font-mono ${
+                      currentState.search_mode === 'zone' ? 'text-purple-400' : 
+                      currentState.search_mode === 'distance' ? 'text-blue-400' : 
+                      'text-slate-500'
+                    }`}>
+                      {currentState.search_mode || 'auto'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Max Distance:</span>
+                    <span className="font-mono text-orange-400">
+                      {currentState.max_distance_km}km
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Travel Label:</span>
+                    <span className="font-mono text-cyan-400 text-[10px]">
+                      {currentState.willingness_to_travel}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Travel Confidence:</span>
+                    <span className={`font-mono ${
+                      currentState.travel_confidence >= 0.9 ? 'text-green-400' :
+                      currentState.travel_confidence >= 0.6 ? 'text-yellow-400' :
+                      'text-red-400'
+                    }`}>
+                      {(currentState.travel_confidence * 100).toFixed(0)}%
+                    </span>
                   </div>
                 </div>
+              </div>
 
               {/* Keywords */}
               <div className="bg-slate-800 rounded p-3 border border-slate-700">
@@ -678,7 +732,6 @@ export default function ChatInterface() {
                     </div>
                   </div>
                   
-                  {/* ⭐ ADD NEGATIVE KEYWORDS SECTION */}
                   <div>
                     <span className="text-slate-400 text-[10px]">Negative Keywords (avoid):</span>
                     <div className="mt-1 flex flex-wrap gap-1">
@@ -711,213 +764,213 @@ export default function ChatInterface() {
                 </div>
               </div>
 
-                {/* Hybrid Search Configuration */}
-                <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                  <h3 className="font-bold text-pink-400 mb-2">🔀 Hybrid Search</h3>
-                  <div className="space-y-1 text-slate-300">
-                    <div className="flex justify-between">
-                      <span>Query Intent:</span>
-                      <span className={`font-mono ${
-                        currentState.query_intent === 'FACTUAL' ? 'text-blue-400' : 
-                        currentState.query_intent === 'MIXED' ? 'text-purple-400' : 
-                        'text-slate-500'
-                      }`}>
-                        {currentState.query_intent || 'not classified'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Suggested α:</span>
-                      <span className="font-mono text-yellow-400">
-                        {currentState.suggested_alpha !== null 
-                          ? currentState.suggested_alpha.toFixed(2) 
-                          : 'null'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Active α:</span>
-                      <span className="font-mono text-pink-400">
-                        {currentState.hybrid_alpha !== null 
-                          ? currentState.hybrid_alpha.toFixed(2) 
-                          : 'auto'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Manual Override:</span>
-                      <span className="font-mono text-cyan-400 text-[10px]">
-                        {currentState.manual_search_mode || 'none'}
-                      </span>
-                    </div>
-                    <div className="mt-2 p-2 bg-slate-900 rounded">
-                      <div className="text-[10px] text-slate-400 mb-1">Alpha Scale:</div>
-                      <div className="relative h-2 bg-slate-700 rounded">
-                        <div 
-                          className="absolute h-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded"
-                          style={{ 
-                            width: `${((currentState.hybrid_alpha || 0.5) * 100)}%` 
-                          }}
-                        />
-                      </div>
-                      <div className="flex justify-between text-[9px] text-slate-500 mt-1">
-                        <span>0.0 (keyword)</span>
-                        <span>0.5</span>
-                        <span>1.0 (semantic)</span>
-                      </div>
-                    </div>
+              {/* Hybrid Search Configuration */}
+              <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                <h3 className="font-bold text-pink-400 mb-2">🔀 Hybrid Search</h3>
+                <div className="space-y-1 text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Query Intent:</span>
+                    <span className={`font-mono ${
+                      currentState.query_intent === 'FACTUAL' ? 'text-blue-400' : 
+                      currentState.query_intent === 'MIXED' ? 'text-purple-400' : 
+                      'text-slate-500'
+                    }`}>
+                      {currentState.query_intent || 'not classified'}
+                    </span>
                   </div>
-                </div>
-
-                {/* Conversation State */}
-                <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                  <h3 className="font-bold text-cyan-400 mb-2">💬 Conversation</h3>
-                  <div className="space-y-1 text-slate-300">
-                    <div className="flex justify-between">
-                      <span>Phase:</span>
-                      <span className="font-mono text-purple-400">
-                        {currentState.conversation_phase}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Turn Count:</span>
-                      <span className="font-mono">{currentState.turn_count}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Ready to Search:</span>
-                      <span className={`font-mono ${currentState.ready_to_search ? 'text-green-400' : 'text-red-400'}`}>
-                        {currentState.ready_to_search ? 'true' : 'false'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Search Executed:</span>
-                      <span className={`font-mono ${currentState.search_executed ? 'text-green-400' : 'text-red-400'}`}>
-                        {currentState.search_executed ? 'true' : 'false'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Language:</span>
-                      <span className="font-mono text-blue-400">
-                        {currentState.language_pref}
-                      </span>
-                    </div>
+                  <div className="flex justify-between">
+                    <span>Suggested α:</span>
+                    <span className="font-mono text-yellow-400">
+                      {currentState.suggested_alpha !== null 
+                        ? currentState.suggested_alpha.toFixed(2) 
+                        : 'null'}
+                    </span>
                   </div>
-                </div>
-
-                {/* Search Metadata */}
-                {(currentState.last_search_query || currentState.last_results_count !== null) && (
-                  <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                    <h3 className="font-bold text-indigo-400 mb-2">📊 Last Search</h3>
-                    <div className="space-y-1 text-slate-300">
-                      {currentState.last_search_query && (
-                        <div>
-                          <span className="text-slate-400 text-[10px]">Query:</span>
-                          <p className="font-mono text-indigo-300 text-[10px] break-words">
-                            {currentState.last_search_query}
-                          </p>
-                        </div>
-                      )}
-                      {currentState.last_results_count !== null && (
-                        <div className="flex justify-between">
-                          <span>Results:</span>
-                          <span className="font-mono text-green-400">
-                            {currentState.last_results_count}
-                          </span>
-                        </div>
-                      )}
-                      {currentState.last_search_timestamp && (
-                        <div className="flex justify-between">
-                          <span>Timestamp:</span>
-                          <span className="font-mono text-slate-400 text-[10px]">
-                            {new Date(currentState.last_search_timestamp).toLocaleTimeString()}
-                          </span>
-                        </div>
-                      )}
-                    </div>
+                  <div className="flex justify-between">
+                    <span>Active α:</span>
+                    <span className="font-mono text-pink-400">
+                      {currentState.hybrid_alpha !== null 
+                        ? currentState.hybrid_alpha.toFixed(2) 
+                        : 'auto'}
+                    </span>
                   </div>
-                )}
-
-                {/* API Response Info */}
-                {debugInfo.lastResponse && (
-                  <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                    <h3 className="font-bold text-green-400 mb-2">✅ Last API Response</h3>
-                    <div className="space-y-1 text-slate-300">
-                      {debugInfo.responseTime && (
-                        <div className="flex justify-between">
-                          <span>Response Time:</span>
-                          <span className="font-mono text-yellow-400">
-                            {debugInfo.responseTime}ms
-                          </span>
-                        </div>
-                      )}
-                      {debugInfo.lastResponse.results && (
-                        <div className="flex justify-between">
-                          <span>Results Count:</span>
-                          <span className="font-mono text-green-400">
-                            {debugInfo.lastResponse.results.length}
-                          </span>
-                        </div>
-                      )}
-                      <div className="mt-2">
-                        <span className="text-slate-400">Response Preview:</span>
-                        <pre className="mt-1 p-2 bg-slate-900 rounded text-[10px] overflow-x-auto max-h-32">
-                          {JSON.stringify(debugInfo.lastResponse, null, 2).slice(0, 500)}...
-                        </pre>
-                      </div>
-                    </div>
+                  <div className="flex justify-between">
+                    <span>Manual Override:</span>
+                    <span className="font-mono text-cyan-400 text-[10px]">
+                      {currentState.manual_search_mode || 'none'}
+                    </span>
                   </div>
-                )}
-
-                {/* Last Request */}
-                {debugInfo.lastRequest && (
-                  <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                    <h3 className="font-bold text-orange-400 mb-2">📤 Last Request</h3>
-                    <div className="space-y-1 text-slate-300">
-                      {debugInfo.requestTimestamp && (
-                        <div className="text-slate-400 text-[10px]">
-                          {new Date(debugInfo.requestTimestamp).toLocaleTimeString()}
-                        </div>
-                      )}
-                      <pre className="mt-1 p-2 bg-slate-900 rounded text-[10px] overflow-x-auto max-h-32">
-                        {JSON.stringify(debugInfo.lastRequest, null, 2).slice(0, 500)}...
-                      </pre>
+                  <div className="mt-2 p-2 bg-slate-900 rounded">
+                    <div className="text-[10px] text-slate-400 mb-1">Alpha Scale:</div>
+                    <div className="relative h-2 bg-slate-700 rounded">
+                      <div 
+                        className="absolute h-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded"
+                        style={{ 
+                          width: `${((currentState.hybrid_alpha || 0.5) * 100)}%` 
+                        }}
+                      />
                     </div>
-                  </div>
-                )}
-
-                {/* API Error */}
-                {debugInfo.apiError && (
-                  <div className="bg-red-900/30 rounded p-3 border border-red-700">
-                    <h3 className="font-bold text-red-400 mb-2">❌ API Error</h3>
-                    <div className="text-red-300 text-xs break-words">
-                      {debugInfo.apiError}
-                    </div>
-                  </div>
-                )}
-
-                {/* Environment Info */}
-                <div className="bg-slate-800 rounded p-3 border border-slate-700">
-                  <h3 className="font-bold text-cyan-400 mb-2">⚙️ Environment</h3>
-                  <div className="space-y-1 text-slate-300">
-                    <div className="flex justify-between">
-                      <span>API URL:</span>
-                      <span className="font-mono text-cyan-400 text-[10px] truncate max-w-[180px]">
-                        {process.env.NEXT_PUBLIC_API_URL || 'Not set'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Loading:</span>
-                      <span className={`font-mono ${loading ? 'text-yellow-400' : 'text-green-400'}`}>
-                        {loading ? 'true' : 'false'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Debug Mode:</span>
-                      <span className="font-mono text-purple-400">
-                        enabled
-                      </span>
+                    <div className="flex justify-between text-[9px] text-slate-500 mt-1">
+                      <span>0.0 (keyword)</span>
+                      <span>0.5</span>
+                      <span>1.0 (semantic)</span>
                     </div>
                   </div>
                 </div>
               </div>
-            )}
+
+              {/* Conversation State */}
+              <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                <h3 className="font-bold text-cyan-400 mb-2">💬 Conversation</h3>
+                <div className="space-y-1 text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Phase:</span>
+                    <span className="font-mono text-purple-400">
+                      {currentState.conversation_phase}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Turn Count:</span>
+                    <span className="font-mono">{currentState.turn_count}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Ready to Search:</span>
+                    <span className={`font-mono ${currentState.ready_to_search ? 'text-green-400' : 'text-red-400'}`}>
+                      {currentState.ready_to_search ? 'true' : 'false'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Search Executed:</span>
+                    <span className={`font-mono ${currentState.search_executed ? 'text-green-400' : 'text-red-400'}`}>
+                      {currentState.search_executed ? 'true' : 'false'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Language:</span>
+                    <span className="font-mono text-blue-400">
+                      {currentState.language_pref}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Search Metadata */}
+              {(currentState.last_search_query || currentState.last_results_count !== null) && (
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-indigo-400 mb-2">📊 Last Search</h3>
+                  <div className="space-y-1 text-slate-300">
+                    {currentState.last_search_query && (
+                      <div>
+                        <span className="text-slate-400 text-[10px]">Query:</span>
+                        <p className="font-mono text-indigo-300 text-[10px] break-words">
+                          {currentState.last_search_query}
+                        </p>
+                      </div>
+                    )}
+                    {currentState.last_results_count !== null && (
+                      <div className="flex justify-between">
+                        <span>Results:</span>
+                        <span className="font-mono text-green-400">
+                          {currentState.last_results_count}
+                        </span>
+                      </div>
+                    )}
+                    {currentState.last_search_timestamp && (
+                      <div className="flex justify-between">
+                        <span>Timestamp:</span>
+                        <span className="font-mono text-slate-400 text-[10px]">
+                          {new Date(currentState.last_search_timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* API Response Info */}
+              {debugInfo.lastResponse && (
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-green-400 mb-2">✅ Last API Response</h3>
+                  <div className="space-y-1 text-slate-300">
+                    {debugInfo.responseTime && (
+                      <div className="flex justify-between">
+                        <span>Response Time:</span>
+                        <span className="font-mono text-yellow-400">
+                          {debugInfo.responseTime}ms
+                        </span>
+                      </div>
+                    )}
+                    {debugInfo.lastResponse.results && (
+                      <div className="flex justify-between">
+                        <span>Results Count:</span>
+                        <span className="font-mono text-green-400">
+                          {debugInfo.lastResponse.results.length}
+                        </span>
+                      </div>
+                    )}
+                    <div className="mt-2">
+                      <span className="text-slate-400">Response Preview:</span>
+                      <pre className="mt-1 p-2 bg-slate-900 rounded text-[10px] overflow-x-auto max-h-32">
+                        {JSON.stringify(debugInfo.lastResponse, null, 2).slice(0, 500)}...
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Last Request */}
+              {debugInfo.lastRequest && (
+                <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                  <h3 className="font-bold text-orange-400 mb-2">📤 Last Request</h3>
+                  <div className="space-y-1 text-slate-300">
+                    {debugInfo.requestTimestamp && (
+                      <div className="text-slate-400 text-[10px]">
+                        {new Date(debugInfo.requestTimestamp).toLocaleTimeString()}
+                      </div>
+                    )}
+                    <pre className="mt-1 p-2 bg-slate-900 rounded text-[10px] overflow-x-auto max-h-32">
+                      {JSON.stringify(debugInfo.lastRequest, null, 2).slice(0, 500)}...
+                    </pre>
+                  </div>
+                </div>
+              )}
+
+              {/* API Error */}
+              {debugInfo.apiError && (
+                <div className="bg-red-900/30 rounded p-3 border border-red-700">
+                  <h3 className="font-bold text-red-400 mb-2">❌ API Error</h3>
+                  <div className="text-red-300 text-xs break-words">
+                    {debugInfo.apiError}
+                  </div>
+                </div>
+              )}
+
+              {/* Environment Info */}
+              <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                <h3 className="font-bold text-cyan-400 mb-2">⚙️ Environment</h3>
+                <div className="space-y-1 text-slate-300">
+                  <div className="flex justify-between">
+                    <span>API URL:</span>
+                    <span className="font-mono text-cyan-400 text-[10px] truncate max-w-[180px]">
+                      {process.env.NEXT_PUBLIC_API_URL || 'Not set'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Loading:</span>
+                    <span className={`font-mono ${loading ? 'text-yellow-400' : 'text-green-400'}`}>
+                      {loading ? 'true' : 'false'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Debug Mode:</span>
+                    <span className="font-mono text-purple-400">
+                      enabled
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1109,39 +1162,39 @@ export default function ChatInterface() {
                                     )}
                                   </div>
                                 )}
-                                {/* Replace the entire footer div with this: */}
 
-                                    {currentState.location?.toLowerCase().trim() === 'seoul' || currentState.location?.toLowerCase().trim() === '서울' ? (
-                                      // Seoul city-wide: Only show map button (no distance)
-                                      <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
-                                        <a 
-                                          href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
-                                        >
-                                          View on Map
-                                        </a>
-                                      </div>
-                                    ) : (
-                                      // Specific location: Show distance + map button
-                                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-100">
-                                        <div className="flex items-center gap-2 text-slate-500">
-                                          <MapPin size={16} className="text-blue-500 flex-shrink-0" />
-                                          <span className="text-sm sm:text-base font-medium">
-                                            {facility.distance != null ? `${facility.distance.toFixed(1)} km away` : 'Distance N/A'}
-                                          </span>
-                                        </div>
-                                        <a 
-                                          href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
-                                        >
-                                          View on Map
-                                        </a>
-                                      </div>
-                                    )}
+                                {currentState.location?.toLowerCase().trim() === 'seoul' || currentState.location?.toLowerCase().trim() === '서울' ? (
+                                  // Seoul city-wide: Only show map button (no distance)
+                                  <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+                                    <a 
+                                      href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
+                                    >
+                                      View on Map
+                                    </a>
+                                  </div>
+                                ) : (
+                                  // Specific location: Show distance + map button
+                                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-100">
+                                    <div className="flex items-center gap-2 text-slate-500">
+                                      <MapPin size={16} className="text-blue-500 flex-shrink-0" />
+                                      <span className="text-sm sm:text-base font-medium">
+                                        {facility.distance != null ? `${facility.distance.toFixed(1)} km away` : 'Distance N/A'}
+                                      </span>
+                                    </div>
+                                    <a 
+                                      href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
+                                    >
+                                      View on Map
+                                    </a>
+                                  </div>
+                                )}
+                                
                                 {/* Debug: Show place_id */}
                                 {debugMode && (
                                   <div className="mt-2 pt-2 border-t border-slate-200">
@@ -1184,9 +1237,75 @@ export default function ChatInterface() {
 
       {/* --- INPUT AREA AT BOTTOM --- */}
       <div className="flex-shrink-0 border-t border-slate-200/50 bg-white/95 backdrop-blur-md shadow-lg">
+        {/* ⭐ TRAVEL SLIDER (Hover-based, positioned ABOVE input) */}
+        {showTravelSlider && (
+          <div 
+            className="max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-3 pb-2"
+            onMouseEnter={() => setShowTravelSlider(true)}
+            onMouseLeave={() => setShowTravelSlider(false)}
+          >
+            <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-2.5 border border-purple-200 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{TRAVEL_OPTIONS[selectedTravelIndex].emoji}</span>
+                  <div>
+                    <h3 className="font-semibold text-slate-800 text-xs leading-tight">
+                      {TRAVEL_OPTIONS[selectedTravelIndex].label}
+                    </h3>
+                    <p className="text-[10px] text-slate-500">
+                      {TRAVEL_OPTIONS[selectedTravelIndex].distance}
+                    </p>
+                  </div>
+                </div>
+                {currentState.travel_confidence >= 0.9 && (
+                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                )}
+              </div>
+              
+              {/* Thin Slider */}
+              <div className="relative">
+                <input
+                  type="range"
+                  min="0"
+                  max={TRAVEL_OPTIONS.length - 1}
+                  value={selectedTravelIndex}
+                  onChange={(e) => handleTravelSliderChange(parseInt(e.target.value))}
+                  className="w-full h-1 rounded-full appearance-none cursor-pointer slider-thumb"
+                  style={{
+                    background: `linear-gradient(to right, 
+                      rgb(147 51 234) 0%, 
+                      rgb(147 51 234) ${(selectedTravelIndex / (TRAVEL_OPTIONS.length - 1)) * 100}%, 
+                      rgb(226 232 240) ${(selectedTravelIndex / (TRAVEL_OPTIONS.length - 1)) * 100}%, 
+                      rgb(226 232 240) 100%)`
+                  }}
+                />
+                
+                {/* Full-sized Emoji Labels */}
+                <div className="flex justify-between mt-1.5 px-0.5">
+                  {TRAVEL_OPTIONS.map((option, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleTravelSliderChange(idx)}
+                      className={`text-base transition-all ${
+                        idx === selectedTravelIndex 
+                          ? 'scale-110 opacity-100' 
+                          : 'opacity-40 hover:opacity-70'
+                      }`}
+                      title={`${option.label} (${option.distance})`}
+                    >
+                      {option.emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Input Controls */}
         <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3"> 
+            {/* Location Button */}
             <button
               onClick={handleLocationClick}
               className="flex-shrink-0 p-3 sm:p-3.5 rounded-xl bg-gradient-to-br from-slate-50 to-slate-100 hover:from-slate-100 hover:to-slate-200 border border-slate-200 hover:border-blue-300 transition-all text-slate-600 hover:text-blue-600 shadow-sm"
@@ -1194,7 +1313,29 @@ export default function ChatInterface() {
             >
               <MapPin size={20} className="sm:w-5 sm:h-5" />
             </button>
+
+            {/* ⭐ Travel Distance Button - HOVER TRIGGER */}
+            <button
+              onMouseEnter={() => setShowTravelSlider(true)}
+              className={`relative flex-shrink-0 p-3 sm:p-3.5 rounded-xl border-2 transition-all shadow-sm ${
+                showTravelSlider
+                  ? 'bg-gradient-to-br from-purple-100 to-pink-100 border-purple-400 text-purple-700'
+                  : 'bg-gradient-to-br from-slate-50 to-slate-100 hover:from-purple-50 hover:to-pink-50 border-slate-200 hover:border-purple-300 text-slate-600 hover:text-purple-600'
+              }`}
+              title="Set Travel Distance"
+            >
+              {/* Icon: Distance/Chart */}
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              
+              {/* Green dot indicator when travel preference set via widget */}
+              {currentState.travel_confidence >= 0.9 && (
+                <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></span>
+              )}
+            </button>
             
+            {/* Text Input */}
             <div className="flex-1 relative min-w-0">
               <input
                 ref={inputRef}
@@ -1208,6 +1349,7 @@ export default function ChatInterface() {
               />
             </div>
 
+            {/* Send Button */}
             <button
               onClick={() => handleSendMessage(input)}
               disabled={!input.trim() || loading}
@@ -1222,6 +1364,40 @@ export default function ChatInterface() {
           </div>
         </div>
       </div>
+
+      {/* ⭐ Custom Slider Styles */}
+      <style jsx>{`
+        .slider-thumb::-webkit-slider-thumb {
+          appearance: none;
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, rgb(147 51 234), rgb(219 39 119));
+          cursor: pointer;
+          border: 3px solid white;
+          box-shadow: 0 2px 8px rgba(147, 51, 234, 0.4);
+          transition: transform 0.2s ease;
+        }
+        
+        .slider-thumb::-webkit-slider-thumb:hover {
+          transform: scale(1.2);
+        }
+        
+        .slider-thumb::-moz-range-thumb {
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, rgb(147 51 234), rgb(219 39 119));
+          cursor: pointer;
+          border: 3px solid white;
+          box-shadow: 0 2px 8px rgba(147, 51, 234, 0.4);
+          transition: transform 0.2s ease;
+        }
+        
+        .slider-thumb::-moz-range-thumb:hover {
+          transform: scale(1.2);
+        }
+      `}</style>
     </div>
   ); 
 }

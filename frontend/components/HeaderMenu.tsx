@@ -35,13 +35,13 @@ export default function HeaderMenu() {
           <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
             {/* I removed the div with the gradient background here */}
             <img 
-              src="img/logo_v3.svg" 
+              src="/img/logo_v3.svg" 
               alt="Logo" 
               className="w-8 h-8 object-contain" // Slightly increased size since the padding is gone
             />
             <div>
               <h1 className="font-bold text-lg bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
-                Seoul Medical Finder
+                Seoul Doc
               </h1>
             </div>
           </Link>
@@ -120,6 +120,14 @@ export default function HeaderMenu() {
                 >
                   <span>⚠️</span> Disclaimer
                 </Link>
+                                  {/* ADD THIS NEW LINK */}
+                  <Link 
+                    href="/contact" 
+                    onClick={() => setIsOpen(false)}
+                    className="block px-4 py-2.5 text-sm hover:bg-blue-50 transition-colors flex items-center gap-2"
+                  >
+                    <span>✉️</span> Contact Us
+                  </Link>
                 <Link 
                   href="/privacy" 
                   onClick={() => setIsOpen(false)}

@@ -31,6 +31,8 @@ class State(BaseModel):
     max_distance_km: float = 5.0
     # User's travel label (semantic label)
     travel_label: str = "Moderate"  # Default label
+    travel_confidence: float = 0.5  # NEW: Track how travel preference was set (0.6 for text, 1.0 for widget)
+
     
     # ===== KEYWORD FILTERING =====
     # Soft keywords: used for semantic search and ranking (POSITIVE preferences)

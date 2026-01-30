@@ -1,4 +1,3 @@
-// components/Footer.tsx
 'use client';
 
 import Link from 'next/link';
@@ -28,10 +27,20 @@ export default function Footer() {
           {/* About Section */}
           <div>
             <h3 className="font-bold text-lg mb-3">Seoul Medical Finder</h3>
-            <p className="text-sm text-gray-300 leading-relaxed">
+            <p className="text-sm text-gray-300 leading-relaxed mb-4">
               Find quality medical facilities across Seoul with AI-powered
               recommendations.
             </p>
+            {/* Added Contact Email here for visibility */}
+            <div className="text-sm">
+              <h4 className="font-semibold text-white mb-1">Contact Us</h4>
+              <a 
+                href="mailto:seouldoc.io@gmail.com" 
+                className="text-gray-300 hover:text-white transition-colors"
+              >
+                seouldoc.io@gmail.com
+              </a>
+            </div>
           </div>
 
           {/* Information Links */}

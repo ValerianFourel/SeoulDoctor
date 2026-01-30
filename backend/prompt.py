@@ -628,14 +628,14 @@ Extract medical specialty or service type if explicitly mentioned or clearly imp
 - "한의원 찾아줘" → 한의원
 - "doctor near me" → 병원,의원
 - "checkup" → 건강검진
-- "I have a headache" → 병원,의원 (too vague)
+- "I have a headache" → null (too vague)
 - "hospital" → 병원,의원
 - "my stomach hurts" → 병원,의원 (could be multiple specialties)
 - "clinic" → 병원,의원
-- "medical facility" → 병원,의원
+- "medical facility" → null
 
 ### Output:
-Return the Korean specialty term if confidently matched, otherwise return 병원,의원 as the default.
+Return the Korean specialty term if confidently matched, otherwise return null as the default.
 
 ---
 
@@ -815,7 +815,7 @@ Extract FOUR types of keywords from the user's query:
 ## RESPONSE FORMAT (JSON only):
 
 {{
-  "specialty": "matched specialty from list or 병원,의원 as default",
+  "specialty": "matched specialty from list or null as default",
   "specialty_confidence": 0.0-1.0,
   "location": "extracted location (preferably Korean name) or Seoul as default",
   "latitude": null or float,
