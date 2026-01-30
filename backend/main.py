@@ -2472,7 +2472,7 @@ async def chat_endpoint(
             
             elif "doctor" in message_lower or "의사" in message_lower:
                 extracted['specialty'] = "병원,의원"
-                extracted['specialty_confidence'] = 0.2
+                extracted['specialty_confidence'] = 0.7
                 privacy_safe_log(consent, "   Mapped 'doctor' → 병원,의원 (general)")
         
         new_state = merge_extraction_into_state(new_state, extracted, replace_keywords=(not is_refinement))
