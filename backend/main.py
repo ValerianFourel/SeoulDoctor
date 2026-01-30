@@ -920,13 +920,19 @@ def execute_search(
     consent: Optional[CookieConsent] = None
 ) -> Tuple[str, List[Dict]]:
     """
-    HYBRID SEARCH: Path A (strict) + Path B (additive) fallback.
+    HYBRID SEARCH with Adaptive Precision Handling.
     
-    FIXES:
-    - ⭐ Allows null specialty searches (specialty_confidence >= 0.3)
-    - ⭐ Word-boundary keyword matching (not substring)
+    Handles three search modes based on specialty confidence:
+    - HIGH PRECISION (≥0.7): Strict specialty filter, semantic ranking
+    - MEDIUM PRECISION (0.3-0.6): Specialty filter + general fallback
+    - LOW PRECISION (≤0.3): Distance-first, all facility types
+    
+    Features:
+    - ⭐ Gracefully handles vague/ambiguous queries
+    - ⭐ Maintains precision for focused searches
+    - ⭐ Progressive expansion when results are sparse
+    - ⭐ Word-boundary keyword matching
     - ⭐ Negative keyword support
-    - ⭐ Better city-wide defaults
     """
     global LANGUAGE, rag_pipeline
     
@@ -936,14 +942,37 @@ def execute_search(
     state.last_search_query = user_message
     state.last_search_timestamp = datetime.utcnow().isoformat()
     
+    # ===== DETERMINE SEARCH PRECISION LEVEL =====
+    
+    specialty_conf = state.specialty_confidence
+    has_specialty = bool(state.specialty and state.specialty != "병원,의원")
+    is_general_search = getattr(state, 'is_general_search', False)
+    
+    # Classify search precision
+    if is_general_search or not has_specialty or specialty_conf < 0.29:
+        search_precision = "LOW"  # General/vague search
+    elif specialty_conf < 0.7:
+        search_precision = "MEDIUM"  # Fuzzy specialty match
+    else:
+        search_precision = "HIGH"  # Clear, focused search
+    
+    # ===== LOGGING =====
+    
     privacy_safe_log(consent, "=" * 60)
-    privacy_safe_log(consent, "🔍 HYBRID SEARCH STARTED (Path A → Path B fallback)")
+    privacy_safe_log(consent, f"🔍 ADAPTIVE HYBRID SEARCH (Precision: {search_precision})")
     privacy_safe_log(consent, f"Query: \"{user_message[:50]}...\"")
     privacy_safe_log(consent, f"Specialty: {state.specialty or 'ANY (no filter)'}")
-    privacy_safe_log(consent, f"Mode: {(state.search_mode or 'auto').upper()}")
+    privacy_safe_log(consent, f"Specialty Confidence: {specialty_conf:.2f}")
+    privacy_safe_log(consent, f"Search Mode: {(state.search_mode or 'auto').upper()}")
     privacy_safe_log(consent, f"Max Distance: {max_distance}km")
-    privacy_safe_log(consent, f"Travel Confidence: {state.travel_confidence:.2f}")
     privacy_safe_log(consent, f"Language: {LANGUAGE}")
+    
+    if search_precision == "LOW":
+        privacy_safe_log(consent, "🎲 LOW PRECISION → Distance-first, all facility types")
+    elif search_precision == "MEDIUM":
+        privacy_safe_log(consent, "🎯 MEDIUM PRECISION → Specialty + general fallback")
+    else:
+        privacy_safe_log(consent, "🔬 HIGH PRECISION → Strict specialty filter + semantic ranking")
     
     if state.keywords:
         privacy_safe_log(consent, f"💭 Soft Keywords: {', '.join(state.keywords)}")
@@ -953,8 +982,6 @@ def execute_search(
         privacy_safe_log(consent, f"🚫 Negative Keywords: {', '.join(state.negative_keywords)}")
     if state.negative_hard_keywords:
         privacy_safe_log(consent, f"⛔ Negative Hard Keywords: {', '.join(state.negative_hard_keywords)}")
-    if state.manual_search_mode:
-        privacy_safe_log(consent, f"Manual Override: {state.manual_search_mode}")
     
     privacy_safe_log(consent, "=" * 60)
     
@@ -964,16 +991,13 @@ def execute_search(
     user_lon = state.longitude
     relaxed_filters = []
     
-    # ===== LOCATION FILTERING (SHARED) =====
+    # ===== LOCATION FILTERING =====
     
     if state.search_mode == 'zone' and state.district:
         privacy_safe_log(consent, f"🏘️ Zone search: {state.district} {state.dong or ''}")
         working_df = filter_by_zone(working_df, state.district, state.dong)
         
-        if state.dong:
-            location_context = f"in {state.dong}, {state.district}"
-        else:
-            location_context = f"in {state.district}"
+        location_context = f"in {state.dong}, {state.district}" if state.dong else f"in {state.district}"
         
         if user_lat and user_lon and 'lat' in working_df.columns and 'lon' in working_df.columns:
             def calc_distance(row):
@@ -990,6 +1014,7 @@ def execute_search(
     elif user_lat and user_lon:
         privacy_safe_log(consent, f"📍 GPS search: ({user_lat:.4f}, {user_lon:.4f})")
         
+        # Reverse geocode
         reverse_result = None
         if GOOGLE_MAPS_API_KEY:
             reverse_result = google_maps_reverse_geocode(user_lat, user_lon)
@@ -1020,7 +1045,7 @@ def execute_search(
         else:
             working_df['distance_km'] = 0
             location_context = "in Seoul"
-            logger.warning("⚠️ No GPS coordinates in dataset, using city-wide search")
+            logger.warning("⚠️ No GPS coordinates in dataset")
     
     elif state.location:
         privacy_safe_log(consent, f"📍 Text location: {state.location}")
@@ -1030,22 +1055,33 @@ def execute_search(
         privacy_safe_log(consent, f"✓ Fuzzy location match: {len(working_df)} facilities")
     
     else:
-        privacy_safe_log(consent, "📍 City-wide search (no location specified)")
+        privacy_safe_log(consent, "📍 City-wide search (no location)")
         location_context = "across Seoul"
         working_df['distance_km'] = 0
     
-    # ===== SPECIALTY FILTER WITH EXPANSION =====
+    # ===== ADAPTIVE SPECIALTY FILTERING =====
     
-    if state.specialty and 'category' in working_df.columns:
-        before_count = len(working_df)
-        working_df = working_df[working_df['category'].str.contains(state.specialty, na=False, case=False)]
-        privacy_safe_log(consent, f"🏥 Category filter: '{state.specialty}' → {before_count} to {len(working_df)}")
+    specialty_filtered_df = pd.DataFrame()
+    general_fallback_df = pd.DataFrame()
+    
+    if search_precision == "HIGH" and has_specialty and 'category' in working_df.columns:
+        # HIGH PRECISION: Strict specialty filter only
+        privacy_safe_log(consent, f"🔬 HIGH PRECISION: Strict '{state.specialty}' filter")
         
-        if len(working_df) < 3 and user_lat and user_lon and 'distance_km' in working_df.columns:
-            logger.warning(f"⚠️ Only {len(working_df)} {state.specialty} in current area, expanding search...")
+        before_count = len(working_df)
+        specialty_filtered_df = working_df[
+            working_df['category'].str.contains(state.specialty, na=False, case=False)
+        ].copy()
+        
+        privacy_safe_log(consent, f"   Specialty filter: {before_count} → {len(specialty_filtered_df)}")
+        
+        # Expand search radius if too few results
+        if len(specialty_filtered_df) < 3 and user_lat and user_lon:
+            privacy_safe_log(consent, f"   ⚠️ Only {len(specialty_filtered_df)} results, expanding radius...")
             
-            expanded_df = df_filtered.copy()
-            expanded_df = expanded_df[expanded_df['category'].str.contains(state.specialty, na=False, case=False)]
+            expanded_df = df_filtered[
+                df_filtered['category'].str.contains(state.specialty, na=False, case=False)
+            ].copy()
             
             if len(expanded_df) > 0:
                 def calc_distance_expanded(row):
@@ -1056,31 +1092,59 @@ def execute_search(
                 expanded_df['distance_km'] = expanded_df.apply(calc_distance_expanded, axis=1)
                 expanded_df = expanded_df.sort_values('distance_km')
                 
-                expansion_radii = [max_distance * 1.5, max_distance * 2, max_distance * 3, max_distance * 5, 50]
-                
-                for expanded_radius in expansion_radii:
-                    expanded_working = expanded_df[expanded_df['distance_km'] < expanded_radius].copy()
+                for radius in [max_distance * 1.5, max_distance * 2, max_distance * 3, max_distance * 5, 50]:
+                    expanded_working = expanded_df[expanded_df['distance_km'] < radius].copy()
                     
                     if len(expanded_working) >= 3:
-                        working_df = expanded_working
-                        location_context = f"within {expanded_radius:.1f}km"
-                        relaxed_filters.append(f"expanded search to {expanded_radius:.1f}km to find more {state.specialty}")
-                        privacy_safe_log(consent, f"✓ Expanded to {expanded_radius:.1f}km: {len(working_df)} {state.specialty} found")
+                        specialty_filtered_df = expanded_working
+                        location_context = f"within {radius:.1f}km"
+                        relaxed_filters.append(f"expanded to {radius:.1f}km for more {state.specialty}")
+                        privacy_safe_log(consent, f"   ✓ Expanded to {radius:.1f}km: {len(specialty_filtered_df)} found")
                         break
-                
-                if len(working_df) < 3 and len(expanded_df) > 0:
-                    working_df = expanded_df.head(10)
-                    location_context = f"across Seoul"
-                    privacy_safe_log(consent, f"⚠️ Limited {state.specialty} availability: showing {len(working_df)} closest")
         
-        if len(working_df) == 0:
-            logger.warning(f"⚠️ No {state.specialty} facilities found")
-            privacy_safe_log(consent, f"❌ No {state.specialty} available")
-    else:
-        # ⭐ NEW: Allow searches without specialty filter
-        privacy_safe_log(consent, f"ℹ️  No specialty filter (showing all facility types)")
+        working_df = specialty_filtered_df
     
-    # ===== PATH A: STRICT HARD KEYWORD FILTERING =====
+    elif search_precision == "MEDIUM" and has_specialty and 'category' in working_df.columns:
+        # MEDIUM PRECISION: Specialty filter + general fallback
+        privacy_safe_log(consent, f"🎯 MEDIUM PRECISION: '{state.specialty}' + general fallback")
+        
+        before_count = len(working_df)
+        specialty_filtered_df = working_df[
+            working_df['category'].str.contains(state.specialty, na=False, case=False)
+        ].copy()
+        
+        privacy_safe_log(consent, f"   Specialty filter: {before_count} → {len(specialty_filtered_df)}")
+        
+        # Add general facilities as fallback
+        if len(specialty_filtered_df) < 5:
+            privacy_safe_log(consent, f"   Adding general facilities as fallback...")
+            
+            # Get general facilities not already in specialty results
+            specialty_place_ids = set(specialty_filtered_df['place_id'].tolist())
+            general_fallback_df = working_df[
+                ~working_df['place_id'].isin(specialty_place_ids)
+            ].copy()
+            
+            if 'distance_km' in general_fallback_df.columns:
+                general_fallback_df = general_fallback_df.sort_values('distance_km').head(10)
+            
+            privacy_safe_log(consent, f"   ✓ Added {len(general_fallback_df)} general facilities")
+            
+            # Merge: specialty first, then general
+            working_df = pd.concat([specialty_filtered_df, general_fallback_df], ignore_index=True)
+            relaxed_filters.append(f"included {len(general_fallback_df)} nearby general facilities")
+        else:
+            working_df = specialty_filtered_df
+    
+    else:
+        # LOW PRECISION: No specialty filter, distance-first
+        privacy_safe_log(consent, f"🎲 LOW PRECISION: All facility types (distance-first)")
+        
+        # Keep all facilities, just sort by distance
+        if 'distance_km' in working_df.columns:
+            working_df = working_df.sort_values('distance_km')
+    
+    # ===== HARD KEYWORD FILTERING (PATH A) =====
     
     path_a_results_df = pd.DataFrame()
     path_a_place_ids = set()
@@ -1088,25 +1152,15 @@ def execute_search(
     if state.hard_keywords and len(working_df) > 0:
         privacy_safe_log(consent, "🎯 PATH A: Strict hard keyword filtering")
         
-        search_df = df_filtered.copy()
+        search_df = working_df.copy()
         
-        # Preserve distance filter
-        if 'distance_km' in working_df.columns and user_lat and user_lon:
-            def calc_distance(row):
-                if pd.notna(row['lat']) and pd.notna(row['lon']):
-                    return haversine(user_lat, user_lon, row['lat'], row['lon'])
-                return 999.0
-            
-            search_df['distance_km'] = search_df.apply(calc_distance, axis=1)
-            search_df = search_df[search_df['distance_km'] < max_distance]
-            privacy_safe_log(consent, f"   Distance preserved: {len(search_df)} facilities within {max_distance}km")
-        
-        # Apply strict hard keyword filter (word boundary matching)
+        # Apply strict hard keyword filter
         for keyword in state.hard_keywords:
             keyword_lower = keyword.lower().strip()
             mask = pd.Series([False] * len(search_df), index=search_df.index)
             
-            searchable_fields = ['name', 'category', 'address', 'Summaries', 'Summaries_Korean', 'Key_Highlights', 'amenities']
+            searchable_fields = ['name', 'category', 'address', 'Summaries', 'Summaries_Korean', 
+                                'Key_Highlights', 'amenities', 'medical_info_parsed']
             
             for field in searchable_fields:
                 if field not in search_df.columns:
@@ -1119,26 +1173,30 @@ def execute_search(
                         return False
                     mask = mask | search_df[field].apply(check_list_field)
                 
-                elif field == 'amenities':
-                    def check_amenities(val):
+                elif field in ['amenities', 'medical_info_parsed']:
+                    def check_dict_field(val):
                         if isinstance(val, dict):
                             return any(keyword_matches_word_boundary(keyword_lower, str(v)) for v in val.values())
                         return False
-                    mask = mask | search_df[field].apply(check_amenities)
+                    mask = mask | search_df[field].apply(check_dict_field)
                 
                 else:
-                    mask = mask | search_df[field].apply(lambda x: keyword_matches_word_boundary(keyword_lower, str(x)))
+                    mask = mask | search_df[field].apply(
+                        lambda x: keyword_matches_word_boundary(keyword_lower, str(x))
+                    )
             
             search_df = search_df[mask]
+            privacy_safe_log(consent, f"   Hard keyword '{keyword}': {len(search_df)} matches")
         
-        # ⭐ NEW: Apply negative hard keyword filter (exclusion)
+        # Apply negative hard keyword filter
         if state.negative_hard_keywords:
-            privacy_safe_log(consent, f"⛔ Applying negative hard keyword filter: {state.negative_hard_keywords}")
+            privacy_safe_log(consent, f"⛔ Applying negative hard keyword exclusions")
             for neg_keyword in state.negative_hard_keywords:
                 neg_keyword_lower = neg_keyword.lower().strip()
                 exclude_mask = pd.Series([False] * len(search_df), index=search_df.index)
                 
-                searchable_fields = ['name', 'category', 'address', 'Summaries', 'Summaries_Korean', 'Key_Highlights', 'amenities']
+                searchable_fields = ['name', 'category', 'address', 'Summaries', 'Summaries_Korean', 
+                                    'Key_Highlights', 'amenities', 'medical_info_parsed']
                 
                 for field in searchable_fields:
                     if field not in search_df.columns:
@@ -1151,28 +1209,28 @@ def execute_search(
                             return False
                         exclude_mask = exclude_mask | search_df[field].apply(check_list_field)
                     
-                    elif field == 'amenities':
-                        def check_amenities(val):
+                    elif field in ['amenities', 'medical_info_parsed']:
+                        def check_dict_field(val):
                             if isinstance(val, dict):
                                 return any(keyword_matches_word_boundary(neg_keyword_lower, str(v)) for v in val.values())
                             return False
-                        exclude_mask = exclude_mask | search_df[field].apply(check_amenities)
+                        exclude_mask = exclude_mask | search_df[field].apply(check_dict_field)
                     
                     else:
-                        exclude_mask = exclude_mask | search_df[field].apply(lambda x: keyword_matches_word_boundary(neg_keyword_lower, str(x)))
+                        exclude_mask = exclude_mask | search_df[field].apply(
+                            lambda x: keyword_matches_word_boundary(neg_keyword_lower, str(x))
+                        )
                 
                 before = len(search_df)
                 search_df = search_df[~exclude_mask]
                 privacy_safe_log(consent, f"   Excluded '{neg_keyword}': {before} → {len(search_df)}")
         
-        privacy_safe_log(consent, f"   Path A result: {len(search_df)} facilities match ALL hard keywords")
-        
         if len(search_df) >= 3:
             path_a_results_df = search_df.copy()
             path_a_place_ids = set(path_a_results_df['place_id'].tolist())
-            privacy_safe_log(consent, f"✓ Path A SUCCESS: {len(path_a_results_df)} results (≥3)")
+            privacy_safe_log(consent, f"✓ Path A SUCCESS: {len(path_a_results_df)} results")
         else:
-            privacy_safe_log(consent, f"⚠️ Path A insufficient: {len(search_df)} results (<3) → Will try Path B")
+            privacy_safe_log(consent, f"⚠️ Path A insufficient: {len(search_df)} results → trying Path B")
             if len(search_df) > 0:
                 path_a_results_df = search_df.copy()
                 path_a_place_ids = set(path_a_results_df['place_id'].tolist())
@@ -1180,25 +1238,26 @@ def execute_search(
         # No hard keywords, use working_df directly
         path_a_results_df = working_df.copy()
         path_a_place_ids = set(path_a_results_df['place_id'].tolist()) if len(path_a_results_df) > 0 else set()
-        privacy_safe_log(consent, f"ℹ️  No hard keywords → Path A uses {len(path_a_results_df)} specialty-filtered results")
+        privacy_safe_log(consent, f"ℹ️  No hard keywords → Path A uses {len(path_a_results_df)} filtered results")
     
-    # ===== PATH B: ADDITIVE SCORING (ONLY IF PATH A < 3) =====
+    # ===== ADDITIVE SCORING (PATH B) =====
     
     path_b_results_df = pd.DataFrame()
     needs_path_b = len(path_a_results_df) < 3
     
     if needs_path_b:
-        privacy_safe_log(consent, f"🔄 PATH B: Additive scoring to fill gap to 3-5 results")
+        privacy_safe_log(consent, f"🔄 PATH B: Additive scoring (filling to 3-5 results)")
         
-        # Start with full working_df (exclude Path A results)
+        # Exclude Path A results
         path_b_pool = working_df[~working_df['place_id'].isin(path_a_place_ids)].copy()
-        privacy_safe_log(consent, f"   Path B pool: {len(path_b_pool)} facilities (excluding Path A results)")
+        privacy_safe_log(consent, f"   Path B pool: {len(path_b_pool)} facilities")
         
         if len(path_b_pool) > 0:
             
             def apply_keyword_boost(df: pd.DataFrame, keywords: List[str], weight: float, label: str) -> pd.Series:
                 boost = pd.Series(0.0, index=df.index)
-                searchable_fields = ['name', 'category', 'address', 'Summaries', 'Summaries_Korean', 'Key_Highlights', 'amenities', 'medical_info_parsed']
+                searchable_fields = ['name', 'category', 'address', 'Summaries', 'Summaries_Korean', 
+                                    'Key_Highlights', 'amenities', 'medical_info_parsed']
                 
                 for kw in keywords:
                     kw_lower = str(kw).lower().strip()
@@ -1208,42 +1267,53 @@ def execute_search(
                     field_matches = pd.Series(False, index=df.index)
                     for field in searchable_fields:
                         if field in df.columns:
-                            field_matches |= df[field].apply(lambda x, kw=kw_lower: calculate_field_boost(x, kw))
+                            field_matches |= df[field].apply(
+                                lambda x, kw=kw_lower: calculate_field_boost(x, kw)
+                            )
                     
                     boost[field_matches] += weight
                     matched_count = field_matches.sum()
                     if matched_count > 0:
-                        privacy_safe_log(consent, f"      +{weight} → '{kw}' matched {matched_count} facilities ({label})")
+                        privacy_safe_log(consent, f"      '{kw}': +{weight} → {matched_count} matches ({label})")
                 
                 return boost
             
             # Initialize scoring
             path_b_pool['relevance_boost'] = 0.0
             
-            # 1. Hard keywords: Priority boost
+            # Hard keywords: Priority boost
             if state.hard_keywords:
-                path_b_pool['relevance_boost'] += apply_keyword_boost(path_b_pool, state.hard_keywords, 500.0, "HARD")
+                path_b_pool['relevance_boost'] += apply_keyword_boost(
+                    path_b_pool, state.hard_keywords, 500.0, "HARD"
+                )
             
-            # 2. Soft keywords: Preference boost
+            # Soft keywords: Preference boost
             if state.keywords:
-                path_b_pool['relevance_boost'] += apply_keyword_boost(path_b_pool, state.keywords, 50.0, "SOFT")
+                path_b_pool['relevance_boost'] += apply_keyword_boost(
+                    path_b_pool, state.keywords, 50.0, "SOFT"
+                )
             
-            # ⭐ NEW: 3. Negative keywords: PENALTY
+            # Negative keywords: Penalty
             if state.negative_keywords:
-                negative_boost = apply_keyword_boost(path_b_pool, state.negative_keywords, -300.0, "NEGATIVE")
-                path_b_pool['relevance_boost'] += negative_boost
+                path_b_pool['relevance_boost'] += apply_keyword_boost(
+                    path_b_pool, state.negative_keywords, -300.0, "NEGATIVE"
+                )
             
-            # ⭐ NEW: 4. Negative hard keywords: SEVERE PENALTY
+            # Negative hard keywords: Severe penalty
             if state.negative_hard_keywords:
-                negative_hard_boost = apply_keyword_boost(path_b_pool, state.negative_hard_keywords, -1000.0, "NEGATIVE_HARD")
-                path_b_pool['relevance_boost'] += negative_hard_boost
+                path_b_pool['relevance_boost'] += apply_keyword_boost(
+                    path_b_pool, state.negative_hard_keywords, -1000.0, "NEGATIVE_HARD"
+                )
             
-            # 5. Specialty match boost
-            if state.specialty:
-                spec_mask = path_b_pool['category'].fillna('').astype(str).str.lower().str.contains(state.specialty.lower(), na=False)
-                path_b_pool.loc[spec_mask, 'relevance_boost'] += 200.0
+            # Specialty match boost (only for medium/high precision)
+            if search_precision != "LOW" and state.specialty:
+                spec_mask = path_b_pool['category'].fillna('').astype(str).str.lower().str.contains(
+                    state.specialty.lower(), na=False
+                )
+                boost_amount = 200.0 * specialty_conf  # Scale by confidence
+                path_b_pool.loc[spec_mask, 'relevance_boost'] += boost_amount
             
-            # 6. Distance decay
+            # Distance decay
             if 'distance_km' in path_b_pool.columns:
                 max_dist = path_b_pool['distance_km'].max() or 1.0
                 if max_dist > 0:
@@ -1251,12 +1321,15 @@ def execute_search(
                     path_b_pool['relevance_boost'] -= distance_penalty
             
             # Sort by boost then distance
-            path_b_pool = path_b_pool.sort_values(by=['relevance_boost', 'distance_km'], ascending=[False, True]).reset_index(drop=True)
+            path_b_pool = path_b_pool.sort_values(
+                by=['relevance_boost', 'distance_km'], 
+                ascending=[False, True]
+            ).reset_index(drop=True)
             
             path_b_results_df = path_b_pool.copy()
             privacy_safe_log(consent, f"✓ Path B scored {len(path_b_results_df)} facilities")
     
-    # ===== MERGE PATH A + PATH B RESULTS =====
+    # ===== MERGE PATH A + PATH B =====
     
     if len(path_a_results_df) >= 3:
         final_df = path_a_results_df.copy()
@@ -1267,13 +1340,13 @@ def execute_search(
         path_b_top = path_b_results_df.head(needed)
         
         final_df = pd.concat([path_a_results_df, path_b_top], ignore_index=True)
-        privacy_safe_log(consent, f"✅ MERGED: {len(path_a_results_df)} from Path A + {len(path_b_top)} from Path B = {len(final_df)} total")
-        relaxed_filters.append(f"included {len(path_b_top)} additional results using priority scoring")
+        privacy_safe_log(consent, f"✅ MERGED: {len(path_a_results_df)} (Path A) + {len(path_b_top)} (Path B)")
+        relaxed_filters.append(f"added {len(path_b_top)} results via priority scoring")
     
     elif len(path_b_results_df) > 0:
         final_df = path_b_results_df.copy()
         privacy_safe_log(consent, f"✅ Using Path B only: {len(final_df)} results")
-        relaxed_filters.append("used priority scoring (strict filtering found no matches)")
+        relaxed_filters.append("used priority scoring (no strict matches)")
     
     else:
         final_df = working_df.copy()
@@ -1281,50 +1354,65 @@ def execute_search(
     
     # ===== HYBRID RAG SEMANTIC RANKING =====
     
-    query_components = []
-    if state.specialty:
-        query_components.append(state.specialty)
-    if state.keywords:
-        query_components.extend(state.keywords)
-    
-    query_text = " ".join(query_components) if query_components else user_message
-    
-    if len(query_text.strip()) > 2 and len(final_df) > 0 and rag_pipeline:
-        privacy_safe_log(consent, "🔀 Applying Hybrid RAG (BM25 + Vector)...")
+    if search_precision != "LOW":
+        # Build query for semantic search
+        query_components = []
+        if state.specialty and search_precision == "HIGH":
+            query_components.append(state.specialty)
+        if state.keywords:
+            query_components.extend(state.keywords)
         
-        try:
-            route_decision = rag_pipeline.route_query(query_text)
-            state.query_intent = route_decision.get('intent', 'MIXED')
-            state.suggested_alpha = route_decision.get('suggested_alpha', 0.7)
+        query_text = " ".join(query_components) if query_components else user_message
+        
+        if len(query_text.strip()) > 2 and len(final_df) > 0 and rag_pipeline:
+            privacy_safe_log(consent, "🔀 Applying Hybrid RAG (BM25 + Vector)...")
             
-            actual_alpha = rag_pipeline.calculate_alpha(route_decision, state.manual_search_mode)
-            state.hybrid_alpha = actual_alpha
-            
-            privacy_safe_log(consent, f"   🎯 Router: {state.query_intent} (α={actual_alpha:.2f})")
-            
-            final_df = rag_pipeline.apply_combined_ranking(
-                df=final_df,
-                query_text=query_text,
-                max_distance=max_distance,
-                search_mode=state.search_mode or 'distance',
-                n_results=200,
-                use_hybrid=True,
-                manual_mode=state.manual_search_mode
-            )
-            
-            privacy_safe_log(consent, f"✓ Hybrid ranking applied")
-            
-        except Exception as e:
-            logger.error(f"Hybrid ranking error: {e}", exc_info=True)
-            final_df['relevance_rank'] = 9999
-            if 'distance_km' in final_df.columns:
-                final_df = final_df.sort_values('distance_km')
+            try:
+                route_decision = rag_pipeline.route_query(query_text)
+                state.query_intent = route_decision.get('intent', 'MIXED')
+                state.suggested_alpha = route_decision.get('suggested_alpha', 0.7)
+                
+                actual_alpha = rag_pipeline.calculate_alpha(
+                    route_decision, 
+                    state.manual_search_mode,
+                    specialty_confidence=specialty_conf
+                )
+                state.hybrid_alpha = actual_alpha
+                
+                privacy_safe_log(consent, f"   🎯 Router: {state.query_intent} (α={actual_alpha:.2f})")
+                
+                final_df = rag_pipeline.apply_combined_ranking(
+                    df=final_df,
+                    query_text=query_text,
+                    max_distance=max_distance,
+                    search_mode=state.search_mode or 'distance',
+                    n_results=200,
+                    use_hybrid=True,
+                    manual_mode=state.manual_search_mode,
+                    is_general_search=(search_precision == "LOW"),
+                    specialty_confidence=specialty_conf
+                )
+                
+                privacy_safe_log(consent, f"✓ Hybrid ranking applied")
+                
+            except Exception as e:
+                logger.error(f"Hybrid ranking error: {e}", exc_info=True)
+                final_df['relevance_rank'] = 9999
+                if 'distance_km' in final_df.columns:
+                    final_df = final_df.sort_values('distance_km')
+        else:
+            state.query_intent = None
+            state.suggested_alpha = None
+            state.hybrid_alpha = None
     else:
-        state.query_intent = None
-        state.suggested_alpha = None
+        # LOW PRECISION: Skip semantic ranking, pure distance sort
+        privacy_safe_log(consent, "📍 LOW PRECISION → Skipping semantic ranking (distance-only)")
+        if 'distance_km' in final_df.columns:
+            final_df = final_df.sort_values('distance_km')
+        state.query_intent = "GENERAL"
         state.hybrid_alpha = None
     
-    # ===== ENGLISH FILTER (with fallback) =====
+    # ===== ENGLISH FILTER =====
     
     pre_english_df = final_df.copy()
     
@@ -1347,7 +1435,7 @@ def execute_search(
             final_df = pre_validation_df.head(5)
             relaxed_filters.append("included slightly farther facilities")
     
-    # ===== RESULT SELECTION (3-5) =====
+    # ===== RESULT SELECTION =====
     
     def select_optimal_result_count(df: pd.DataFrame, min_results: int = 3, max_results: int = 5) -> int:
         total = len(df)
@@ -1370,7 +1458,11 @@ def execute_search(
         privacy_safe_log(consent, f"✓ Selecting {n_results} results from {len(final_df)} facilities")
         
         try:
-            facilities_context = rag_pipeline.build_context_for_llm(final_df, n_results=n_results, language=LANGUAGE)
+            facilities_context = rag_pipeline.build_context_for_llm(
+                final_df, 
+                n_results=n_results, 
+                language=LANGUAGE
+            )
         except Exception as e:
             logger.error(f"Context building error: {e}", exc_info=True)
             facilities_context = "Error building context"
@@ -1398,20 +1490,31 @@ def execute_search(
             response_text = re.sub(r'[\u0400-\u04FF]+', 'Seoul', response_text)
             response_text = re.sub(r'대한민국 서울특별시 중구 세종대로 110', 'Seoul', response_text)
 
-            # Add disclaimers
-            if len(relaxed_filters) > 0 and n_results >= 3:
+            # Add contextual disclaimers
+            if search_precision == "LOW" and len(results) > 0:
                 if LANGUAGE == "English":
-                    if any("expanded search" in f for f in relaxed_filters):
-                        disclaimer = f"\n\n💡 Note: I expanded the search area to find more options for you."
-                    else:
-                        disclaimer = "\n\n💡 Note: To show you 3+ options, I " + " and ".join(relaxed_filters) + "."
+                    response_text += "\n\n💡 Showing nearby facilities sorted by distance. These are general medical facilities that can help assess your needs or provide referrals."
                 else:
-                    disclaimer = "\n\n💡 참고: 더 많은 옵션을 보여드리기 위해 검색 범위를 확대했습니다."
-                response_text += disclaimer
+                    response_text += "\n\n💡 거리순으로 근처 시설을 표시합니다. 진료 후 필요시 전문의에게 의뢰됩니다."
+            
+            elif search_precision == "MEDIUM" and len(general_fallback_df) > 0:
+                if LANGUAGE == "English":
+                    response_text += f"\n\n💡 I included some general clinics nearby since there were limited {state.specialty} options in your area."
+                else:
+                    response_text += f"\n\n💡 해당 지역에 {state.specialty} 시설이 제한적이어서 일반 병원도 포함했습니다."
+            
+            elif len(relaxed_filters) > 0 and n_results >= 3:
+                if LANGUAGE == "English":
+                    if any("expanded" in f for f in relaxed_filters):
+                        response_text += "\n\n💡 I expanded the search area to find more options."
+                    else:
+                        response_text += "\n\n💡 To show you 3+ options, I " + " and ".join(relaxed_filters) + "."
+                else:
+                    response_text += "\n\n💡 더 많은 옵션을 위해 검색 범위를 조정했습니다."
             
             elif n_results < 3:
                 if LANGUAGE == "English":
-                    response_text += f"\n\n⚠️ Limited availability: Only {n_results} facilities found. Consider expanding your search area."
+                    response_text += f"\n\n⚠️ Limited availability: Only {n_results} facilities found. Consider expanding your search area or criteria."
                 else:
                     response_text += f"\n\n⚠️ 제한된 옵션: {n_results}개만 찾았습니다. 검색 범위를 확대해 보세요."
             
@@ -1484,36 +1587,36 @@ def execute_search(
             
             boost_value = result.get('relevance_boost')
             boost_info = f" boost={boost_value:.1f}" if boost_value is not None else ""
-            privacy_safe_log(consent, f"   #{idx}: {result['name']} ({result['category']}) dist={distance_value:.1f}km{boost_info}")
+            privacy_safe_log(consent, f"   #{idx}: {result['name']} ({result['category']}) {distance_value:.1f}km{boost_info}")
     
     else:
         logger.warning("⚠️ No facilities found")
         
-        if state.specialty:
+        if state.specialty and search_precision == "HIGH":
             if LANGUAGE == "English":
                 response_text = (
                     f"I couldn't find any {state.specialty} facilities in your search area.\n\n"
-                    f"Try expanding your search radius or choosing a different area."
+                    f"Try:\n• Expanding your search radius\n• Searching 'any doctor' to see general facilities"
                 )
             else:
-                response_text = f"검색 지역에서 {state.specialty} 시설을 찾을 수 없습니다.\n\n검색 범위를 확대해 보세요."
+                response_text = f"검색 지역에서 {state.specialty} 시설을 찾을 수 없습니다.\n\n검색 범위를 확대하거나 '아무 의사'로 검색해 보세요."
         else:
             if LANGUAGE == "English":
-                response_text = "I couldn't find any facilities matching your criteria.\n\nTry adjusting your search."
+                response_text = "I couldn't find any facilities matching your criteria.\n\nTry adjusting your location or search area."
             else:
-                response_text = "조건에 맞는 시설을 찾을 수 없습니다.\n\n검색 조건을 조정해 보세요."
+                response_text = "조건에 맞는 시설을 찾을 수 없습니다.\n\n위치나 검색 범위를 조정해 보세요."
     
     # ===== UPDATE STATE METADATA =====
     
     state.last_results_count = len(results)
     
     privacy_safe_log(consent, "=" * 60)
-    privacy_safe_log(consent, f"✅ HYBRID SEARCH COMPLETED")
+    privacy_safe_log(consent, f"✅ ADAPTIVE SEARCH COMPLETED (Precision: {search_precision})")
     privacy_safe_log(consent, f"   Path A results: {len(path_a_results_df)}")
     privacy_safe_log(consent, f"   Path B results: {len(path_b_results_df)}")
     privacy_safe_log(consent, f"   Final returned: {len(results)}")
     if state.query_intent:
-        privacy_safe_log(consent, f"   Query intent: {state.query_intent} (α={state.hybrid_alpha:.2f})")
+        privacy_safe_log(consent, f"   Query intent: {state.query_intent} (α={state.hybrid_alpha:.2f})" if state.hybrid_alpha else f"   Query intent: {state.query_intent}")
     if relaxed_filters:
         privacy_safe_log(consent, f"   Adjustments: {', '.join(relaxed_filters)}")
     if len(results) < 3:
@@ -1522,7 +1625,6 @@ def execute_search(
 
     response_text = clean_llm_response(response_text)
     return response_text, results
-
 
 # ==========================================
 # API ENDPOINTS
@@ -1849,6 +1951,7 @@ async def chat_endpoint(
         }
     
     # CONFIRMATION
+    # CONFIRMATION
     elif intent == "CONFIRMATION":
         privacy_safe_log(consent, "✅ BRANCH: CONFIRMATION")
         
@@ -1856,20 +1959,64 @@ async def chat_endpoint(
         new_state.turn_count = current_turn
         new_state.language_pref = LANGUAGE
         
-        if new_state.specialty and new_state.specialty_confidence < 1.0:
-            old_confidence = new_state.specialty_confidence
-            # new_state.specialty_confidence = 0.8
-            # privacy_safe_log(consent, f"📈 Confidence boosted: {old_confidence:.2f} → 0.8")
-
-        new_state = ensure_city_wide_defaults(new_state, consent)
+        # ===== DETECT TRUE "ANY" KEYWORDS (NOT FACILITY TYPES) =====
         
-        # ⭐ FIX: Allow null specialty
-        can_proceed = (
-            (new_state.specialty and new_state.specialty_confidence >= 0.3) or
-            (not new_state.specialty and new_state.specialty_confidence >= 0.2)
-        )
+        # Pure vague/random keywords (no semantic content)
+        PURE_ANY_KEYWORDS = {
+            # English - true vagueness
+            "any", "anything", "whatever", "doesn't matter", "doesnt matter", 
+            "don't care", "dont care", "no preference", "surprise me", "random",
+            "just show me", "i don't mind", "i dont mind", "up to you",
+            
+            # Korean - true vagueness
+            "아무거나", "상관없어", "상관없음", "아무", "랜덤", "아무데나",
+            "다 좋아", "괜찮아", "뭐든지", "상관 없어요", "아무거나 좋아요"
+        }
         
-        if can_proceed:
+        # Facility type keywords (these are NOT random - they're specifications)
+        FACILITY_TYPE_KEYWORDS = {
+            "hospital", "hospitals", "clinic", "clinics", "doctor", "doctors",
+            "의원", "병원", "한의원", "의사", "치과", "약국"
+        }
+        
+        message_lower = req.message.lower().strip()
+        message_words = set(message_lower.split())
+        
+        # Check if this is a pure "any" request
+        is_pure_any = any(kw == message_lower for kw in PURE_ANY_KEYWORDS)  # Exact match
+        is_any_phrase = any(phrase in message_lower for phrase in [
+            "any doctor", "any clinic", "any hospital", "any facility",
+            "any type", "any kind", "아무 의사", "아무 병원"
+        ])
+        
+        # Check if user is specifying a facility type (NOT random)
+        is_facility_type_request = any(kw in message_words for kw in FACILITY_TYPE_KEYWORDS)
+        
+        # Determine if this is truly a random request
+        is_any_request = (is_pure_any or is_any_phrase) and not is_facility_type_request
+        
+        # ===== HANDLE TRUE "ANY" REQUEST → RANDOM/GENERAL SEARCH =====
+        
+        if is_any_request:
+            privacy_safe_log(consent, "🎲 TRUE 'ANY' detected → Random/General search mode")
+            
+            # Clear specialty info for true random search
+            new_state.specialty = None
+            new_state.specialty_confidence = 0.2  # Low confidence triggers distance-first ranking
+            new_state.is_general_search = True  # Explicit flag for general search
+            
+            # Clear keywords if this is a pure "any" request (not refinement)
+            if is_pure_any or len(message_lower.split()) <= 3:
+                new_state.keywords = []
+                new_state.hard_keywords = []
+                privacy_safe_log(consent, "   Cleared keywords (pure random search)")
+            
+            privacy_safe_log(consent, "   Mode: Distance-first, all facility types")
+            
+            # Ensure location is set (default to city-wide if missing)
+            new_state = ensure_city_wide_defaults(new_state, consent)
+            
+            # ALWAYS proceed with random search
             new_state.ready_to_search = True
             new_state.conversation_phase = "searching"
             
@@ -1886,20 +2033,153 @@ async def chat_endpoint(
                 "state": new_state.model_dump(),
                 "results": results
             }
-        else:
-            new_state.conversation_phase = "gathering"
-            if LANGUAGE == "English":
-                response_text = "What type of medical facility are you looking for? (or 'any' for all types)"
+        
+        # ===== HANDLE FACILITY TYPE REQUEST (병원/의원/한의원) =====
+        
+        elif is_facility_type_request and not new_state.specialty:
+            privacy_safe_log(consent, "🏥 Facility type request detected")
+            
+            # Map common facility type requests to categories
+            if any(kw in message_lower for kw in ["hospital", "병원"]):
+                # User wants actual hospitals (not clinics)
+                new_state.specialty = "병원"
+                new_state.specialty_confidence = 0.7
+                privacy_safe_log(consent, "   Mapped to: 병원 (hospitals)")
+            
+            elif any(kw in message_lower for kw in ["clinic", "의원"]):
+                # User wants clinics
+                new_state.specialty = "의원"
+                new_state.specialty_confidence = 0.7
+                privacy_safe_log(consent, "   Mapped to: 의원 (clinics)")
+            
+            elif any(kw in message_lower for kw in ["한의원", "oriental medicine", "korean medicine"]):
+                # User wants traditional Korean medicine
+                new_state.specialty = "한의원"
+                new_state.specialty_confidence = 0.9
+                privacy_safe_log(consent, "   Mapped to: 한의원")
+            
             else:
-                response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (또는 '상관없음')"
-            new_state.specialty = "null"
-            new_state.specialty_confidence = 0.2
-
+                # Generic "doctor" - treat as general search
+                new_state.specialty = "병원,의원"
+                new_state.specialty_confidence = 0.5
+                privacy_safe_log(consent, "   Mapped to: 병원,의원 (general medical facilities)")
+            
+            # Ensure location defaults
+            new_state = ensure_city_wide_defaults(new_state, consent)
+            
+            # Proceed with search
+            new_state.ready_to_search = True
+            new_state.conversation_phase = "searching"
+            
+            response_text, results = execute_search(
+                new_state, 
+                req.message, 
+                max_distance=new_state.max_distance_km, 
+                consent=consent
+            )
+            new_state.search_executed = True
+            
             return {
                 "response": response_text,
                 "state": new_state.model_dump(),
-                "results": []
+                "results": results
             }
+        
+        # ===== HANDLE NORMAL CONFIRMATION (WITH SPECIALTY) =====
+        
+        else:
+            # Boost existing specialty confidence (user confirmed their intent)
+            if new_state.specialty and new_state.specialty_confidence < 1.0:
+                old_confidence = new_state.specialty_confidence
+                
+                # Boost confidence based on current level
+                if new_state.specialty_confidence < 0.5:
+                    # Low confidence → moderate boost (to medium precision)
+                    new_state.specialty_confidence = min(0.6, new_state.specialty_confidence + 0.3)
+                else:
+                    # Medium confidence → small boost (to high precision)
+                    new_state.specialty_confidence = min(0.9, new_state.specialty_confidence + 0.2)
+                
+                privacy_safe_log(consent, f"📈 Confidence boosted: {old_confidence:.2f} → {new_state.specialty_confidence:.2f}")
+            
+            # Ensure location defaults
+            new_state = ensure_city_wide_defaults(new_state, consent)
+            
+            # ===== DETERMINE IF WE CAN PROCEED =====
+            
+            # Check if we have enough information to search
+            has_location = bool(new_state.location or new_state.latitude or new_state.district)
+            has_specialty = bool(new_state.specialty)
+            has_keywords = bool(new_state.keywords or new_state.hard_keywords)
+            
+            # We can proceed if we have ANY of: location, specialty, or keywords
+            can_proceed = has_location or has_specialty or has_keywords
+            
+            if can_proceed:
+                new_state.ready_to_search = True
+                new_state.conversation_phase = "searching"
+                
+                # Log search type
+                if has_specialty:
+                    precision = "HIGH" if new_state.specialty_confidence >= 0.7 else "MEDIUM" if new_state.specialty_confidence >= 0.3 else "LOW"
+                    privacy_safe_log(consent, f"✓ Proceeding with {precision} precision specialty search")
+                elif has_keywords:
+                    privacy_safe_log(consent, f"✓ Proceeding with keyword-based search")
+                else:
+                    privacy_safe_log(consent, f"✓ Proceeding with general location-based search")
+                
+                response_text, results = execute_search(
+                    new_state, 
+                    req.message, 
+                    max_distance=new_state.max_distance_km, 
+                    consent=consent
+                )
+                new_state.search_executed = True
+                
+                return {
+                    "response": response_text,
+                    "state": new_state.model_dump(),
+                    "results": results
+                }
+            
+            # ===== NEED MORE INFORMATION =====
+            
+            else:
+                # We have NOTHING - need at least location OR specialty
+                new_state.conversation_phase = "gathering"
+                
+                privacy_safe_log(consent, "⚠️ Insufficient information - requesting clarification")
+                
+                if LANGUAGE == "English":
+                    response_text = (
+                        "I'd be happy to help! To find the right facility, I need:\n\n"
+                        "**Where?**\n"
+                        "• Share your location (button below)\n"
+                        "• Or tell me a district (e.g., 'Gangnam')\n"
+                        "• Or say 'citywide' for all Seoul\n\n"
+                        "**What type?**\n"
+                        "• Specialty (e.g., 'dermatologist', 'dentist', 'internal medicine')\n"
+                        "• Or facility type ('hospital' vs 'clinic')\n"
+                        "• Or say 'any doctor' to see nearby options"
+                    )
+                else:
+                    response_text = (
+                        "도와드리겠습니다! 다음 정보가 필요합니다:\n\n"
+                        "**어디?**\n"
+                        "• 위치 공유 (아래 버튼)\n"
+                        "• 또는 구 이름 (예: '강남')\n"
+                        "• 또는 '서울 전체'\n\n"
+                        "**어떤 종류?**\n"
+                        "• 전문 분야 (예: '피부과', '치과', '내과')\n"
+                        "• 또는 시설 유형 ('병원' 또는 '의원')\n"
+                        "• 또는 '아무 의사'라고 말씀하세요"
+                    )
+                
+                return {
+                    "response": response_text,
+                    "state": new_state.model_dump(),
+                    "results": []
+                }
 
     # NEW_SEARCH
     elif intent == "NEW_SEARCH":
@@ -2157,7 +2437,7 @@ async def chat_endpoint(
         
         is_refinement = any(word in req.message.lower() for word in 
                             ["also", "and", "additionally", "plus", "as well", 
-                             "그리고", "또한", "추가로", "와", "과"])
+                            "그리고", "또한", "추가로", "와", "과"])
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
@@ -2167,6 +2447,31 @@ async def chat_endpoint(
             extracted['specialty'] = enriched_state.specialty
             extracted['specialty_confidence'] = enriched_state.specialty_confidence
             privacy_safe_log(consent, f"✓ Preserved existing specialty: {enriched_state.specialty}")
+        
+        # ⭐ ADD FACILITY TYPE DETECTION HERE (before merging)
+        if not extracted.get('specialty') or (extracted.get('specialty_confidence', 0) < 0.3):
+            message_lower = req.message.lower().strip()
+            
+            # Check for facility type keywords
+            if any(kw in message_lower for kw in ["hospital", "병원"]) and "hospital" in message_lower.split():
+                extracted['specialty'] = "병원"
+                extracted['specialty_confidence'] = 0.7
+                privacy_safe_log(consent, "   Mapped 'hospital' → 병원")
+            
+            elif any(kw in message_lower for kw in ["clinic", "의원"]) and "clinic" in message_lower.split():
+                extracted['specialty'] = "의원"
+                extracted['specialty_confidence'] = 0.7
+                privacy_safe_log(consent, "   Mapped 'clinic' → 의원")
+            
+            elif any(kw in message_lower for kw in ["한의원", "oriental medicine", "korean medicine"]):
+                extracted['specialty'] = "한의원"
+                extracted['specialty_confidence'] = 0.9
+                privacy_safe_log(consent, "   Mapped to 한의원")
+            
+            elif "doctor" in message_lower or "의사" in message_lower:
+                extracted['specialty'] = "병원,의원"
+                extracted['specialty_confidence'] = 0.5
+                privacy_safe_log(consent, "   Mapped 'doctor' → 병원,의원 (general)")
         
         new_state = merge_extraction_into_state(new_state, extracted, replace_keywords=(not is_refinement))
         new_state = standardize_and_fill_state(new_state, consent)

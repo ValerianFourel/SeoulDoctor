@@ -630,11 +630,13 @@ class RAGPipeline:
         search_mode: str = 'distance',
         n_results: int = 200,
         use_hybrid: bool = True,
-        manual_mode: Optional[str] = None
+        manual_mode: Optional[str] = None,
+        is_general_search: bool = False,  # ⭐ NEW: Flag for general/random searches
+        specialty_confidence: float = 1.0  # ⭐ NEW: Specialty confidence score
     ) -> pd.DataFrame:
         """
         Apply combined ranking using both semantic similarity and distance.
-        Uses adaptive weighting based on search radius.
+        Uses adaptive weighting based on search radius and specialty confidence.
         
         Args:
             df: DataFrame to rank
@@ -644,11 +646,37 @@ class RAGPipeline:
             n_results: Number of RAG results to retrieve
             use_hybrid: If True, use hybrid search with query routing
             manual_mode: Optional manual override for search mode
+            is_general_search: If True, skip semantic ranking (distance-only)
+            specialty_confidence: Confidence in specialty (0.0-1.0), affects weighting
             
         Returns:
-            DataFrame sorted by combined score
+            DataFrame sorted by combined score (or distance for general searches)
         """
-        # First apply semantic ranking (with hybrid search)
+        
+        # ===== GENERAL SEARCH: Distance-only ranking =====
+        if is_general_search or specialty_confidence < 0.3:
+            logger.debug("🎲 General search mode → distance-only ranking (no semantic filtering)")
+            
+            if 'distance_km' in df.columns and df['distance_km'].max() > 0:
+                # Sort by distance (closest first)
+                df = df.sort_values('distance_km', ascending=True)
+                
+                # Add placeholder scores for consistency
+                df['relevance_rank'] = 9999
+                df['relevance_score'] = 0.0
+                df['distance_score'] = 1.0
+                df['combined_score'] = df['distance_score']
+                
+                logger.debug(f"✓ General search: {len(df)} facilities sorted by distance")
+            else:
+                # No distance data, keep original order
+                logger.warning("⚠️ No distance data available for general search")
+            
+            return df
+        
+        # ===== SPECIALTY SEARCH: Semantic + Distance ranking =====
+        
+        # Apply semantic ranking (with hybrid search)
         df = self.apply_semantic_ranking(
             df, 
             query_text, 
@@ -659,11 +687,15 @@ class RAGPipeline:
         
         # If zone-based search, just sort by relevance
         if search_mode == 'zone' or 'distance_km' not in df.columns:
+            logger.debug("🏘️ Zone search → relevance-only ranking")
             return df.sort_values('relevance_rank')
         
         # If no distance data, sort by relevance only
         if df['distance_km'].max() == 0:
+            logger.debug("⚠️ No distance data → relevance-only ranking")
             return df.sort_values('relevance_rank')
+        
+        # ===== COMBINED SCORING: Distance + Semantic Relevance =====
         
         # Calculate normalized scores
         max_rank = df['relevance_rank'].max()
@@ -681,8 +713,11 @@ class RAGPipeline:
         else:
             df['distance_score'] = 1.0
         
-        # Adaptive weighting based on radius
-        relevance_weight = self._calculate_relevance_weight(max_distance)
+        # ⭐ Adaptive weighting based on BOTH radius AND specialty confidence
+        relevance_weight = self._calculate_relevance_weight(
+            max_distance, 
+            specialty_confidence=specialty_confidence
+        )
         distance_weight = 1 - relevance_weight
         
         # Combined score
@@ -696,39 +731,78 @@ class RAGPipeline:
         
         logger.debug(
             f"✓ Combined ranking: {relevance_weight:.0%} relevance + "
-            f"{distance_weight:.0%} distance (radius={max_distance}km)"
+            f"{distance_weight:.0%} distance "
+            f"(radius={max_distance}km, spec_conf={specialty_confidence:.2f})"
         )
         
         return df
-    
+
+
     @staticmethod
-    def _calculate_relevance_weight(max_distance: float) -> float:
+    def _calculate_relevance_weight(
+        max_distance: float, 
+        specialty_confidence: float = 1.0  # ⭐ NEW parameter
+    ) -> float:
         """
-        Calculate adaptive relevance weight based on search radius.
+        Calculate adaptive relevance weight based on search radius AND specialty confidence.
         
-        Radius-Adaptive Weighting:
+        Radius-Adaptive Weighting (base):
         - Small radius (≤2km): 50% relevance + 50% distance
         - Medium radius (5km): 70% relevance + 30% distance
         - Large radius (10km): 85% relevance + 15% distance
         - Very large (20km+): 95% relevance + 5% distance
         
+        Confidence Adjustment:
+        - Low confidence (0.3-0.4): Reduce relevance weight by 40%
+        - Medium confidence (0.5-0.7): Reduce relevance weight by 20%
+        - High confidence (0.8-1.0): Use full relevance weight
+        
         Args:
             max_distance: Maximum search distance in km
+            specialty_confidence: Confidence in specialty match (0.0-1.0)
             
         Returns:
             Relevance weight (0.0 to 1.0)
         """
+        
+        # ===== STEP 1: Calculate base relevance weight from distance =====
         if max_distance <= 2:
-            return 0.50
+            base_relevance_weight = 0.50
         elif max_distance <= 5:
             # Linear interpolation between 2-5km
-            return 0.50 + (max_distance - 2) * (0.70 - 0.50) / (5 - 2)
+            base_relevance_weight = 0.50 + (max_distance - 2) * (0.70 - 0.50) / (5 - 2)
         elif max_distance <= 10:
             # Linear interpolation between 5-10km
-            return 0.70 + (max_distance - 5) * (0.85 - 0.70) / (10 - 5)
+            base_relevance_weight = 0.70 + (max_distance - 5) * (0.85 - 0.70) / (10 - 5)
         else:
             # Cap at 95% for very large radii
-            return min(0.95, 0.85 + (max_distance - 10) * 0.01)
+            base_relevance_weight = min(0.95, 0.85 + (max_distance - 10) * 0.01)
+        
+        # ===== STEP 2: Adjust based on specialty confidence =====
+        if specialty_confidence < 0.4:
+            # Very low confidence → heavily favor distance (reduce relevance by 40%)
+            confidence_multiplier = 0.60
+            logger.debug(f"   Low confidence adjustment: {confidence_multiplier:.0%} multiplier")
+        elif specialty_confidence < 0.7:
+            # Medium confidence → moderate favor distance (reduce relevance by 20%)
+            confidence_multiplier = 0.80
+            logger.debug(f"   Medium confidence adjustment: {confidence_multiplier:.0%} multiplier")
+        else:
+            # High confidence → trust semantic similarity (no reduction)
+            confidence_multiplier = 1.0
+        
+        # Apply confidence adjustment
+        adjusted_relevance_weight = base_relevance_weight * confidence_multiplier
+        
+        # Ensure minimum distance consideration (never go below 10% distance weight)
+        final_relevance_weight = min(0.90, adjusted_relevance_weight)
+        
+        logger.debug(
+            f"   Relevance weight: {final_relevance_weight:.2f} "
+            f"(base: {base_relevance_weight:.2f}, conf_mult: {confidence_multiplier:.2f})"
+        )
+        
+        return final_relevance_weight
     
     def build_context_for_llm(
         self, 

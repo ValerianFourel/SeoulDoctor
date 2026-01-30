@@ -44,6 +44,8 @@ class State(BaseModel):
     # ⭐ NEW: Negative keywords (things to AVOID)
     negative_keywords: List[str] = Field(default_factory=list)  # Soft negatives (avoid these qualities)
     negative_hard_keywords: List[str] = Field(default_factory=list)  # Hard negatives (must NOT have)
+    # ⭐ NEW: Track if this is a general/random search
+    is_general_search: bool = False
     
     # ===== HYBRID SEARCH PARAMETERS =====
     # Alpha coefficient for hybrid search (0.0 = pure keyword, 1.0 = pure semantic)

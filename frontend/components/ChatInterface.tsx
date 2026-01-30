@@ -192,7 +192,7 @@ export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
     { 
       role: "ai", 
-      content: "Hello, this is Val from SeoulDoc.io. Tell me what kind of doctor you need, and I'll find the best options for you given your preferences. You can also share your location using the location button or by typing it in.",
+      content: "Hello, this is Seoul Doc Matchmaker. Tell me what kind of doctor you need, and I'll find the best options for you given your preferences. You can also share your location using the location button or by typing it in.",
       timestamp: new Date().toISOString()
     }
   ]);

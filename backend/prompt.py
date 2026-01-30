@@ -550,6 +550,13 @@ You are a medical information extractor. Extract specialty, location, travel pre
 
 **User Message:** {user_message}
 
+**CRITICAL RULES:**
+1. If user says ONLY "clinic" → specialty="의원", NO keywords
+2. If user says ONLY "hospital" → specialty="병원", NO keywords  
+3. If user says ONLY "doctor" → specialty="병원,의원", NO keywords
+4. DO NOT infer specialties - if user says "clinic", DO NOT add "dental" unless explicitly mentioned
+5. Only extract keywords if user provides specific requirements (e.g., "clinic with parking")
+
 **CRITICAL NEGATION HANDLING:**
 - If message starts with "no", "not", "아니" - IGNORE the negation and extract what comes AFTER
 - "no i need X" → extract X (the "no" is correcting previous info)
@@ -1171,6 +1178,41 @@ Output: {{
   "negative_keywords": []
 }}
 Reason: "thoracic surgeon" maps to 흉부외과, "lung surgery" is procedure (hard), "experienced" is quality (soft)
+
+**Example 21: Default Case - Hospital/Clinic**
+Input: "Hospital"
+Output: {{
+  "specialty": "병원,의원",
+  "specialty_confidence": 0.7,
+  "location": "Seoul",
+  "latitude": null,
+  "longitude": null,
+  "travel_label": "Moderate",
+  "language_pref": "English Preferred",
+  "hard_keywords": [],
+  "soft_keywords": [],
+  "negative_hard_keywords": [],
+  "negative_keywords": []
+}}
+Reason: 병원,의원 mentioned (hospital/clinic)
+
+**Example 21: Default Case - Hospital/Clinic**
+Input: "Clinic"
+Output: {{
+  "specialty": "병원,의원",
+  "specialty_confidence": 0.7,
+  "location": "Seoul",
+  "latitude": null,
+  "longitude": null,
+  "travel_label": "Moderate",
+  "language_pref": "English Preferred",
+  "hard_keywords": [],
+  "soft_keywords": [],
+  "negative_hard_keywords": [],
+  "negative_keywords": []
+}}
+Reason: 병원,의원 mentioned (hospital/clinic)
+
 """
 
 
