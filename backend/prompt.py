@@ -9,11 +9,63 @@ CORE PHILOSOPHY:
 4. We serve what users WANT, not what we think they "should" want
 """
 
+SPECIALTY_MAPPING = """
+    '내과': 'Internal Medicine',
+    '치과': 'Dentist',
+    '산부인과': 'OB/GYN',
+    '정형외과': 'Orthopedics',
+    '피부과': 'Dermatology',
+    '안과': 'Ophthalmology',
+    '이비인후과': 'ENT',
+    '외과': 'Surgery',
+    '신경과': 'Neurology',
+    '신경외과': 'Neurosurgery',
+    '정신건강의학과': 'Psychiatry',
+    '가정의학과': 'Family Medicine',
+    '비뇨의학과': 'Urology',
+    '비뇨기과': 'Urology',
+    '소아청소년과': 'Pediatrics',
+    '마취통증의학과': 'Anesthesiology & Pain Medicine',
+    '재활의학과': 'Rehabilitation Medicine',
+    '영상의학과': 'Radiology',
+    '흉부외과': 'Thoracic Surgery',
+    '대장,항문과': 'Colorectal Surgery',
+
+    // --- Hospitals & facilities ---
+    '병원,의원': 'Clinic / Hospital',
+    '종합병원': 'General Hospital',
+    '국립병원': 'National Hospital',
+    '시립,도립병원': 'Public Hospital',
+    '요양병원': 'Long-Term Care Hospital',
+    '노인전문병원': 'Geriatric Hospital',
+    '여성전문병원': 'Women\'s Hospital',
+    '보훈병원': 'Veterans Hospital',
+    '병원부속시설': 'Hospital Facility',
+    '응급실': 'Emergency Room',
+
+    // --- Public health ---
+    '보건소': 'Public Health Center',
+    '보건지소': 'Community Health Subcenter',
+
+    // --- Traditional medicine ---
+    '한의원': 'Korean Medicine Clinic',
+    '한방병원': 'Korean Medicine Hospital',
+
+    // --- Health services (non-department) ---
+    '건강검진': 'Health Checkup',
+    '건강관리': 'Health Management',
+    '조산원': 'Birthing Center',
+    '모유수유': 'Breastfeeding Support',
+    '언어치료': 'Speech Therapy',
+    '치료,재활': 'Therapy & Rehabilitation',
+    '아동,청소년상담': 'Child & Adolescent Counseling',
+"""
 # ==========================================
 # QUERY ROUTER PROMPT (NEUTRAL)
 # ==========================================
 
 QUERY_ROUTER_PROMPT = """
+{SPECIALTY_MAPPING}
 You are a query classifier for hybrid search routing.
 
 **Query:** "{query}"
@@ -98,6 +150,7 @@ Query: "cold and impersonal doctor"
 # ==========================================
 
 ROUTER_PROMPT = """
+{SPECIALTY_MAPPING}
 You are a routing classifier for Seoul Med Match. Your ONLY job is to classify user intent.
 
 **Current State Summary:**
@@ -546,6 +599,8 @@ Response: {{"specialty": "keep", "location": "keep", "distance": "change", "keyw
 # EXTRACTION_PROMPT_V2 FULL PROMPT
 
 EXTRACTION_PROMPT_V2 = """
+{SPECIALTY_MAPPING}
+
 You are a medical information extractor. Extract specialty, location, travel preferences, AND keywords (hard + soft + NEGATIVE) from user input.
 
 **User Message:** {user_message}

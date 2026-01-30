@@ -133,7 +133,8 @@ from utils import (
 from prompt import (
     ROUTER_PROMPT, 
     EXTRACTION_PROMPT_V2, 
-    GENERATION_PROMPT
+    GENERATION_PROMPT,
+    SPECIALTY_MAPPING
     )
 from deterministic import (
     get_greeting_message, get_reset_confirmation, generate_change_acknowledgment,
@@ -422,6 +423,7 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
     travel_labels_list = ", ".join([f'"{label}" ({dist}km)' for label, dist in DISTANCE_MAPPING.items()])
     
     extraction_prompt = EXTRACTION_PROMPT_V2.format(
+        SPECIALTY_MAPPING=SPECIALTY_MAPPING,
         user_message=user_message,
         specialty_list=specialty_list,
         travel_labels_list=travel_labels_list
@@ -1890,6 +1892,7 @@ async def chat_endpoint(
     router_messages = [{
         "role": "system",
         "content": ROUTER_PROMPT.format(
+            SPECIALTY_MAPPING=SPECIALTY_MAPPING,
             specialty=enriched_state.specialty or "None",
             specialty_confidence=enriched_state.specialty_confidence,
             location=enriched_state.location or "None",

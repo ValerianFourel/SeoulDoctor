@@ -280,7 +280,7 @@ class RAGPipeline:
         Returns:
             Dictionary with 'intent', 'suggested_alpha', 'reasoning'
         """
-        from prompt import QUERY_ROUTER_PROMPT
+        from prompt import QUERY_ROUTER_PROMPT,SPECIALTY_MAPPING
         
         if not self.groq_client:
             logger.warning("⚠️ No Groq client, defaulting to MIXED search")
@@ -291,8 +291,8 @@ class RAGPipeline:
             }
         
         try:
-            router_prompt = QUERY_ROUTER_PROMPT.format(query=query_text)
-            
+            router_prompt = QUERY_ROUTER_PROMPT.format(SPECIALTY_MAPPING=SPECIALTY_MAPPING, query=query_text)
+
             completion = self.groq_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[{"role": "system", "content": router_prompt}],
