@@ -126,7 +126,7 @@ from models import ChatRequest, State
 from utils import (
     safe_convert_to_python, DISTANCE_MAPPING, clean_llm_response,
     standardize_and_fill_state,detect_search_mode,detect_language,
-    smart_cleanse_state,detect_field_changes,print_separator,
+    smart_cleanse_state,detect_field_changes,print_separator, normalize_seoul_to_null,
     has_vague_medical_term,user_wants_any_specialty, ensure_city_wide_defaults,
     validate_distance_criteria,download_and_cache_parquet, DEFAULT_MAX_DISTANCE
 )
@@ -595,23 +595,35 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any], replace
     
     # ===== LOCATION =====
     if extracted.get('location'):
-        state.location = extracted['location']
-        state.is_citywide_search = False  # ⭐ User specified location, not city-wide
+        # ⭐ Normalize "Seoul" to None before setting
+        normalized_location = normalize_seoul_to_null(extracted['location'])
+        
+        if normalized_location:
+            # Specific location (e.g., "Gangnam", "Hongdae")
+            state.location = normalized_location
+            state.is_citywide_search = False  # User specified a specific location
+            logger.info(f"📍 Location set: {normalized_location}")
+        else:
+            # User said "Seoul" (or variant) → treat as city-wide
+            state.location = None
+            state.is_citywide_search = True
+            logger.info("🌆 Generic 'Seoul' detected → city-wide search mode")
     
-    
-    if extracted.get('latitude') is not None:
+    # GPS coordinates (only set if location is specific)
+    if extracted.get('latitude') is not None and not state.is_citywide_search:
         state.latitude = extracted['latitude']
     
-    if extracted.get('longitude') is not None:
+    if extracted.get('longitude') is not None and not state.is_citywide_search:
         state.longitude = extracted['longitude']
     
-    if extracted.get('address_korean'):
+    # Other location fields (only if specific location)
+    if extracted.get('address_korean') and not state.is_citywide_search:
         state.address_korean = extracted['address_korean']
     
-    if extracted.get('district'):
+    if extracted.get('district') and not state.is_citywide_search:
         state.district = extracted['district']
     
-    if extracted.get('dong'):
+    if extracted.get('dong') and not state.is_citywide_search:
         state.dong = extracted['dong']
 
     # ===== TRAVEL LABEL & CONFIDENCE =====
@@ -1845,23 +1857,32 @@ async def chat_endpoint(
     message_normalized = message_lower.replace("-", "").replace(" ", "").replace("gu", "").replace("구", "")
     
     is_city_wide_response = any(kw in message_lower for kw in CITY_WIDE_KEYWORDS)
+    
+    # ⭐ Also detect if user just said "Seoul" (after normalization it becomes None)
+    is_just_seoul = normalize_seoul_to_null(req.message.strip()) is None and req.message.strip().lower() in [
+        "seoul", "서울", "서울시", "서울특별시", "seoul city"
+    ]
+    
     is_simple_district = (
         message_normalized in {d.replace("-", "").replace(" ", "").replace("gu", "").replace("구", "") for d in SEOUL_DISTRICTS} or
         message_lower in SEOUL_DISTRICTS
     )
     
-    # ===== HANDLE CITY-WIDE RESPONSE =====
-    if is_city_wide_response:
+    # ===== HANDLE CITY-WIDE RESPONSE (including "Seoul" alone) =====
+    if is_city_wide_response or is_just_seoul:
         privacy_safe_log(consent, "🌆 EARLY DETECTION: City-wide response")
+        
+        if is_just_seoul:
+            privacy_safe_log(consent, "   Trigger: User said generic 'Seoul' → treating as city-wide")
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
         new_state.language_pref = LANGUAGE
         
-        # ⭐ CRITICAL: Do NOT set GPS coordinates for city-wide
-        new_state.location = None  # ← Changed from "Seoul" to None
-        new_state.latitude = None  # ← No GPS!
-        new_state.longitude = None  # ← No GPS!
+        # ⭐ CRITICAL: Set ALL location fields to None for true city-wide
+        new_state.location = None  # ← Not "Seoul", but None
+        new_state.latitude = None
+        new_state.longitude = None
         new_state.district = None
         new_state.dong = None
         new_state.address_korean = None
@@ -1872,7 +1893,9 @@ async def chat_endpoint(
         new_state.search_mode = 'distance'
         new_state.is_citywide_search = True  # ⭐ Mark as city-wide
         
-        # ⭐ FIX: Allow null specialty if user wants "any"
+        privacy_safe_log(consent, "   ✓ City-wide: All location fields NULL")
+        
+        # Check if we can proceed with search
         can_proceed = (
             (new_state.specialty and new_state.specialty_confidence >= 0.5) or
             (not new_state.specialty and new_state.specialty_confidence >= 0.3)
@@ -1906,6 +1929,7 @@ async def chat_endpoint(
                 "state": new_state.model_dump(),
                 "results": []
             }
+
     
     # ===== HANDLE SIMPLE DISTRICT RESPONSE =====
     if is_simple_district:
@@ -2379,8 +2403,8 @@ async def chat_endpoint(
             new_state.turn_count = current_turn
             new_state.language_pref = LANGUAGE
             
-            # ⭐ CRITICAL: Do NOT set GPS coordinates
-            new_state.location = None
+            # ⭐ CRITICAL: Set ALL location fields to None
+            new_state.location = None  # ← Not "Seoul", but None
             new_state.latitude = None
             new_state.longitude = None
             new_state.district = None
@@ -2392,6 +2416,8 @@ async def chat_endpoint(
             new_state.travel_label = "Anywhere in Seoul"
             new_state.travel_confidence = 0.6
             new_state.is_citywide_search = True
+            
+            privacy_safe_log(consent, "   ✓ City-wide: All location fields NULL")
             
             # ⭐ FIX: Allow null specialty
             can_proceed = (

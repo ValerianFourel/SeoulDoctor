@@ -91,16 +91,92 @@ DISTANCE_MAPPING = {
 # ==========================================
 # UTILITIES
 # ==========================================
+
+# Add this function near the top of utils.py, after imports and before other functions
+
+def normalize_seoul_to_null(location: Optional[str]) -> Optional[str]:
+    """
+    Normalize generic "Seoul" references to None for true city-wide search.
+    
+    This ensures that when users say just "Seoul" without specifying a district,
+    we treat it the same as no location (city-wide search), preventing bias
+    toward any specific coordinates or districts.
+    
+    Args:
+        location: Location string to normalize
+        
+    Returns:
+        None if location is just "Seoul" (any variant), otherwise returns original location
+    
+    Examples:
+        >>> normalize_seoul_to_null("Seoul")
+        None
+        >>> normalize_seoul_to_null("서울")
+        None
+        >>> normalize_seoul_to_null("Gangnam")
+        "Gangnam"
+        >>> normalize_seoul_to_null(None)
+        None
+    """
+    if not location:
+        return None
+    
+    location_normalized = location.strip().lower()
+    
+    # List of generic Seoul references that should be treated as null
+    GENERIC_SEOUL_REFS = {
+        # English variants
+        "seoul", 
+        "seoul city", 
+        "seoul, korea", 
+        "seoul korea",
+        "seoul south korea", 
+        "seoul, south korea",
+        "seoul-si",
+        
+        # Korean variants
+        "서울", 
+        "서울시", 
+        "서울특별시",
+        
+        # Mixed/transliterated
+        "seoul-si",
+        "seoul si"
+    }
+    
+    if location_normalized in GENERIC_SEOUL_REFS:
+        logger.debug(f"🌆 Normalized '{location}' → None (generic Seoul reference)")
+        return None
+    
+    return location
+
+
+# REPLACEMENT for existing ensure_city_wide_defaults function
+
 def ensure_city_wide_defaults(state: State, consent: CookieConsent) -> State:
     """
-    If no location specified, default to city-wide Seoul search.
+    If no location specified (or just "Seoul"), default to city-wide Seoul search.
     ⭐ CRITICAL: Does NOT set GPS coordinates to avoid location bias.
+    
+    This function normalizes "Seoul"-only references to None and sets up proper
+    city-wide search parameters with no location bias.
     """
-    if not state.location and not state.latitude and not state.district:
-        privacy_safe_log(consent, "🌆 No location specified → defaulting to city-wide Seoul")
+    # ⭐ STEP 1: Normalize "Seoul" to None
+    state.location = normalize_seoul_to_null(state.location)
+    
+    # ⭐ STEP 2: Check if location is effectively empty
+    location_is_empty = (
+        not state.location and 
+        not state.latitude and 
+        not state.district
+    )
+    
+    # ⭐ STEP 3: Set city-wide defaults if no specific location
+    if location_is_empty:
+        privacy_safe_log(consent, "🌆 No specific location → defaulting to city-wide Seoul")
         
-        # ⚠️ Keep location as None for true city-wide (no display bias)
-        state.location = None  # ← Changed to None
+        # ⚠️ Keep everything NULL for true city-wide (no display bias)
+        state.location = None  # ← Explicitly None (not "Seoul")
         state.latitude = None
         state.longitude = None
         state.district = None
@@ -113,7 +189,43 @@ def ensure_city_wide_defaults(state: State, consent: CookieConsent) -> State:
         state.travel_confidence = 1.0
         state.is_citywide_search = True
         
-        privacy_safe_log(consent, "   ✓ City-wide mode: No location, no GPS, no district bias")
+        privacy_safe_log(consent, "   ✓ City-wide mode: All location fields NULL, no GPS, no district bias")
+    else:
+        # We have specific location data - preserve it
+        privacy_safe_log(consent, f"✓ Specific location preserved: {state.location or state.district or f'GPS ({state.latitude:.4f}, {state.longitude:.4f})'}")
+    
+    return state
+
+def ensure_city_wide_defaults(state: State, consent: CookieConsent) -> State:
+    """
+    If no location specified (or just "Seoul"), default to city-wide Seoul search.
+    ⭐ CRITICAL: Does NOT set GPS coordinates to avoid location bias.
+    """
+    # Check if location is effectively empty or just "Seoul"
+    location_is_generic_seoul = False
+    if state.location:
+        location_lower = state.location.strip().lower()
+        location_is_generic_seoul = location_lower in ["seoul", "서울", "서울시", "seoul city"]
+    
+    # Treat as city-wide if: no location, OR location is just "Seoul" without specifics
+    if (not state.location or location_is_generic_seoul) and not state.latitude and not state.district:
+        privacy_safe_log(consent, "🌆 No specific location → defaulting to city-wide Seoul")
+        
+        # ⚠️ Keep everything NULL for true city-wide (no display bias)
+        state.location = None  # ← Set to None even if it was "Seoul"
+        state.latitude = None
+        state.longitude = None
+        state.district = None
+        state.dong = None
+        state.address_korean = None
+        
+        state.max_distance_km = 25.0
+        state.search_mode = 'distance'
+        state.travel_label = "Anywhere in Seoul"
+        state.travel_confidence = 1.0
+        state.is_citywide_search = True
+        
+        privacy_safe_log(consent, "   ✓ City-wide mode: All location fields NULL, no GPS, no district bias")
     
     return state
 
@@ -356,6 +468,9 @@ def detect_search_mode(location_text: str, state: State) -> str:
 # STATE MANAGEMENT FUNCTIONS
 # ==========================================
 
+# REPLACEMENT for standardize_and_fill_state in utils.py
+# Add this at the beginning of the function (after the consent check)
+
 def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = None) -> State:
     """
     Standardize and fill missing location fields in state using geocoding APIs.
@@ -368,49 +483,49 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
         consent = CookieConsent()
     
     # ===================================================================
+    # ⭐ NORMALIZE "Seoul" to None FIRST (before any other processing)
+    # ===================================================================
+    enriched_state.location = normalize_seoul_to_null(enriched_state.location)
+    
+    # ===================================================================
     # ⭐ CITY-WIDE SEARCH DETECTION: Skip enrichment if no specific location
     # ===================================================================
     
     # Case 1: Explicitly marked as city-wide
     if state.is_citywide_search:
         privacy_safe_log(consent, "=" * 60)
-        privacy_safe_log(consent, "🌆 CITY-WIDE SEARCH MODE")
+        privacy_safe_log(consent, "🌆 CITY-WIDE SEARCH MODE (explicitly marked)")
         privacy_safe_log(consent, "   Skipping geocoding enrichment (no location bias)")
         privacy_safe_log(consent, "=" * 60 + "\n")
+        
+        # Ensure location is None (not "Seoul")
+        enriched_state.location = None
         return enriched_state
     
     # Case 2: No location data at all → city-wide
-    if not state.location and not state.latitude and not state.district:
+    if not enriched_state.location and not enriched_state.latitude and not enriched_state.district:
         privacy_safe_log(consent, "=" * 60)
         privacy_safe_log(consent, "🌆 NO LOCATION DATA → City-wide search")
         privacy_safe_log(consent, "   Skipping geocoding (no bias)")
         privacy_safe_log(consent, "=" * 60 + "\n")
         
         enriched_state.is_citywide_search = True
+        enriched_state.location = None
+        enriched_state.latitude = None
+        enriched_state.longitude = None
+        enriched_state.district = None
+        enriched_state.dong = None
+        enriched_state.address_korean = None
+        enriched_state.max_distance_km = 25.0
+        enriched_state.travel_label = "Anywhere in Seoul"
+        enriched_state.search_mode = 'distance'
+        
         return enriched_state
-    
-    # Case 3: Location is just "Seoul" or "서울" without specifics
-    if state.location and state.location.strip().lower() in ["seoul", "서울", "서울시", "seoul city"]:
-        if not state.district and not state.latitude:
-            privacy_safe_log(consent, "=" * 60)
-            privacy_safe_log(consent, "🌆 DETECTED: Generic 'Seoul' without specifics")
-            privacy_safe_log(consent, "   Converting to city-wide search (no geocoding)")
-            privacy_safe_log(consent, "=" * 60 + "\n")
-            
-            enriched_state.is_citywide_search = True
-            enriched_state.location = None  # ← Clear to prevent bias
-            enriched_state.latitude = None
-            enriched_state.longitude = None
-            enriched_state.district = None
-            enriched_state.max_distance_km = 25.0
-            enriched_state.travel_label = "Anywhere in Seoul"
-            enriched_state.search_mode = 'distance'
-            
-            return enriched_state
     
     # ===================================================================
     # NORMAL ENRICHMENT FLOW (specific location provided)
     # ===================================================================
+    # (Rest of the existing function continues here unchanged)
     
     privacy_safe_log(consent, "=" * 60)
     privacy_safe_log(consent, "🔧 STATE ENRICHMENT STARTED")
@@ -419,10 +534,10 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
     filled_fields = []
     
     # -------------------------------------------------------------------
-    # CASE 1: Have location text, need GPS data
+    # ENRICHMENT CASE 1: Have location text, need GPS data
     # -------------------------------------------------------------------
     if state.location and not (state.latitude and state.longitude):
-        privacy_safe_log(consent, f"📍 Case 1: Have location text '{state.location}', need GPS data")
+        privacy_safe_log(consent, f"📍 Enrichment Case 1: Have location text '{state.location}', need GPS data")
         
         verified = verify_and_standardize_address(state.location)
         
@@ -459,15 +574,20 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
             logger.warning(f"⚠️ Could not geocode '{state.location}' - treating as city-wide")
             # Geocoding failed → treat as city-wide to avoid errors
             enriched_state.is_citywide_search = True
-            enriched_state.location = "Seoul"
+            enriched_state.location = None
+            enriched_state.latitude = None
+            enriched_state.longitude = None
+            enriched_state.district = None
+            enriched_state.dong = None
+            enriched_state.address_korean = None
             enriched_state.max_distance_km = 25.0
             enriched_state.search_mode = 'distance'
     
     # -------------------------------------------------------------------
-    # CASE 2: Have GPS, need address data
+    # ENRICHMENT CASE 2: Have GPS, need address data
     # -------------------------------------------------------------------
     elif state.latitude and state.longitude and not (state.address_korean and state.district):
-        privacy_safe_log(consent, f"📍 Case 2: Have GPS ({state.latitude:.4f}, {state.longitude:.4f}), need address data")
+        privacy_safe_log(consent, f"📍 Enrichment Case 2: Have GPS ({state.latitude:.4f}, {state.longitude:.4f}), need address data")
         
         reverse_result = None
         if GOOGLE_MAPS_API_KEY:
@@ -505,10 +625,10 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
             logger.warning("⚠️ Could not reverse geocode GPS coordinates")
     
     # -------------------------------------------------------------------
-    # CASE 3: Have district, need GPS
+    # ENRICHMENT CASE 3: Have district, need GPS
     # -------------------------------------------------------------------
     elif state.district and not (state.latitude and state.longitude):
-        privacy_safe_log(consent, f"📍 Case 3: Have district '{state.district}', need GPS")
+        privacy_safe_log(consent, f"📍 Enrichment Case 3: Have district '{state.district}', need GPS")
         
         location_query = f"서울 {state.district}"
         if state.dong:
