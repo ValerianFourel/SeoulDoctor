@@ -127,7 +127,7 @@ from utils import (
     safe_convert_to_python, DISTANCE_MAPPING, clean_llm_response,
     standardize_and_fill_state,detect_search_mode,detect_language,
     smart_cleanse_state,detect_field_changes,print_separator,
-    has_vague_medical_term,user_wants_any_specialty, 
+    has_vague_medical_term,user_wants_any_specialty, ensure_city_wide_defaults,
     validate_distance_criteria,download_and_cache_parquet, DEFAULT_MAX_DISTANCE
 )
 from prompt import (
@@ -205,22 +205,6 @@ available_specialties = []  # Unique specialties from parquet data
 # HELPER FUNCTIONS
 # ==========================================
 
-def ensure_city_wide_defaults(state: State, consent: CookieConsent) -> State:
-    """
-    If no location specified, default to city-wide Seoul search.
-    Prevents falling back to 중구 or other arbitrary defaults.
-    """
-    if not state.location and not state.latitude and not state.district:
-        privacy_safe_log(consent, "🌆 No location specified → defaulting to city-wide Seoul")
-        state.location = "Seoul"
-        state.latitude = 37.5665  # Seoul City Hall
-        state.longitude = 126.9780
-        state.max_distance_km = 25.0
-        state.search_mode = 'distance'
-        state.travel_label = "Anywhere in Seoul"
-        state.travel_confidence = 1.0  # High confidence for default
-    
-    return state
 
 
 def keyword_matches_word_boundary(keyword_lower: str, text: str) -> bool:
@@ -612,6 +596,8 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any], replace
     # ===== LOCATION =====
     if extracted.get('location'):
         state.location = extracted['location']
+        state.is_citywide_search = False  # ⭐ User specified location, not city-wide
+    
     
     if extracted.get('latitude') is not None:
         state.latitude = extracted['latitude']
@@ -939,6 +925,7 @@ def execute_search(
     - ⭐ Progressive expansion when results are sparse
     - ⭐ Word-boundary keyword matching
     - ⭐ Negative keyword support
+    - ⭐ City-wide search support (no location bias, no distance calculation)
     """
     global LANGUAGE, rag_pipeline
     
@@ -953,6 +940,7 @@ def execute_search(
     specialty_conf = state.specialty_confidence
     has_specialty = bool(state.specialty)
     is_general_search = getattr(state, 'is_general_search', False)
+    is_citywide = getattr(state, 'is_citywide_search', False)
     
     # Classify search precision
     if is_general_search or not has_specialty or specialty_conf < 0.29:
@@ -970,7 +958,12 @@ def execute_search(
     privacy_safe_log(consent, f"Specialty: {state.specialty or 'ANY (no filter)'}")
     privacy_safe_log(consent, f"Specialty Confidence: {specialty_conf:.2f}")
     privacy_safe_log(consent, f"Search Mode: {(state.search_mode or 'auto').upper()}")
-    privacy_safe_log(consent, f"Max Distance: {max_distance}km")
+    
+    if is_citywide:
+        privacy_safe_log(consent, f"City-wide: YES (no distance filtering)")
+    else:
+        privacy_safe_log(consent, f"Max Distance: {max_distance}km")
+    
     privacy_safe_log(consent, f"Language: {LANGUAGE}")
     
     if search_precision == "LOW":
@@ -999,7 +992,21 @@ def execute_search(
     
     # ===== LOCATION FILTERING =====
     
-    if state.search_mode == 'zone' and state.district:
+    # ⭐ PRIORITY CHECK: City-wide search (NO distance calculation at all)
+    if is_citywide:
+        privacy_safe_log(consent, "🌆 CITY-WIDE SEARCH MODE")
+        privacy_safe_log(consent, "   No location specified by user → No distance calculation")
+        privacy_safe_log(consent, "   Searching all 25 districts equally")
+        
+        location_context = "across Seoul"
+        
+        # ⚠️ DO NOT add distance_km column for city-wide searches
+        # Results will be ranked purely by relevance, not distance
+        
+        privacy_safe_log(consent, f"✓ City-wide pool: {len(working_df)} facilities (all districts)")
+    
+    # Zone-based search (specific district)
+    elif state.search_mode == 'zone' and state.district:
         privacy_safe_log(consent, f"🏘️ Zone search: {state.district} {state.dong or ''}")
         working_df = filter_by_zone(working_df, state.district, state.dong)
         
@@ -1017,6 +1024,7 @@ def execute_search(
         else:
             working_df['distance_km'] = 0
     
+    # GPS-based search (specific coordinates)
     elif user_lat and user_lon:
         privacy_safe_log(consent, f"📍 GPS search: ({user_lat:.4f}, {user_lon:.4f})")
         
@@ -1050,20 +1058,37 @@ def execute_search(
             working_df = working_df.sort_values('distance_km')
         else:
             working_df['distance_km'] = 0
-            location_context = "in Seoul"
+            location_context = "null"
             logger.warning("⚠️ No GPS coordinates in dataset")
     
-    elif state.location:
+    # Text location (fuzzy match)
+    elif state.location and state.location.strip().lower() not in ["seoul", "서울", "서울시"]:
         privacy_safe_log(consent, f"📍 Text location: {state.location}")
         working_df = fuzzy_match_location(state.location, working_df)
         location_context = f"in {state.location}"
         working_df['distance_km'] = 0
         privacy_safe_log(consent, f"✓ Fuzzy location match: {len(working_df)} facilities")
     
+    # Fallback: No specific location (should have been caught by is_citywide, but safety check)
     else:
-        privacy_safe_log(consent, "📍 City-wide search (no location)")
+        privacy_safe_log(consent, "📍 No specific location (defaulting to city-wide)")
         location_context = "across Seoul"
-        working_df['distance_km'] = 0
+        
+        # ⚠️ DO NOT add distance_km column
+        
+        # Mark as city-wide if not already marked
+        if not is_citywide:
+            state.is_citywide_search = True
+            is_citywide = True
+            privacy_safe_log(consent, "   ⚠️ Auto-detecting as city-wide search")
+    
+    # ===== CHECK IF DISTANCE DATA EXISTS =====
+    has_distance_data = 'distance_km' in working_df.columns
+    
+    if has_distance_data:
+        privacy_safe_log(consent, f"✓ Distance data available for sorting/filtering")
+    else:
+        privacy_safe_log(consent, f"ℹ️ No distance data (city-wide search)")
     
     # ===== ADAPTIVE SPECIALTY FILTERING =====
     
@@ -1081,8 +1106,8 @@ def execute_search(
         
         privacy_safe_log(consent, f"   Specialty filter: {before_count} → {len(specialty_filtered_df)}")
         
-        # Expand search radius if too few results
-        if len(specialty_filtered_df) < 3 and user_lat and user_lon:
+        # ⭐ Expand search radius if too few results (only if we have GPS data)
+        if len(specialty_filtered_df) < 3 and user_lat and user_lon and has_distance_data:
             privacy_safe_log(consent, f"   ⚠️ Only {len(specialty_filtered_df)} results, expanding radius...")
             
             expanded_df = df_filtered[
@@ -1131,8 +1156,12 @@ def execute_search(
                 ~working_df['place_id'].isin(specialty_place_ids)
             ].copy()
             
-            if 'distance_km' in general_fallback_df.columns:
+            # Sort by distance only if we have distance data
+            if has_distance_data:
                 general_fallback_df = general_fallback_df.sort_values('distance_km').head(10)
+            else:
+                # City-wide: take first 10
+                general_fallback_df = general_fallback_df.head(10)
             
             privacy_safe_log(consent, f"   ✓ Added {len(general_fallback_df)} general facilities")
             
@@ -1143,12 +1172,15 @@ def execute_search(
             working_df = specialty_filtered_df
     
     else:
-        # LOW PRECISION: No specialty filter, distance-first
-        privacy_safe_log(consent, f"🎲 LOW PRECISION: All facility types (distance-first)")
+        # LOW PRECISION: No specialty filter
+        privacy_safe_log(consent, f"🎲 LOW PRECISION: All facility types")
         
-        # Keep all facilities, just sort by distance
-        if 'distance_km' in working_df.columns:
+        # Sort by distance only if we have distance data
+        if has_distance_data:
             working_df = working_df.sort_values('distance_km')
+            privacy_safe_log(consent, "   Sorted by distance")
+        else:
+            privacy_safe_log(consent, "   No distance sorting (city-wide search)")
     
     # ===== HARD KEYWORD FILTERING (PATH A) =====
     
@@ -1319,18 +1351,27 @@ def execute_search(
                 boost_amount = 200.0 * specialty_conf  # Scale by confidence
                 path_b_pool.loc[spec_mask, 'relevance_boost'] += boost_amount
             
-            # Distance decay
-            if 'distance_km' in path_b_pool.columns:
+            # Distance decay (only if distance data exists)
+            if has_distance_data:
                 max_dist = path_b_pool['distance_km'].max() or 1.0
                 if max_dist > 0:
                     distance_penalty = (path_b_pool['distance_km'] / max_dist) * 30
                     path_b_pool['relevance_boost'] -= distance_penalty
+                    privacy_safe_log(consent, "   Applied distance decay to scoring")
+            else:
+                privacy_safe_log(consent, "   Skipping distance decay (no distance data)")
             
-            # Sort by boost then distance
-            path_b_pool = path_b_pool.sort_values(
-                by=['relevance_boost', 'distance_km'], 
-                ascending=[False, True]
-            ).reset_index(drop=True)
+            # Sort by boost (and distance if available)
+            if has_distance_data:
+                path_b_pool = path_b_pool.sort_values(
+                    by=['relevance_boost', 'distance_km'], 
+                    ascending=[False, True]
+                ).reset_index(drop=True)
+            else:
+                path_b_pool = path_b_pool.sort_values(
+                    by='relevance_boost', 
+                    ascending=False
+                ).reset_index(drop=True)
             
             path_b_results_df = path_b_pool.copy()
             privacy_safe_log(consent, f"✓ Path B scored {len(path_b_results_df)} facilities")
@@ -1403,17 +1444,24 @@ def execute_search(
             except Exception as e:
                 logger.error(f"Hybrid ranking error: {e}", exc_info=True)
                 final_df['relevance_rank'] = 9999
-                if 'distance_km' in final_df.columns:
+                # Sort by distance only if we have it
+                if has_distance_data:
                     final_df = final_df.sort_values('distance_km')
         else:
             state.query_intent = None
             state.suggested_alpha = None
             state.hybrid_alpha = None
     else:
-        # LOW PRECISION: Skip semantic ranking, pure distance sort
-        privacy_safe_log(consent, "📍 LOW PRECISION → Skipping semantic ranking (distance-only)")
-        if 'distance_km' in final_df.columns:
+        # LOW PRECISION: Skip semantic ranking
+        privacy_safe_log(consent, "📍 LOW PRECISION → Skipping semantic ranking")
+        
+        # Sort by distance only if we have it
+        if has_distance_data:
             final_df = final_df.sort_values('distance_km')
+            privacy_safe_log(consent, "   Sorted by distance")
+        else:
+            privacy_safe_log(consent, "   Using natural order (no distance)")
+        
         state.query_intent = "GENERAL"
         state.hybrid_alpha = None
     
@@ -1432,7 +1480,8 @@ def execute_search(
     
     # ===== FINAL DISTANCE VALIDATION =====
     
-    if state.search_mode != 'zone' and 'distance_km' in final_df.columns:
+    # Only validate distance if we have distance data
+    if has_distance_data and state.search_mode != 'zone':
         pre_validation_df = final_df.copy()
         final_df = final_df[final_df['distance_km'] < max_distance]
         
@@ -1525,6 +1574,13 @@ def execute_search(
                 else:
                     response_text += f"\n\n⚠️ 제한된 옵션: {n_results}개만 찾았습니다. 검색 범위를 확대해 보세요."
             
+            # City-wide search disclaimer
+            elif is_citywide:
+                if LANGUAGE == "English":
+                    response_text += "\n\n🌆 City-wide search - facilities shown from across Seoul's 25 districts."
+                else:
+                    response_text += "\n\n🌆 서울 전역 검색 - 25개 구에서 검색된 결과입니다."
+            
         except Exception as e:
             logger.error(f"Response generation error: {e}", exc_info=True)
             if LANGUAGE == "English":
@@ -1578,9 +1634,14 @@ def execute_search(
             
             result['has_english'] = safe_convert_to_python(row.get('has_english', False))
             
-            distance_value = safe_convert_to_python(row.get('distance_km', 0))
-            result['distance_km'] = distance_value
-            result['distance'] = distance_value
+            # ⭐ CRITICAL: Only include distance if it exists in the data
+            if has_distance_data and 'distance_km' in row.index:
+                distance_value = safe_convert_to_python(row['distance_km'])
+                result['distance_km'] = distance_value
+                result['distance'] = distance_value
+            else:
+                # ⚠️ DO NOT include distance fields for city-wide searches
+                pass
             
             result['relevance_rank'] = safe_convert_to_python(row.get('relevance_rank', 9999))
             
@@ -1592,9 +1653,18 @@ def execute_search(
             
             results.append(result)
             
+            # Logging
             boost_value = result.get('relevance_boost')
             boost_info = f" boost={boost_value:.1f}" if boost_value is not None else ""
-            privacy_safe_log(consent, f"   #{idx}: {result['name']} ({result['category']}) {distance_value:.1f}km{boost_info}")
+            
+            if is_citywide or not has_distance_data:
+                # City-wide: show district instead of distance
+                district_info = result.get('district', 'Unknown')
+                privacy_safe_log(consent, f"   #{idx}: {result['name']} ({result['category']}) in {district_info}{boost_info}")
+            else:
+                # Location-specific: show distance
+                distance_value = result.get('distance_km', 0)
+                privacy_safe_log(consent, f"   #{idx}: {result['name']} ({result['category']}) {distance_value:.1f}km{boost_info}")
     
     else:
         logger.warning("⚠️ No facilities found")
@@ -1619,6 +1689,7 @@ def execute_search(
     
     privacy_safe_log(consent, "=" * 60)
     privacy_safe_log(consent, f"✅ ADAPTIVE SEARCH COMPLETED (Precision: {search_precision})")
+    privacy_safe_log(consent, f"   Mode: {'CITY-WIDE (no distance)' if is_citywide else 'LOCATION-SPECIFIC'}")
     privacy_safe_log(consent, f"   Path A results: {len(path_a_results_df)}")
     privacy_safe_log(consent, f"   Path B results: {len(path_b_results_df)}")
     privacy_safe_log(consent, f"   Final returned: {len(results)}")
@@ -1786,13 +1857,20 @@ async def chat_endpoint(
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
         new_state.language_pref = LANGUAGE
-        new_state.location = "Seoul"
-        new_state.latitude = 37.5665
-        new_state.longitude = 126.9780
+        
+        # ⭐ CRITICAL: Do NOT set GPS coordinates for city-wide
+        new_state.location = None  # ← Changed from "Seoul" to None
+        new_state.latitude = None  # ← No GPS!
+        new_state.longitude = None  # ← No GPS!
+        new_state.district = None
+        new_state.dong = None
+        new_state.address_korean = None
+        
         new_state.max_distance_km = 25.0
         new_state.travel_label = "Anywhere in Seoul"
-        new_state.travel_confidence = 0.6  # Text-based
+        new_state.travel_confidence = 0.6
         new_state.search_mode = 'distance'
+        new_state.is_citywide_search = True  # ⭐ Mark as city-wide
         
         # ⭐ FIX: Allow null specialty if user wants "any"
         can_proceed = (
@@ -2300,13 +2378,20 @@ async def chat_endpoint(
             new_state = enriched_state.model_copy()
             new_state.turn_count = current_turn
             new_state.language_pref = LANGUAGE
+            
+            # ⭐ CRITICAL: Do NOT set GPS coordinates
+            new_state.location = None
+            new_state.latitude = None
+            new_state.longitude = None
+            new_state.district = None
+            new_state.dong = None
+            new_state.address_korean = None
+            
             new_state.search_mode = 'distance'
             new_state.max_distance_km = 25.0
             new_state.travel_label = "Anywhere in Seoul"
-            new_state.travel_confidence = 0.6  # Text-based
-            new_state.location = "Seoul"
-            new_state.latitude = 37.5665
-            new_state.longitude = 126.9780
+            new_state.travel_confidence = 0.6
+            new_state.is_citywide_search = True
             
             # ⭐ FIX: Allow null specialty
             can_proceed = (

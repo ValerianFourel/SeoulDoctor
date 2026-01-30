@@ -611,6 +611,7 @@ You are a medical information extractor. Extract specialty, location, travel pre
 3. If user says ONLY "doctor" → specialty="병원,의원", NO keywords
 4. DO NOT infer specialties - if user says "clinic", DO NOT add "dental" unless explicitly mentioned
 5. Only extract keywords if user provides specific requirements (e.g., "clinic with parking")
+**DEFAULT LOCATION: Return null if no location is mentioned by the user. Do NOT assume any default location.**
 
 **CRITICAL NEGATION HANDLING:**
 - If message starts with "no", "not", "아니" - IGNORE the negation and extract what comes AFTER
@@ -879,7 +880,7 @@ Extract FOUR types of keywords from the user's query:
 {{
   "specialty": "matched specialty from list or null as default",
   "specialty_confidence": 0.0-1.0,
-  "location": "extracted location (preferably Korean name) or Seoul as default",
+  "location": "extracted location (preferably Korean name) or "null" as default",
   "latitude": null or float,
   "longitude": null or float,
   "travel_label": "one label from available list",
@@ -1239,7 +1240,7 @@ Input: "Hospital"
 Output: {{
   "specialty": "병원,의원",
   "specialty_confidence": 0.7,
-  "location": "Seoul",
+  "location": null,
   "latitude": null,
   "longitude": null,
   "travel_label": "Moderate",
@@ -1256,7 +1257,7 @@ Input: "Clinic"
 Output: {{
   "specialty": "병원,의원",
   "specialty_confidence": 0.7,
-  "location": "Seoul",
+  "location": null,
   "latitude": null,
   "longitude": null,
   "travel_label": "Moderate",
