@@ -6,7 +6,7 @@ import { Send, MapPin, Sparkles, Globe, Bug, ChevronDown, ChevronUp, X } from "l
 import Link from 'next/link';
 
 // ⭐ DEBUG MODE VISIBILITY CONTROL
-const ENABLE_DEBUG_MODE = true; // Set to true to show debug features
+const ENABLE_DEBUG_MODE = false; // Set to true to show debug features
 
 type State = {
   // ===== SPECIALTY INFORMATION =====
