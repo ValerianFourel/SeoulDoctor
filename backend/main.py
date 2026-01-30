@@ -1489,6 +1489,8 @@ def execute_search(
             response_text = gen_completion.choices[0].message.content
             response_text = re.sub(r'[\u0400-\u04FF]+', 'Seoul', response_text)
             response_text = re.sub(r'대한민국 서울특별시 중구 세종대로 110', 'Seoul', response_text)
+            response_text = re.sub(r'Seoul, 서울특별시 대한민국', '', response_text)
+
 
             # Add contextual disclaimers
             if search_precision == "LOW" and len(results) > 0:
