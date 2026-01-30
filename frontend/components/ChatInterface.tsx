@@ -5,6 +5,9 @@ import { useState, useRef, useEffect } from "react";
 import { Send, MapPin, Sparkles, Globe, Bug, ChevronDown, ChevronUp, X } from "lucide-react";
 import Link from 'next/link';
 
+// ⭐ DEBUG MODE VISIBILITY CONTROL
+const ENABLE_DEBUG_MODE = false; // Set to true to show debug features
+
 type State = {
   // ===== SPECIALTY INFORMATION =====
   specialty: string | null;
@@ -382,7 +385,7 @@ export default function ChatInterface() {
 
     // Debug: Log request
     const requestTime = Date.now();
-    if (debugMode) {
+    if (ENABLE_DEBUG_MODE && debugMode) {
       setDebugInfo(prev => ({
         ...prev,
         lastRequest: requestPayload,
@@ -402,7 +405,7 @@ export default function ChatInterface() {
       const responseTime = Date.now() - requestTime;
 
       // Debug: Log response
-      if (debugMode) {
+      if (ENABLE_DEBUG_MODE && debugMode) {
         setDebugInfo(prev => ({
           ...prev,
           lastResponse: data,
@@ -431,7 +434,7 @@ export default function ChatInterface() {
       console.error("API Error:", error);
       
       // Debug: Log error
-      if (debugMode) {
+      if (ENABLE_DEBUG_MODE && debugMode) {
         setDebugInfo(prev => ({
           ...prev,
           apiError: error instanceof Error ? error.message : 'Unknown error',
@@ -472,7 +475,7 @@ export default function ChatInterface() {
         const { latitude, longitude } = position.coords;
         
         // Debug: Log geolocation
-        if (debugMode) {
+        if (ENABLE_DEBUG_MODE && debugMode) {
           setDebugInfo(prev => ({
             ...prev,
             lastRequest: {
@@ -493,7 +496,7 @@ export default function ChatInterface() {
         setLoading(false);
         
         // Debug: Log geolocation error
-        if (debugMode) {
+        if (ENABLE_DEBUG_MODE && debugMode) {
           setDebugInfo(prev => ({
             ...prev,
             apiError: `Geolocation error: ${error.message}`
@@ -535,20 +538,22 @@ export default function ChatInterface() {
     <div className="relative h-full w-full bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 flex flex-col">
       
       {/* --- DEBUG TOGGLE BUTTON (Floating) --- */}
-      <button
-        onClick={() => setDebugMode(!debugMode)}
-        className={`fixed top-20 right-4 z-50 p-3 rounded-full shadow-lg transition-all ${
-          debugMode 
-            ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white' 
-            : 'bg-white text-slate-600 hover:bg-slate-50'
-        } border-2 ${debugMode ? 'border-purple-300' : 'border-slate-200'}`}
-        title={debugMode ? "Debug Mode: ON" : "Debug Mode: OFF"}
-      >
-        <Bug size={20} />
-      </button>
+      {ENABLE_DEBUG_MODE && (
+        <button
+          onClick={() => setDebugMode(!debugMode)}
+          className={`fixed top-20 right-4 z-50 p-3 rounded-full shadow-lg transition-all ${
+            debugMode 
+              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white' 
+              : 'bg-white text-slate-600 hover:bg-slate-50'
+          } border-2 ${debugMode ? 'border-purple-300' : 'border-slate-200'}`}
+          title={debugMode ? "Debug Mode: ON" : "Debug Mode: OFF"}
+        >
+          <Bug size={20} />
+        </button>
+      )}
 
       {/* --- DEBUG PANEL --- */}
-      {debugMode && (
+      {ENABLE_DEBUG_MODE && debugMode && (
         <div className="fixed top-32 right-4 z-40 w-96 max-h-[70vh] bg-slate-900 text-slate-100 rounded-lg shadow-2xl border-2 border-purple-500 overflow-hidden flex flex-col">
           {/* Debug Header */}
           <div className="flex items-center justify-between p-3 bg-gradient-to-r from-purple-600 to-pink-600 border-b border-purple-400">
@@ -1053,7 +1058,7 @@ export default function ChatInterface() {
                         {msg.role === "ai" ? formatAIResponse(msg.content) : msg.content}
                       </p>
                       {/* Debug: Show timestamp */}
-                      {debugMode && msg.timestamp && (
+                      {ENABLE_DEBUG_MODE && debugMode && msg.timestamp && (
                         <div className="mt-2 pt-2 border-t border-slate-300 text-xs text-slate-500 font-mono">
                           {new Date(msg.timestamp).toLocaleTimeString()}
                         </div>
@@ -1097,7 +1102,7 @@ export default function ChatInterface() {
                                         {categoryEnglish}
                                       </span>
                                       {/* Debug: Show relevance rank */}
-                                      {debugMode && facility.relevance_rank !== undefined && (
+                                      {ENABLE_DEBUG_MODE && debugMode && facility.relevance_rank !== undefined && (
                                         <span className="inline-block px-2.5 py-1 bg-purple-50 text-purple-700 text-xs font-mono rounded-md">
                                           Rank: {facility.relevance_rank}
                                         </span>
@@ -1196,7 +1201,7 @@ export default function ChatInterface() {
                                 )}
                                 
                                 {/* Debug: Show place_id */}
-                                {debugMode && (
+                                {ENABLE_DEBUG_MODE && debugMode && (
                                   <div className="mt-2 pt-2 border-t border-slate-200">
                                     <p className="text-xs text-slate-500 font-mono">
                                       ID: {facility.place_id}
