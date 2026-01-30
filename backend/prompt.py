@@ -1196,7 +1196,7 @@ Output: {{
 }}
 Reason: 병원,의원 mentioned (hospital/clinic)
 
-**Example 21: Default Case - Hospital/Clinic**
+**Example 22: Default Case - Hospital/Clinic**
 Input: "Clinic"
 Output: {{
   "specialty": "병원,의원",
@@ -1213,6 +1213,22 @@ Output: {{
 }}
 Reason: 병원,의원 mentioned (hospital/clinic)
 
+**Example 23: Default Case - Hospital/Clinic**
+Input: "doctor"
+Output: {{
+  "specialty": "병원,의원",
+  "specialty_confidence": 0.7,
+  "location": "Seoul",
+  "latitude": null,
+  "longitude": null,
+  "travel_label": "Moderate",
+  "language_pref": "English Preferred",
+  "hard_keywords": [],
+  "soft_keywords": [],
+  "negative_hard_keywords": [],
+  "negative_keywords": []
+}}
+Reason: General Practitioner 병원,의원 mentioned (hospital/clinic)
 """
 
 
