@@ -945,7 +945,7 @@ def execute_search(
     # ===== DETERMINE SEARCH PRECISION LEVEL =====
     
     specialty_conf = state.specialty_confidence
-    has_specialty = bool(state.specialty and state.specialty != "병원,의원")
+    has_specialty = bool(state.specialty)
     is_general_search = getattr(state, 'is_general_search', False)
     
     # Classify search precision
@@ -2432,11 +2432,16 @@ async def chat_endpoint(
             }
 
     # PROVIDE_INFO
+    # PROVIDE_INFO
     elif intent == "PROVIDE_INFO":
         privacy_safe_log(consent, "📝 BRANCH: PROVIDE_INFO")
         
+        # ============================================
+        # STEP 1: EXTRACT ENTITIES FROM USER MESSAGE
+        # ============================================
         extracted = extract_entities(req.message, consent)
         
+        # Check if this is a refinement (adding criteria) vs replacement
         is_refinement = any(word in req.message.lower() for word in 
                             ["also", "and", "additionally", "plus", "as well", 
                             "그리고", "또한", "추가로", "와", "과"])
@@ -2445,51 +2450,210 @@ async def chat_endpoint(
         new_state.turn_count = current_turn
         new_state.language_pref = LANGUAGE
         
+        # ============================================
+        # STEP 2: VALIDATE & CLEAN EXTRACTED KEYWORDS
+        # ============================================
+        # Remove hallucinated keywords that don't appear in user message
+        if extracted.get('hard_keywords'):
+            validated_hard = []
+            for kw in extracted['hard_keywords']:
+                # Check if keyword actually appears in user message (case-insensitive)
+                if kw.lower() in req.message.lower():
+                    validated_hard.append(kw)
+                else:
+                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated hard keyword: '{kw}'")
+            extracted['hard_keywords'] = validated_hard
+        
+        if extracted.get('soft_keywords'):
+            validated_soft = []
+            for kw in extracted['soft_keywords']:
+                if kw.lower() in req.message.lower():
+                    validated_soft.append(kw)
+                else:
+                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated soft keyword: '{kw}'")
+            extracted['soft_keywords'] = validated_soft
+        
+        # ============================================
+        # STEP 3: OVERRIDE LLM FOR PURE FACILITY TYPE REQUESTS
+        # ============================================
+        message_lower = req.message.lower().strip()
+        message_words = set(message_lower.split())
+        
+        # Pure facility type keywords (should override LLM)
+        PURE_FACILITY_TYPES = {
+            "clinic": ("의원", 0.8),
+            "clinics": ("의원", 0.8),
+            "hospital": ("병원", 0.8),
+            "hospitals": ("병원", 0.8),
+            "doctor": ("병원,의원", 0.7),
+            "doctors": ("병원,의원", 0.7),
+            "의원": ("의원", 0.9),
+            "병원": ("병원", 0.9),
+            "의사": ("병원,의원", 0.8),
+            "한의원": ("한의원", 0.9)
+        }
+        
+        # Specialty modifiers that indicate this is NOT a pure facility request
+        SPECIALTY_MODIFIERS = [
+            # English
+            "dental", "derm", "cardio", "ortho", "pediatric", "eye", "heart", 
+            "skin", "bone", "child", "mental", "foot", "ear", "nose", "throat", 
+            "brain", "lung", "stomach", "kidney", "plastic", "cosmetic",
+            # Korean
+            "치과", "피부과", "내과", "정형외과", "소아과", "안과", "심장", 
+            "피부", "뼈", "소아", "정신", "발", "귀", "코", "목", "뇌", 
+            "폐", "위", "신장", "성형", "미용"
+        ]
+        
+        # Check if this is a pure facility type request
+        is_pure_facility_request = (
+            len(message_lower.split()) <= 2 and
+            not any(modifier in message_lower for modifier in SPECIALTY_MODIFIERS)
+        )
+        
+        if is_pure_facility_request:
+            for keyword, (specialty, confidence) in PURE_FACILITY_TYPES.items():
+                if keyword in message_words:
+                    extracted['specialty'] = specialty
+                    extracted['specialty_confidence'] = confidence
+                    extracted['hard_keywords'] = []  # Clear any hallucinated keywords
+                    extracted['soft_keywords'] = []
+                    privacy_safe_log(consent, f"   🎯 OVERRIDE: Pure '{keyword}' → {specialty} (conf={confidence})")
+                    break
+        
+        # ============================================
+        # STEP 3.5: POST-EXTRACTION VALIDATION FOR "DOCTOR"
+        # ============================================
+        # Catch cases where LLM hallucinated a specialty for simple "doctor" queries
+        if ("doctor" in message_words or "의사" in message_words):
+            word_count = len(message_words)
+            
+            # Check if this is a simple "doctor" request (not "eye doctor", "heart doctor", etc.)
+            is_simple_doctor_request = (
+                word_count <= 3 and  # Max 3 words (e.g., "find a doctor")
+                not any(modifier in message_lower for modifier in SPECIALTY_MODIFIERS)
+            )
+            
+            if is_simple_doctor_request:
+                # Check if LLM extracted a specific specialty incorrectly
+                current_specialty = extracted.get('specialty', '')
+                is_general_specialty = current_specialty in ["병원,의원", "병원", "의원", ""]
+                
+                if not is_general_specialty:
+                    # LLM hallucinated a specific specialty for "doctor" - override it
+                    old_specialty = current_specialty
+                    extracted['specialty'] = "병원,의원"
+                    extracted['specialty_confidence'] = 0.7
+                    extracted['hard_keywords'] = []
+                    extracted['soft_keywords'] = []
+                    privacy_safe_log(consent, 
+                        f"   ⚠️ VALIDATION: Simple 'doctor' request detected, "
+                        f"overriding '{old_specialty}' → 병원,의원")
+        
+        # ============================================
+        # STEP 4: PRESERVE EXISTING SPECIALTY IF NOT REPLACED
+        # ============================================
         if not extracted.get('specialty') and enriched_state.specialty:
             extracted['specialty'] = enriched_state.specialty
             extracted['specialty_confidence'] = enriched_state.specialty_confidence
             privacy_safe_log(consent, f"✓ Preserved existing specialty: {enriched_state.specialty}")
         
-        # ⭐ ADD FACILITY TYPE DETECTION HERE (before merging)
+        # ============================================
+        # STEP 5: ENHANCED FALLBACK DETECTION
+        # ============================================
+        # Only run if LLM didn't extract specialty or confidence is low
         if not extracted.get('specialty') or (extracted.get('specialty_confidence', 0) < 0.3):
-            message_lower = req.message.lower().strip()
             
-            # Check for facility type keywords
-            if any(kw in message_lower for kw in ["hospital", "병원"]) and "hospital" in message_lower.split():
+            # PRIORITY CHECK: "doctor" or "의사" (highest priority)
+            if ("doctor" in message_words or "의사" in message_words):
+                # Double-check this isn't a specialty-modified request
+                is_general_doctor = not any(modifier_phrase in message_lower for modifier_phrase in [
+                    "eye doctor", "heart doctor", "skin doctor", "pediatric doctor",
+                    "dental doctor", "foot doctor", "ear doctor", "brain doctor",
+                    "안과의사", "심장의사", "피부과의사", "소아과의사", "치과의사"
+                ])
+                
+                if is_general_doctor:
+                    extracted['specialty'] = "병원,의원"
+                    extracted['specialty_confidence'] = 0.7
+                    privacy_safe_log(consent, "   Mapped 'doctor/의사' → 병원,의원 (general)")
+            
+            # Check for "hospital"
+            elif "hospital" in message_words and "병원" not in message_lower:
                 extracted['specialty'] = "병원"
                 extracted['specialty_confidence'] = 0.7
                 privacy_safe_log(consent, "   Mapped 'hospital' → 병원")
             
-            elif any(kw in message_lower for kw in ["clinic", "의원"]) and "clinic" in message_lower.split():
+            # Check for "clinic"
+            elif "clinic" in message_words and "의원" not in message_lower:
                 extracted['specialty'] = "의원"
                 extracted['specialty_confidence'] = 0.7
                 privacy_safe_log(consent, "   Mapped 'clinic' → 의원")
             
+            # Check for traditional Korean medicine
             elif any(kw in message_lower for kw in ["한의원", "oriental medicine", "korean medicine"]):
                 extracted['specialty'] = "한의원"
                 extracted['specialty_confidence'] = 0.9
                 privacy_safe_log(consent, "   Mapped to 한의원")
             
-            elif "doctor" in message_lower or "의사" in message_lower:
-                extracted['specialty'] = "병원,의원"
-                extracted['specialty_confidence'] = 0.7
-                privacy_safe_log(consent, "   Mapped 'doctor' → 병원,의원 (general)")
+            # Check for Korean "병원"
+            elif "병원" in message_words:
+                extracted['specialty'] = "병원"
+                extracted['specialty_confidence'] = 0.8
+                privacy_safe_log(consent, "   Mapped '병원' → 병원")
+            
+            # Check for Korean "의원"
+            elif "의원" in message_words:
+                extracted['specialty'] = "의원"
+                extracted['specialty_confidence'] = 0.8
+                privacy_safe_log(consent, "   Mapped '의원' → 의원")
         
-        new_state = merge_extraction_into_state(new_state, extracted, replace_keywords=(not is_refinement))
+        # ============================================
+        # STEP 6: MERGE EXTRACTION INTO STATE
+        # ============================================
+        new_state = merge_extraction_into_state(
+            new_state, 
+            extracted, 
+            replace_keywords=(not is_refinement)
+        )
         new_state = standardize_and_fill_state(new_state, consent)
         new_state.language_pref = LANGUAGE
         
+        # Ensure location defaults (city-wide if nothing specified)
         new_state = ensure_city_wide_defaults(new_state, consent)
         
-        # ⭐ FIX: Allow null specialty
+        # ============================================
+        # STEP 7: DETERMINE IF WE CAN PROCEED TO SEARCH
+        # ============================================
+        # We can proceed if we have:
+        # - High confidence specialty (≥0.5), OR
+        # - Medium confidence specialty (≥0.3) with location/keywords, OR
+        # - No specialty but have location/keywords (general search)
+        
+        has_specialty = bool(new_state.specialty)
+        has_location = bool(new_state.location or new_state.latitude or new_state.district)
+        has_keywords = bool(new_state.keywords or new_state.hard_keywords)
+        
         can_proceed = (
-            (new_state.specialty and new_state.specialty_confidence >= 0.5) or
-            (not new_state.specialty and new_state.specialty_confidence >= 0.3)
+            # High confidence specialty alone
+            (has_specialty and new_state.specialty_confidence >= 0.5) or
+            # Medium confidence specialty with additional context
+            (has_specialty and new_state.specialty_confidence >= 0.3 and (has_location or has_keywords)) or
+            # No specialty but have location/keywords (general search)
+            (not has_specialty and (has_location or has_keywords))
         )
         
+        # ============================================
+        # STEP 8A: EXECUTE SEARCH IF READY
+        # ============================================
         if can_proceed:
             new_state.ready_to_search = True
             new_state.conversation_phase = "searching"
+            
+            privacy_safe_log(consent, "✅ Ready to search:")
+            privacy_safe_log(consent, f"   Specialty: {new_state.specialty or 'ANY'} (conf={new_state.specialty_confidence:.2f})")
+            privacy_safe_log(consent, f"   Location: {new_state.district or new_state.location or 'Seoul (city-wide)'}")
+            privacy_safe_log(consent, f"   Keywords: {new_state.keywords or new_state.hard_keywords or 'none'}")
             
             response_text, results = execute_search(
                 new_state, 
@@ -2504,7 +2668,17 @@ async def chat_endpoint(
                 "state": new_state.model_dump(),
                 "results": results
             }
-        elif new_state.specialty and new_state.specialty_confidence < 0.3:
+        
+        # ============================================
+        # STEP 8B: REQUEST SPECIALTY CLARIFICATION IF AMBIGUOUS
+        # ============================================
+        elif has_specialty and new_state.specialty_confidence < 0.3:
+            # We have a specialty but confidence is too low
+            new_state.conversation_phase = "gathering"
+            
+            privacy_safe_log(consent, 
+                f"⚠️ Low specialty confidence ({new_state.specialty_confidence:.2f}) - requesting clarification")
+            
             response_text = ask_for_specialty_clarification(new_state)
             response_text = format_response(response_text)
             
@@ -2513,19 +2687,77 @@ async def chat_endpoint(
                 "state": new_state.model_dump(),
                 "results": []
             }
+        
+        # ============================================
+        # STEP 8C: REQUEST MORE INFORMATION
+        # ============================================
         else:
+            # We don't have enough information to search
             new_state.conversation_phase = "gathering"
             
-            if LANGUAGE == "English":
-                response_text = "What type of medical facility are you looking for? (e.g., clinic, hospital, dentist, dermatologist, internal medicine, or 'any')"
+            privacy_safe_log(consent, "⚠️ Insufficient information for search")
+            privacy_safe_log(consent, f"   Has specialty: {has_specialty}")
+            privacy_safe_log(consent, f"   Has location: {has_location}")
+            privacy_safe_log(consent, f"   Has keywords: {has_keywords}")
+            
+            # Generate appropriate prompt based on what's missing
+            if not has_specialty and not has_keywords:
+                # Missing specialty/keywords
+                if LANGUAGE == "English":
+                    response_text = (
+                        "What type of medical facility are you looking for?\n\n"
+                        "Examples:\n"
+                        "• 'Clinic' or 'Hospital' (general)\n"
+                        "• 'Dentist' or 'Dermatologist' (specialty)\n"
+                        "• 'Any doctor' (show nearby options)\n"
+                        "• Specific needs like 'clinic with parking' or 'English-speaking doctor'"
+                    )
+                else:
+                    response_text = (
+                        "어떤 종류의 의료 시설을 찾고 계신가요?\n\n"
+                        "예시:\n"
+                        "• '의원' 또는 '병원' (일반)\n"
+                        "• '치과' 또는 '피부과' (전문)\n"
+                        "• '아무 의사' (근처 옵션 표시)\n"
+                        "• '주차 가능한 병원' 또는 '영어 가능한 의사' 같은 구체적 요구사항"
+                    )
+            
+            elif has_specialty and not has_location:
+                # Have specialty but no location
+                if LANGUAGE == "English":
+                    response_text = (
+                        f"Got it, you're looking for {new_state.specialty}. Where should I search?\n\n"
+                        "• Click the location button below\n"
+                        "• Type a district (e.g., 'Gangnam', 'Hongdae')\n"
+                        "• Say 'citywide' to search all of Seoul"
+                    )
+                else:
+                    response_text = (
+                        f"{new_state.specialty}를 찾고 계시는군요. 어디에서 검색할까요?\n\n"
+                        "• 아래 위치 버튼 클릭\n"
+                        "• 구 이름 입력 (예: '강남', '홍대')\n"
+                        "• '서울 전체'라고 말씀하세요"
+                    )
+            
             else:
-                response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (예: 의원, 병원, 치과, 피부과, 내과, 또는 '상관없음')"
-
+                # Generic fallback
+                if LANGUAGE == "English":
+                    response_text = (
+                        "What type of medical facility are you looking for?\n\n"
+                        "Examples: clinic, hospital, dentist, dermatologist, internal medicine, or 'any doctor'"
+                    )
+                else:
+                    response_text = (
+                        "어떤 종류의 의료 시설을 찾고 계신가요?\n\n"
+                        "예시: 의원, 병원, 치과, 피부과, 내과, 또는 '아무 의사'"
+                    )
+            
             return {
                 "response": response_text,
                 "state": new_state.model_dump(),
                 "results": []
             }
+
     
     # CHIT_CHAT
     elif intent == "CHIT_CHAT":
