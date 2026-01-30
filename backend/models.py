@@ -12,7 +12,7 @@ class State(BaseModel):
     
     # ===== LOCATION INFORMATION =====
     # User-provided location (text)
-    location: Optional[str] = None
+    location: Optional[str] = "Seoul"
     
     # GPS coordinates
     latitude: Optional[float] = None
@@ -46,6 +46,8 @@ class State(BaseModel):
     negative_hard_keywords: List[str] = Field(default_factory=list)  # Hard negatives (must NOT have)
     # ⭐ NEW: Track if this is a general/random search
     is_general_search: bool = False
+    # ⭐ NEW: Track if this is a city-wide search (no specific location)
+    is_citywide_search: bool = False
     
     # ===== HYBRID SEARCH PARAMETERS =====
     # Alpha coefficient for hybrid search (0.0 = pure keyword, 1.0 = pure semantic)

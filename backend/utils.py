@@ -91,23 +91,24 @@ DISTANCE_MAPPING = {
 # ==========================================
 # UTILITIES
 # ==========================================
-def ensure_city_wide_defaults(state: State, consent=None) -> State:
-    """Default to city-wide search if no location specified."""
-    has_location = bool(
-        state.location or 
-        (state.latitude and state.longitude) or 
-        state.district
-    )
-    
-    if not has_location:
+def ensure_city_wide_defaults(state: State, consent: CookieConsent) -> State:
+    """
+    If no location specified, default to city-wide Seoul search.
+    Prevents falling back to 중구 or other arbitrary defaults.
+    """
+    if not state.location and not state.latitude and not state.district:
+        privacy_safe_log(consent, "🌆 No location specified → defaulting to city-wide Seoul")
         state.location = "Seoul"
-        state.latitude = 37.5665
-        state.longitude = 126.9780
+        state.latitude = None  # ⭐ DON'T set specific GPS for city-wide
+        state.longitude = None
+        state.district = None  # ⭐ DON'T set specific district
+        state.dong = None
+        state.address_korean = None
         state.max_distance_km = 25.0
-        state.travel_label = "Anywhere in Seoul"
         state.search_mode = 'distance'
-        if consent:
-            privacy_safe_log(consent, "🌆 No location → city-wide search (25km)")
+        state.travel_label = "Anywhere in Seoul"
+        state.travel_confidence = 1.0
+        state.is_citywide_search = True  # ⭐ Mark as city-wide
     
     return state
 
