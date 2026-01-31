@@ -1406,7 +1406,7 @@ export default function ChatInterface() {
         /* Mobile-specific padding for input area */
         @media (max-width: 1024px) {
           .pb-safe {
-            padding-bottom: max(1.5rem, calc(1.5 * (3rem + 1.5rem) + env(safe-area-inset-bottom)));
+            padding-bottom: max(1.0rem, calc(1.0 * (3rem + 1.0rem) + env(safe-area-inset-bottom)));
           }
         }
       `}</style>
