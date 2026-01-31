@@ -81,15 +81,15 @@ type DebugInfo = {
   responseTime?: number;
 };
 
-// --- TRAVEL OPTIONS CONFIGURATION ---
+// --- ACCEPTABLE DISTANCE OPTIONS CONFIGURATION ---
 const TRAVEL_OPTIONS = [
-  { label: "Walking Distance", distance: "0.5km", emoji: "🚶", value: 0.5 },
-  { label: "Nearby", distance: "1km", emoji: "🏃", value: 1 },
-  { label: "Close", distance: "2km", emoji: "🚲", value: 2 },
-  { label: "Moderate", distance: "5km", emoji: "🚗", value: 5 },
-  { label: "Flexible", distance: "10km", emoji: "🚙", value: 10 },
-  { label: "Willing to Travel", distance: "15km", emoji: "🚕", value: 15 },
-  { label: "Anywhere in Seoul", distance: "25km", emoji: "🚇", value: 25 }
+  { label: "On Foot", distance: "0.5km", emoji: "🚶", value: 0.5 },
+  { label: "Bicycle", distance: "2km", emoji: "🚲", value: 2 },
+  { label: "Neighborhood Bus", distance: "5km", emoji: "🟢🚌", value: 5 },
+  { label: "Mainline Bus", distance: "10km", emoji: "🔵🚍", value: 10 },
+  { label: "Subway", distance: "15km", emoji: "🚇", value: 15 },
+  { label: "Car", distance: "20km", emoji: "🚗", value: 20 },
+  { label: "Train", distance: "25km", emoji: "🚆", value: 25 }
 ];
 
 // --- HELPER FUNCTION FOR FORMATTING AI RESPONSES ---
@@ -188,9 +188,9 @@ export default function ChatInterface() {
   const [debugExpanded, setDebugExpanded] = useState(false);
   const [debugInfo, setDebugInfo] = useState<DebugInfo>({});
 
-  // --- TRAVEL SLIDER STATE ---
+  // --- ACCEPTABLE DISTANCE SLIDER STATE ---
   const [showTravelSlider, setShowTravelSlider] = useState(false);
-  const [selectedTravelIndex, setSelectedTravelIndex] = useState(3); // Default to "Moderate" (index 3)
+  const [selectedTravelIndex, setSelectedTravelIndex] = useState(2); // Default to "Neighborhood Bus" (index 2)
 
   const [messages, setMessages] = useState<Message[]>([
     { 
@@ -280,7 +280,7 @@ export default function ChatInterface() {
     // Search parameters
     search_mode: null,
     max_distance_km: 5,
-    willingness_to_travel: "Moderate",
+    willingness_to_travel: "Neighborhood Bus",
     travel_confidence: 0.5,
     
     // Keywords
@@ -328,7 +328,7 @@ export default function ChatInterface() {
     }, 100);
   };
 
-  // ⭐ HANDLE TRAVEL SLIDER CHANGE - NO MESSAGE ADDED
+  // ⭐ HANDLE ACCEPTABLE DISTANCE SLIDER CHANGE - NO MESSAGE ADDED
   const handleTravelSliderChange = async (index: number) => {
     setSelectedTravelIndex(index);
     const option = TRAVEL_OPTIONS[index];
@@ -352,8 +352,8 @@ export default function ChatInterface() {
       // ❌ REMOVED: No AI confirmation message added
       
     } catch (error) {
-      console.error("Travel preference error:", error);
-      alert("Failed to update travel preference. Please try again.");
+      console.error("Acceptable distance preference error:", error);
+      alert("Failed to update acceptable distance preference. Please try again.");
     }
   };
 
@@ -535,7 +535,7 @@ export default function ChatInterface() {
   };
 
   return (
-    <div className="relative h-full w-full bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 flex flex-col">
+    <div className="relative h-full w-full bg-gradient-to-br from-blue-50 via-slate-50 to-white flex flex-col">
       
       {/* --- DEBUG TOGGLE BUTTON (Floating) --- */}
       {ENABLE_DEBUG_MODE && (
@@ -988,14 +988,14 @@ export default function ChatInterface() {
         }`}
         style={{ pointerEvents: disclaimerVisible ? 'auto' : 'none' }}
       >
-        <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border-b border-amber-200 shadow-sm backdrop-blur-sm">
-          <div className="max-w-5xl mx-auto px-4 py-2.5">
+        <div className="bg-gradient-to-r from-blue-50 to-blue-100 border-b border-blue-200 shadow-sm backdrop-blur-sm">
+          <div className="max-w-7xl mx-auto px-4 py-2.5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 flex-1 min-w-0">
                 <span className="text-lg flex-shrink-0">⚠️</span>
-                <p className="text-xs sm:text-sm text-amber-900 leading-tight">
+                <p className="text-xs sm:text-sm text-blue-900 leading-tight">
                   <strong>Info only</strong> - Not medical advice. 
-                  <Link href="/disclaimer" className="underline hover:text-amber-700 font-semibold ml-1">
+                  <Link href="/disclaimer" className="underline hover:text-blue-700 font-semibold ml-1">
                     Full disclaimer
                   </Link>
                   {' • '}
@@ -1004,7 +1004,7 @@ export default function ChatInterface() {
               </div>
               <button
                 onClick={() => setDisclaimerVisible(false)}
-                className="flex-shrink-0 text-amber-700 hover:text-amber-900 p-1 rounded-full hover:bg-amber-100 transition-colors"
+                className="flex-shrink-0 text-blue-700 hover:text-blue-900 p-1 rounded-full hover:bg-blue-100 transition-colors"
                 aria-label="Dismiss"
               >
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -1024,19 +1024,19 @@ export default function ChatInterface() {
           paddingTop: `${disclaimerHeight}px`
         }}
       >
-        <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
           <div className="space-y-4 sm:space-y-6">
             {messages.map((msg, idx) => (
               <div
                 key={idx}
                 className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} animate-fadeIn`}
               >
-                <div className={`flex gap-2 sm:gap-3 max-w-[95%] sm:max-w-[85%] ${msg.role === "user" ? 'flex-row-reverse' : 'flex-row'}`}>
+                <div className={`flex gap-2 sm:gap-3 max-w-[95%] sm:max-w-[90%] ${msg.role === "user" ? 'flex-row-reverse' : 'flex-row'}`}>
                   {/* Avatar */}
                   <div className={`flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shadow-md ${
                     msg.role === "user" 
-                      ? "bg-gradient-to-br from-slate-600 to-slate-800" 
-                      : "bg-gradient-to-br from-blue-500 to-purple-600"
+                      ? "bg-gradient-to-br from-blue-600 to-blue-800" 
+                      : "bg-gradient-to-br from-blue-500 to-blue-700"
                   }`}>
                     {msg.role === "user" ? (
                       <span className="text-white text-xs sm:text-sm font-bold">You</span>
@@ -1050,8 +1050,8 @@ export default function ChatInterface() {
                     <div
                       className={`px-4 py-3 sm:px-5 sm:py-3.5 rounded-2xl shadow-sm ${
                         msg.role === "user"
-                          ? "bg-gradient-to-r from-slate-700 to-slate-900 text-white"
-                          : "bg-white border border-slate-200 text-slate-800"
+                          ? "bg-gradient-to-r from-blue-600 to-blue-800 text-white"
+                          : "bg-white border border-blue-200 text-slate-800"
                       }`}
                     >
                       <p className="text-sm sm:text-base leading-relaxed whitespace-pre-wrap break-words">
@@ -1085,7 +1085,7 @@ export default function ChatInterface() {
                           return (
                             <div
                               key={facility.place_id}
-                              className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all overflow-hidden"
+                              className="bg-white rounded-xl border border-blue-200 shadow-sm hover:shadow-md transition-all overflow-hidden"
                             >
                               <div className="p-4 sm:p-5">
                                 <div className="flex justify-between items-start gap-3 mb-2">
@@ -1098,7 +1098,7 @@ export default function ChatInterface() {
                                       <span className="inline-block px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-md">
                                         {facility.category}
                                       </span>
-                                      <span className="inline-block px-2.5 py-1 bg-slate-50 text-slate-600 text-xs font-medium rounded-md">
+                                      <span className="inline-block px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-md">
                                         {categoryEnglish}
                                       </span>
                                       {/* Debug: Show relevance rank */}
@@ -1110,8 +1110,8 @@ export default function ChatInterface() {
                                     </div>
                                   </div>
                                   {facility.english_confidence_score >= 4 && (
-                                    <span className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap flex-shrink-0">
-                                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                                    <span className="flex items-center gap-1.5 bg-green-50 text-green-700 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap flex-shrink-0">
+                                      <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
                                       English OK
                                     </span>
                                   )}
@@ -1169,37 +1169,36 @@ export default function ChatInterface() {
                                 )}
 
                                 {facility.distance != null ? (
-                                              // Has distance: Show distance + map button
-                                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-100">
-                                                <div className="flex items-center gap-2 text-slate-500">
-                                                  <MapPin size={16} className="text-blue-500 flex-shrink-0" />
-                                                  <span className="text-sm sm:text-base font-medium">
-                                                    {facility.distance.toFixed(1)} km away
-                                                  </span>
-                                                </div>
-                                                <a 
-                                                  href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
-                                                  target="_blank"
-                                                  rel="noopener noreferrer"
-                                                  className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
-                                                >
-                                                  View on Map
-                                                </a>
-                                              </div>
-                                            ) : (
-                                              // No distance: Only show map button (city-wide search or distance N/A)
-                                              <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
-                                                <a 
-                                                  href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
-                                                  target="_blank"
-                                                  rel="noopener noreferrer"
-                                                  className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
-                                                >
-                                                  View on Map
-                                                </a>
-                                              </div>
-                                            )}
-
+                                  // Has distance: Show distance + map button
+                                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-blue-100">
+                                    <div className="flex items-center gap-2 text-slate-500">
+                                      <MapPin size={16} className="text-blue-500 flex-shrink-0" />
+                                      <span className="text-sm sm:text-base font-medium">
+                                        {facility.distance.toFixed(1)} km away
+                                      </span>
+                                    </div>
+                                    <a 
+                                      href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-blue-700 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
+                                    >
+                                      View on Map
+                                    </a>
+                                  </div>
+                                ) : (
+                                  // No distance: Only show map button (city-wide search or distance N/A)
+                                  <div className="flex justify-end gap-3 pt-3 border-t border-blue-100">
+                                    <a 
+                                      href={`https://map.naver.com/v5/search/${encodeURIComponent(mapSearchQuery)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="px-4 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-500 to-blue-700 text-white text-sm sm:text-base font-semibold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition-all text-center"
+                                    >
+                                      View on Map
+                                    </a>
+                                  </div>
+                                )}
                                                                             
                                 {/* Debug: Show place_id */}
                                 {ENABLE_DEBUG_MODE && debugMode && (
@@ -1223,13 +1222,13 @@ export default function ChatInterface() {
             {loading && (
               <div className="flex justify-start animate-fadeIn">
                 <div className="flex gap-3">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-md flex-shrink-0">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-md flex-shrink-0">
                     <Sparkles className="text-white" size={16} />
                   </div>
-                  <div className="bg-white border border-slate-200 rounded-2xl px-5 py-3.5 shadow-sm">
+                  <div className="bg-white border border-blue-200 rounded-2xl px-5 py-3.5 shadow-sm">
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-                      <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                       <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
                     </div>
                   </div>
@@ -1242,15 +1241,15 @@ export default function ChatInterface() {
       </div>
 
       {/* --- INPUT AREA AT BOTTOM --- */}
-      <div className="flex-shrink-0 border-t border-slate-200/50 bg-white/95 backdrop-blur-md shadow-lg">
-        {/* ⭐ TRAVEL SLIDER (Hover-based, positioned ABOVE input) */}
+      <div className="flex-shrink-0 border-t border-blue-200/50 bg-white/95 backdrop-blur-md shadow-lg pb-safe">
+        {/* ⭐ ACCEPTABLE DISTANCE SLIDER (Hover-based, positioned ABOVE input) */}
         {showTravelSlider && (
           <div 
-            className="max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-3 pb-2"
+            className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-3 pb-2"
             onMouseEnter={() => setShowTravelSlider(true)}
             onMouseLeave={() => setShowTravelSlider(false)}
           >
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-2.5 border border-purple-200 shadow-sm">
+            <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-2.5 border border-blue-300 shadow-sm">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <span className="text-xl">{TRAVEL_OPTIONS[selectedTravelIndex].emoji}</span>
@@ -1279,8 +1278,8 @@ export default function ChatInterface() {
                   className="w-full h-1 rounded-full appearance-none cursor-pointer slider-thumb"
                   style={{
                     background: `linear-gradient(to right, 
-                      rgb(147 51 234) 0%, 
-                      rgb(147 51 234) ${(selectedTravelIndex / (TRAVEL_OPTIONS.length - 1)) * 100}%, 
+                      rgb(59 130 246) 0%, 
+                      rgb(59 130 246) ${(selectedTravelIndex / (TRAVEL_OPTIONS.length - 1)) * 100}%, 
                       rgb(226 232 240) ${(selectedTravelIndex / (TRAVEL_OPTIONS.length - 1)) * 100}%, 
                       rgb(226 232 240) 100%)`
                   }}
@@ -1309,33 +1308,33 @@ export default function ChatInterface() {
         )}
 
         {/* Input Controls */}
-        <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 sm:py-4 md:pb-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
           <div className="flex items-center gap-2 sm:gap-3"> 
             {/* Location Button */}
             <button
               onClick={handleLocationClick}
-              className="flex-shrink-0 p-3 sm:p-3.5 rounded-xl bg-gradient-to-br from-slate-50 to-slate-100 hover:from-slate-100 hover:to-slate-200 border border-slate-200 hover:border-blue-300 transition-all text-slate-600 hover:text-blue-600 shadow-sm"
+              className="flex-shrink-0 p-3 sm:p-3.5 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 border border-blue-200 hover:border-blue-400 transition-all text-blue-600 hover:text-blue-700 shadow-sm"
               title="Share Location"
             >
               <MapPin size={20} className="sm:w-5 sm:h-5" />
             </button>
 
-            {/* ⭐ Travel Distance Button - HOVER TRIGGER */}
+            {/* ⭐ Acceptable Distance Button - HOVER TRIGGER WITH ARROW ICON */}
             <button
               onMouseEnter={() => setShowTravelSlider(true)}
               className={`relative flex-shrink-0 p-3 sm:p-3.5 rounded-xl border-2 transition-all shadow-sm ${
                 showTravelSlider
-                  ? 'bg-gradient-to-br from-purple-100 to-pink-100 border-purple-400 text-purple-700'
-                  : 'bg-gradient-to-br from-slate-50 to-slate-100 hover:from-purple-50 hover:to-pink-50 border-slate-200 hover:border-purple-300 text-slate-600 hover:text-purple-600'
+                  ? 'bg-gradient-to-br from-blue-100 to-blue-200 border-blue-400 text-blue-700'
+                  : 'bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 border-blue-200 hover:border-blue-400 text-blue-600 hover:text-blue-700'
               }`}
-              title="Set Travel Distance"
+              title="Set Acceptable Distance"
             >
-              {/* Icon: Distance/Chart */}
+              {/* Icon: Arrow pointing right (navigation/distance) */}
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
               </svg>
               
-              {/* Green dot indicator when travel preference set via widget */}
+              {/* Green dot indicator when preference set via widget */}
               {currentState.travel_confidence >= 0.9 && (
                 <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></span>
               )}
@@ -1346,7 +1345,7 @@ export default function ChatInterface() {
               <input
                 ref={inputRef}
                 type="text"
-                className="w-full px-4 py-3 sm:px-5 sm:py-4 rounded-xl bg-white border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all text-slate-800 placeholder-slate-400 outline-none text-sm sm:text-base shadow-sm"
+                className="w-full px-4 py-3 sm:px-5 sm:py-4 rounded-xl bg-white border-2 border-blue-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all text-slate-800 placeholder-slate-400 outline-none text-sm sm:text-base shadow-sm"
                 placeholder="Describe what you need..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -1361,7 +1360,7 @@ export default function ChatInterface() {
               disabled={!input.trim() || loading}
               className={`flex-shrink-0 p-3 sm:p-3.5 rounded-xl transition-all shadow-md ${
                 input.trim() && !loading 
-                  ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:shadow-lg hover:scale-105 active:scale-95" 
+                  ? "bg-gradient-to-r from-blue-500 to-blue-700 text-white hover:shadow-lg hover:scale-105 active:scale-95" 
                   : "bg-slate-200 text-slate-400 cursor-not-allowed"
               }`}
             >
@@ -1378,10 +1377,10 @@ export default function ChatInterface() {
           width: 24px;
           height: 24px;
           border-radius: 50%;
-          background: linear-gradient(135deg, rgb(147 51 234), rgb(219 39 119));
+          background: linear-gradient(135deg, rgb(59 130 246), rgb(37 99 235));
           cursor: pointer;
           border: 3px solid white;
-          box-shadow: 0 2px 8px rgba(147, 51, 234, 0.4);
+          box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
           transition: transform 0.2s ease;
         }
         
@@ -1393,15 +1392,22 @@ export default function ChatInterface() {
           width: 24px;
           height: 24px;
           border-radius: 50%;
-          background: linear-gradient(135deg, rgb(147 51 234), rgb(219 39 119));
+          background: linear-gradient(135deg, rgb(59 130 246), rgb(37 99 235));
           cursor: pointer;
           border: 3px solid white;
-          box-shadow: 0 2px 8px rgba(147, 51, 234, 0.4);
+          box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
           transition: transform 0.2s ease;
         }
         
         .slider-thumb::-moz-range-thumb:hover {
           transform: scale(1.2);
+        }
+
+        /* Mobile-specific padding for input area */
+        @media (max-width: 1024px) {
+          .pb-safe {
+            padding-bottom: max(1.5rem, calc(1.5 * (3rem + 1.5rem) + env(safe-area-inset-bottom)));
+          }
         }
       `}</style>
     </div>

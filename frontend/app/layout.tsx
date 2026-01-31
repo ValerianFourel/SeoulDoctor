@@ -65,10 +65,10 @@ export default function RootLayout({
       suppressHydrationWarning={true}
     >
       <head>
-      <meta 
-  name="viewport" 
-  content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
-/>
+        <meta 
+          name="viewport" 
+          content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+        />
       </head>
 
       <body 
@@ -99,22 +99,22 @@ export default function RootLayout({
         
         <div className="pt-[60px]">
           <main className="flex justify-center w-full min-h-[calc(100vh-60px)]">
-            {/* Left Ad */}
-            <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-end pr-4 pt-6">
+            {/* Left Ad - Narrower on ultra-wide screens */}
+            <aside className="hidden xl:flex w-[280px] 2xl:w-[300px] shrink-0 flex-col items-end pr-3 2xl:pr-4 pt-6">
               <div className="sticky top-24">
-                <AdSlotWrapper />
+                {/* <AdSlotWrapper /> */}
               </div>
             </aside>
 
-            {/* Main Content */}
-            <div className="w-full max-w-4xl flex flex-col bg-white shadow-sm">
+            {/* Main Content - WIDER */}
+            <div className="w-full max-w-5xl xl:max-w-6xl 2xl:max-w-7xl flex flex-col bg-white shadow-sm">
               {children}
             </div>
 
-            {/* Right Ad */}
-            <aside className="hidden xl:flex w-[320px] shrink-0 flex-col items-start pl-4 pt-6">
+            {/* Right Ad - Narrower on ultra-wide screens */}
+            <aside className="hidden xl:flex w-[280px] 2xl:w-[300px] shrink-0 flex-col items-start pl-3 2xl:pl-4 pt-6">
               <div className="sticky top-24">
-                <AdSlotWrapper />
+                {/* <AdSlotWrapper /> */}
               </div>
             </aside>
           </main>

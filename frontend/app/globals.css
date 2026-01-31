@@ -32,6 +32,123 @@
   .animate-slideDown {
     animation: slideDown 0.3s ease-out;
   }
+
+  /* Wide container utilities */
+  .container-wide {
+    max-width: 1600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .container-ultra-wide {
+    max-width: 1920px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /* Chat bubble width utilities */
+  .chat-bubble-wide {
+    max-width: 95%;
+  }
+
+  @media (min-width: 640px) {
+    .chat-bubble-wide {
+      max-width: 92%;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .chat-bubble-wide {
+      max-width: 90%;
+    }
+  }
+}
+
+/* Custom Color Palette - Primarily Light Blue & Blue with Green Accents */
+@layer components {
+  /* Background colors - Blue focused */
+  .bg-primary {
+    background-color: #e3f2fd; /* Light blue */
+  }
+  
+  .bg-primary-dark {
+    background-color: #42a5f5; /* Medium blue */
+  }
+  
+  .bg-secondary {
+    background-color: #bbdefb; /* Soft blue */
+  }
+  
+  .bg-secondary-dark {
+    background-color: #1e88e5; /* Darker blue */
+  }
+  
+  .bg-accent {
+    background-color: #90caf9; /* Sky blue */
+  }
+  
+  .bg-accent-green {
+    background-color: #a5d6a7; /* Soft green - minimal use */
+  }
+
+  /* Text colors - Blue focused */
+  .text-primary {
+    color: #1565c0; /* Dark blue */
+  }
+  
+  .text-primary-light {
+    color: #42a5f5; /* Medium blue */
+  }
+  
+  .text-secondary {
+    color: #0d47a1; /* Deep blue */
+  }
+  
+  .text-secondary-light {
+    color: #64b5f6; /* Light blue */
+  }
+  
+  .text-muted {
+    color: #90caf9; /* Muted blue */
+  }
+  
+  .text-accent-green {
+    color: #66bb6a; /* Green accent - minimal use */
+  }
+
+  /* Border colors - Blue focused */
+  .border-primary {
+    border-color: #90caf9; /* Soft blue */
+  }
+  
+  .border-secondary {
+    border-color: #bbdefb; /* Light blue */
+  }
+  
+  .border-accent-green {
+    border-color: #a5d6a7; /* Soft green - minimal use */
+  }
+
+  /* Hover states - Blue focused */
+  .hover-primary:hover {
+    background-color: #42a5f5;
+    transition: background-color 0.2s ease;
+  }
+  
+  .hover-secondary:hover {
+    background-color: #64b5f6;
+    transition: background-color 0.2s ease;
+  }
+  
+  .hover-text-primary:hover {
+    color: #1565c0;
+    transition: color 0.2s ease;
+  }
+  
+  .hover-text-secondary:hover {
+    color: #0d47a1;
+    transition: color 0.2s ease;
+  }
 }
 
 * {
@@ -46,9 +163,8 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: #f0f7ff; /* Very light blue background */
 }
-
-/* Add these to your existing globals.css */
 
 /* Mobile viewport handling */
 @supports (height: 100dvh) {
@@ -118,4 +234,23 @@ html, body {
 
 .animate-fadeIn {
   animation: fadeIn 0.3s ease-out;
+}
+
+/* Wide layout for chat interface */
+@media (min-width: 1280px) {
+  .chat-container-wide {
+    max-width: 1400px !important;
+  }
+}
+
+@media (min-width: 1536px) {
+  .chat-container-wide {
+    max-width: 1600px !important;
+  }
+}
+
+@media (min-width: 1920px) {
+  .chat-container-wide {
+    max-width: 1800px !important;
+  }
 }

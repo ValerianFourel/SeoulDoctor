@@ -11,14 +11,14 @@ export default function Footer() {
   };
 
   return (
-    <footer className="bg-gray-800 text-white py-8">
+    <footer className="bg-gradient-to-r from-blue-50 to-blue-100 text-gray-800 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
-        {/* Emergency Banner */}
-        <div className="bg-red-900 text-white p-4 rounded-lg mb-6 text-center">
+        {/* Emergency Banner - Blue Theme with Green Accent Numbers */}
+        <div className="bg-gradient-to-r from-blue-100 to-blue-200 border-2 border-blue-400 text-blue-900 p-4 rounded-lg mb-6 text-center shadow-md">
           <p className="font-bold text-base mb-1">🚨 Medical Emergency?</p>
           <p className="text-sm">
-            Call <strong className="text-lg">119</strong> (Emergency Services) or{' '}
-            <strong className="text-lg">1339</strong> (Medical Hotline)
+            Call <strong className="text-lg text-green-700">119</strong> (Emergency Services) or{' '}
+            <strong className="text-lg text-green-700">1339</strong> (Medical Hotline)
           </p>
         </div>
 
@@ -26,17 +26,16 @@ export default function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mb-6">
           {/* About Section */}
           <div>
-            <h3 className="font-bold text-lg mb-3">Seoul Medical Finder</h3>
-            <p className="text-sm text-gray-300 leading-relaxed mb-4">
+            <h3 className="font-bold text-lg mb-3 text-blue-700">Seoul Medical Finder</h3>
+            <p className="text-sm text-gray-700 leading-relaxed mb-4">
               Find quality medical facilities across Seoul with AI-powered
               recommendations.
             </p>
-            {/* Added Contact Email here for visibility */}
             <div className="text-sm">
-              <h4 className="font-semibold text-white mb-1">Contact Us</h4>
+              <h4 className="font-semibold text-blue-700 mb-1">Contact Us</h4>
               <a 
                 href="mailto:seouldoc.io@gmail.com" 
-                className="text-gray-300 hover:text-white transition-colors"
+                className="text-blue-600 hover:text-blue-800 transition-colors"
               >
                 seouldoc.io@gmail.com
               </a>
@@ -45,12 +44,12 @@ export default function Footer() {
 
           {/* Information Links */}
           <div>
-            <h4 className="font-semibold text-base mb-3">Information</h4>
+            <h4 className="font-semibold text-base mb-3 text-blue-700">Information</h4>
             <ul className="space-y-2 text-sm">
               <li>
                 <Link
                   href="/about"
-                  className="text-gray-300 hover:text-white transition-colors"
+                  className="text-gray-700 hover:text-blue-600 transition-colors"
                 >
                   About Us
                 </Link>
@@ -58,7 +57,7 @@ export default function Footer() {
               <li>
                 <Link
                   href="/how-it-works"
-                  className="text-gray-300 hover:text-white transition-colors"
+                  className="text-gray-700 hover:text-blue-600 transition-colors"
                 >
                   How It Works
                 </Link>
@@ -66,7 +65,7 @@ export default function Footer() {
               <li>
                 <Link
                   href="/faq"
-                  className="text-gray-300 hover:text-white transition-colors"
+                  className="text-gray-700 hover:text-blue-600 transition-colors"
                 >
                   FAQ
                 </Link>
@@ -76,12 +75,12 @@ export default function Footer() {
 
           {/* Legal Links */}
           <div>
-            <h4 className="font-semibold text-base mb-3">Legal</h4>
+            <h4 className="font-semibold text-base mb-3 text-blue-700">Legal</h4>
             <ul className="space-y-2 text-sm">
               <li>
                 <Link
                   href="/disclaimer"
-                  className="text-gray-300 hover:text-white transition-colors"
+                  className="text-gray-700 hover:text-blue-600 transition-colors"
                 >
                   ⚠️ Medical Disclaimer
                 </Link>
@@ -89,7 +88,7 @@ export default function Footer() {
               <li>
                 <Link
                   href="/privacy"
-                  className="text-gray-300 hover:text-white transition-colors"
+                  className="text-gray-700 hover:text-blue-600 transition-colors"
                 >
                   Privacy Policy
                 </Link>
@@ -97,7 +96,7 @@ export default function Footer() {
               <li>
                 <button
                   onClick={resetCookieConsent}
-                  className="text-gray-300 hover:text-white transition-colors text-left"
+                  className="text-gray-700 hover:text-blue-600 transition-colors text-left"
                 >
                   🍪 Cookie Settings
                 </button>
@@ -107,20 +106,20 @@ export default function Footer() {
 
           {/* Emergency Info */}
           <div>
-            <h4 className="font-semibold text-base mb-3">Emergency Numbers</h4>
-            <ul className="space-y-2 text-sm text-gray-300">
+            <h4 className="font-semibold text-base mb-3 text-blue-700">Emergency Numbers</h4>
+            <ul className="space-y-2 text-sm text-gray-700">
               <li>
-                <strong className="text-white">119</strong> - Emergency Services
+                <strong className="text-blue-700">119</strong> - Emergency Services
               </li>
               <li>
-                <strong className="text-white">1339</strong> - Medical Hotline
+                <strong className="text-blue-700">1339</strong> - Medical Hotline
                 (24/7)
               </li>
               <li>
-                <strong className="text-white">1345</strong> - Immigration Help
+                <strong className="text-blue-700">1345</strong> - Immigration Help
               </li>
               <li>
-                <strong className="text-white">1330</strong> - Korea Travel
+                <strong className="text-blue-700">1330</strong> - Korea Travel
                 Hotline
               </li>
             </ul>
@@ -128,8 +127,8 @@ export default function Footer() {
         </div>
 
         {/* Bottom Bar */}
-        <div className="border-t border-gray-700 pt-6">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-3 text-sm text-gray-400">
+        <div className="border-t border-blue-200 pt-6">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-3 text-sm text-gray-600">
             <p>
               © {new Date().getFullYear()} Seoul Medical Facility Finder. All
               rights reserved.
