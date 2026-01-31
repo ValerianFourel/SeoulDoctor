@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: "Medical Disclaimer - Seoul Medical Facility Finder",
   description: "Important medical disclaimer and limitations of our facility finder service",
   icons: {
-    icon: "/img/convertico-logo_v3.ico",
+    icon: "/img/favicon.ico",
   },
 };
 

@@ -34,6 +34,9 @@ export const metadata: Metadata = {
     "Seoul hospitals",
     "medical concierge Seoul",
   ],
+  icons: {
+    icon: "/img/favicon.ico",
+  },
   other: {
     "google-adsense-account": "ca-pub-2786202112029582",
   },
