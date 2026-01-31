@@ -139,7 +139,7 @@ export default function Footer() {
           {/* AdSense Disclosure */}
           <div className="text-center mt-4 text-xs text-gray-500">
             <p>
-              This site is supported by advertising. We do not sell personal
+              This site is supported by donations. We do not sell personal
               information.
             </p>
           </div>
