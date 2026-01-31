@@ -57,7 +57,7 @@ export default function HeaderMenu() {
             <div className="w-5 h-5 flex items-center justify-center border-2 border-white rounded-full">
               <span className="text-xs font-bold">₩</span>
             </div>
-            <span>Donate via PayPal</span>
+            <span>Donate</span>
           </a>
 
           {/* Menu Button */}
