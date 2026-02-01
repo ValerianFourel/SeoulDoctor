@@ -125,7 +125,7 @@ from distance import haversine, fuzzy_match_location
 from models import ChatRequest, State
 from utils import (
     safe_convert_to_python, DISTANCE_MAPPING, clean_llm_response,
-    standardize_and_fill_state,detect_search_mode,detect_language,
+    standardize_and_fill_state,detect_search_mode,detect_language, fuzzy_keyword_match,
     smart_cleanse_state,detect_field_changes,print_separator, normalize_seoul_to_null,
     has_vague_medical_term,user_wants_any_specialty, ensure_city_wide_defaults,
     validate_distance_criteria,download_and_cache_parquet, DEFAULT_MAX_DISTANCE
@@ -397,6 +397,7 @@ app.add_middleware(
 def extract_entities(user_message: str, consent: Optional[CookieConsent] = None) -> Dict[str, Any]:
     """
     Call the extraction LLM with keyword extraction (hard + soft + negative keywords).
+    Uses intent-based classification: "I want X" → positive, "avoid X" → negative
     """
     global LANGUAGE
     
@@ -406,24 +407,184 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
     specialty_list = ", ".join(available_specialties[:50]) if available_specialties else "No specialties available"
     travel_labels_list = ", ".join([f'"{label}" ({dist}km)' for label, dist in DISTANCE_MAPPING.items()])
     
-    extraction_prompt = EXTRACTION_PROMPT_V2.format(
-        SPECIALTY_MAPPING=SPECIALTY_MAPPING,
-        user_message=user_message,
-        specialty_list=specialty_list,
-        travel_labels_list=travel_labels_list
-    )
+    # ============================================
+    # ULTRA-SIMPLE INTENT-BASED EXTRACTION PROMPT
+    # ============================================
+    extraction_prompt = f"""Extract from: "{user_message}"
+
+**KEYWORD INTENT RULES (READ CAREFULLY):**
+1. "I want X" / "I need X" / "find X" / "looking for X" / "X doctor" → soft_keywords: [X] ✓
+2. "avoid X" / "not X" / "without X" / "don't want X" → negative_keywords: [X] ✓
+
+**X can be ANY quality - unfriendly, rude, expensive, rushed, cold, impolite, etc.**
+
+**CRITICAL: Look at the VERB/INTENT, not whether the quality sounds "good" or "bad"!**
+
+**EXAMPLES (STUDY THESE):**
+✓ "I need an unfriendly doctor" → soft: ["unfriendly"], negative: []
+✓ "rude doctor" → soft: ["rude"], negative: []
+✓ "impolite doctor with parking" → soft: ["impolite"], hard: ["parking"], negative: []
+✓ "cold and direct doctor" → soft: ["cold", "direct"], negative: []
+✓ "expensive clinic" → soft: ["expensive"], negative: []
+✓ "avoid friendly staff" → soft: [], negative: ["friendly"]
+✓ "not polite doctors" → soft: [], negative: ["polite"]
+
+**Available specialties:** {specialty_list}
+**Travel labels:** {travel_labels_list}
+
+**Return JSON with:**
+- specialty: matched Korean specialty or null (default: 병원,의원 if unclear)
+- specialty_confidence: 0.0-1.0
+- location: extracted location or null (null if not mentioned)
+- travel_label: one from travel labels list (default: "Moderate")
+- hard_keywords: factual must-haves (parking, MRI, insurance, weekend hours, English-speaking)
+- soft_keywords: subjective qualities user WANTS (can include unfriendly, rude, cold, expensive, etc.)
+- negative_hard_keywords: factual exclusions (without parking, no weekend hours)
+- negative_keywords: qualities to AVOID (avoid friendly, not polite)
+
+**Format:**
+{{
+  "specialty": "string or null",
+  "specialty_confidence": 0.7,
+  "location": "string or null",
+  "latitude": null,
+  "longitude": null,
+  "travel_label": "Moderate",
+  "language_pref": "English Preferred",
+  "hard_keywords": [],
+  "soft_keywords": [],
+  "negative_hard_keywords": [],
+  "negative_keywords": []
+}}
+"""
     
     extraction_messages = [{"role": "system", "content": extraction_prompt}]
     
     try:
+        # ============================================
+        # CALL LLM WITH HIGHER TEMPERATURE
+        # ============================================
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=extraction_messages,
-            temperature=0.0,
+            temperature=0.5,  # Higher for less rigid behavior
             max_completion_tokens=512,
             response_format={"type": "json_object"}
         )
         extracted = json.loads(completion.choices[0].message.content)
+        
+        # ============================================
+        # DEBUG LOGGING: RAW EXTRACTION
+        # ============================================
+        privacy_safe_log(consent, "=" * 60)
+        privacy_safe_log(consent, "🔍 RAW EXTRACTION (before post-processing):")
+        privacy_safe_log(consent, f"   📝 Input: '{user_message}'")
+        privacy_safe_log(consent, f"   🏥 Specialty: {extracted.get('specialty', 'null')} (conf: {extracted.get('specialty_confidence', 0):.2f})")
+        privacy_safe_log(consent, f"   🔒 Hard Keywords: {extracted.get('hard_keywords', [])}")
+        privacy_safe_log(consent, f"   💭 Soft Keywords: {extracted.get('soft_keywords', [])}")
+        privacy_safe_log(consent, f"   ⛔ Negative Hard: {extracted.get('negative_hard_keywords', [])}")
+        privacy_safe_log(consent, f"   🚫 Negative Keywords: {extracted.get('negative_keywords', [])}")
+        privacy_safe_log(consent, "=" * 60)
+        
+        # ============================================
+        # POST-PROCESSING: INTENT-BASED KEYWORD CORRECTION
+        # ============================================
+        # If LLM still misclassifies (puts "unfriendly" in negative when user said "I want unfriendly"),
+        # we fix it here by checking the actual user message intent
+        
+        message_lower = user_message.lower()
+        
+        # Positive intent markers
+        positive_markers = ['i want', 'i need', 'find', 'looking for', 'show me', 'find me', 'search for']
+        has_positive_intent = any(marker in message_lower for marker in positive_markers)
+        
+        # Negative intent markers
+        negative_markers = ['avoid', 'not ', 'without', "don't want", 'dont want', 'skip', 'exclude', 'except']
+        has_negative_intent = any(marker in message_lower for marker in negative_markers)
+        
+        # List of "unconventional" qualities that LLM might misclassify
+        unconventional_qualities = [
+            'unfriendly', 'rude', 'impolite', 'cold', 'direct', 'blunt', 'curt', 'abrupt',
+            'rushed', 'quick', 'fast', 'brief', 'hurried', 'expensive', 'costly', 'pricey',
+            'premium', 'crowded', 'busy', 'packed', 'impersonal', 'clinical', 'detached',
+            'no-nonsense', 'brusque', 'discourteous', 'uncivil', 'distant', 'aloof',
+            '무례', '불친절', '무뚝뚝', '차가운', '냉담', '직설적', '빠른', '급한', '비싼', '고가', '붐비는'
+        ]
+        
+        # If user has POSITIVE intent and LLM put unconventional quality in negative → move to soft
+        if has_positive_intent and not has_negative_intent:
+            if extracted.get('negative_keywords'):
+                moved_keywords = []
+                remaining_negative = []
+                
+                for kw in extracted['negative_keywords']:
+                    kw_lower = kw.lower()
+                    # Check if this is an unconventional quality that should be positive
+                    if any(qual in kw_lower for qual in unconventional_qualities):
+                        moved_keywords.append(kw)
+                        # Move to soft keywords
+                        if 'soft_keywords' not in extracted:
+                            extracted['soft_keywords'] = []
+                        extracted['soft_keywords'].append(kw)
+                    else:
+                        remaining_negative.append(kw)
+                
+                extracted['negative_keywords'] = remaining_negative
+                
+                if moved_keywords:
+                    privacy_safe_log(consent, f"✅ CORRECTED: Moved {moved_keywords} from negative → soft (user has positive intent)")
+        
+        # If user has NEGATIVE intent but LLM put quality in soft → check if it should be negative
+        if has_negative_intent and not has_positive_intent:
+            if extracted.get('soft_keywords'):
+                moved_keywords = []
+                remaining_soft = []
+                
+                for kw in extracted['soft_keywords']:
+                    # Check if this keyword appears after "avoid" or "not" in the message
+                    if f'avoid {kw.lower()}' in message_lower or f'not {kw.lower()}' in message_lower:
+                        moved_keywords.append(kw)
+                        # Move to negative keywords
+                        if 'negative_keywords' not in extracted:
+                            extracted['negative_keywords'] = []
+                        extracted['negative_keywords'].append(kw)
+                    else:
+                        remaining_soft.append(kw)
+                
+                extracted['soft_keywords'] = remaining_soft
+                
+                if moved_keywords:
+                    privacy_safe_log(consent, f"✅ CORRECTED: Moved {moved_keywords} from soft → negative (user has negative intent)")
+        
+        # ============================================
+        # FALLBACK: If no keywords but message has quality adjectives, extract them
+        # ============================================
+        if not extracted.get('soft_keywords') and not extracted.get('negative_keywords'):
+            # Simple word extraction for common adjectives
+            quality_words = [
+                'unfriendly', 'rude', 'impolite', 'cold', 'direct', 'blunt', 'friendly',
+                'kind', 'warm', 'polite', 'professional', 'experienced', 'skilled',
+                'clean', 'modern', 'expensive', 'cheap', 'affordable', 'rushed', 'thorough',
+                'crowded', 'busy', 'quiet', 'impersonal', 'personal', 'clinical'
+            ]
+            
+            found_qualities = []
+            for word in quality_words:
+                if word in message_lower:
+                    found_qualities.append(word)
+            
+            if found_qualities:
+                # Determine if positive or negative based on context
+                if has_negative_intent:
+                    extracted['negative_keywords'] = found_qualities
+                    privacy_safe_log(consent, f"✅ FALLBACK: Extracted {found_qualities} as negative keywords")
+                else:
+                    extracted['soft_keywords'] = found_qualities
+                    privacy_safe_log(consent, f"✅ FALLBACK: Extracted {found_qualities} as soft keywords")
+        
+        # ============================================
+        # STANDARD PROCESSING: SPECIALTY, TRAVEL, LOCATION
+        # ============================================
         
         if extracted.get('specialty'):
             privacy_safe_log(consent, 
@@ -443,7 +604,9 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
             extracted['travel_label'] = "Moderate"
             privacy_safe_log(consent, "ℹ️ No travel preference specified, defaulting to 'Moderate' (5km)")
         
-        # Log keyword extraction
+        # ============================================
+        # FINAL KEYWORD LOGGING
+        # ============================================
         if extracted.get('hard_keywords'):
             privacy_safe_log(consent, f"🔒 Hard keywords (MUST): {extracted['hard_keywords']}")
         
@@ -456,6 +619,9 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
         if extracted.get('negative_keywords'):
             privacy_safe_log(consent, f"🚫 Negative keywords (avoid): {extracted['negative_keywords']}")
         
+        # ============================================
+        # LOCATION VERIFICATION
+        # ============================================
         if extracted.get('location'):
             logger.debug(f"📍 Location extraction: '{extracted['location']}'")
             verified = verify_and_standardize_address(extracted['location'])
@@ -472,6 +638,8 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
             else:
                 logger.warning(f"⚠️ Could not verify: '{extracted['location']}'")
         
+        privacy_safe_log(consent, "=" * 60 + "\n")
+        
         return extracted
         
     except Exception as e:
@@ -483,7 +651,6 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
             "negative_hard_keywords": [],
             "negative_keywords": []
         }
-
 
 def quick_extract_location_change(user_message: str, consent: Optional[CookieConsent] = None) -> Dict[str, Any]:
     """SHORTER extraction for when user is just changing location OR travel distance."""
@@ -1327,52 +1494,54 @@ def execute_search(
                         privacy_safe_log(consent, f"      '{kw}': +{weight} → {matched_count} matches ({label})")
                 
                 return boost
-            
+
             # Initialize scoring
             path_b_pool['relevance_boost'] = 0.0
-            
-            # Hard keywords: Priority boost
+
+            # ⭐ MASSIVELY INCREASED KEYWORD WEIGHTS
+            # Hard keywords: CRITICAL priority (was 500 → now 2000)
             if state.hard_keywords:
                 path_b_pool['relevance_boost'] += apply_keyword_boost(
-                    path_b_pool, state.hard_keywords, 500.0, "HARD"
+                    path_b_pool, state.hard_keywords, 2000.0, "HARD"  # ⭐ 4x increase
                 )
-            
-            # Soft keywords: Preference boost
+
+            # Soft keywords: STRONG preference (was 50 → now 500)
             if state.keywords:
                 path_b_pool['relevance_boost'] += apply_keyword_boost(
-                    path_b_pool, state.keywords, 50.0, "SOFT"
+                    path_b_pool, state.keywords, 500.0, "SOFT"  # ⭐ 10x increase
                 )
-            
-            # Negative keywords: Penalty
+
+            # Negative keywords: SEVERE penalty (was -300 → now -1500)
             if state.negative_keywords:
                 path_b_pool['relevance_boost'] += apply_keyword_boost(
-                    path_b_pool, state.negative_keywords, -300.0, "NEGATIVE"
+                    path_b_pool, state.negative_keywords, -1500.0, "NEGATIVE"  # ⭐ 5x increase
                 )
-            
-            # Negative hard keywords: Severe penalty
+
+            # Negative hard keywords: EXTREME penalty (was -1000 → now -5000)
             if state.negative_hard_keywords:
                 path_b_pool['relevance_boost'] += apply_keyword_boost(
-                    path_b_pool, state.negative_hard_keywords, -1000.0, "NEGATIVE_HARD"
+                    path_b_pool, state.negative_hard_keywords, -5000.0, "NEGATIVE_HARD"  # ⭐ 5x increase
                 )
-            
-            # Specialty match boost (only for medium/high precision)
+
+            # Specialty match boost (reduced to give keywords more relative importance)
             if search_precision != "LOW" and state.specialty:
                 spec_mask = path_b_pool['category'].fillna('').astype(str).str.lower().str.contains(
                     state.specialty.lower(), na=False
                 )
-                boost_amount = 200.0 * specialty_conf  # Scale by confidence
+                boost_amount = 100.0 * specialty_conf  # ⭐ Reduced from 200 to 100 (keywords now dominate)
                 path_b_pool.loc[spec_mask, 'relevance_boost'] += boost_amount
-            
-            # Distance decay (only if distance data exists)
+
+            # Distance decay (REDUCED to let keywords dominate more)
             if has_distance_data:
                 max_dist = path_b_pool['distance_km'].max() or 1.0
                 if max_dist > 0:
-                    distance_penalty = (path_b_pool['distance_km'] / max_dist) * 30
+                    distance_penalty = (path_b_pool['distance_km'] / max_dist) * 10  # ⭐ Reduced from 30 to 10
                     path_b_pool['relevance_boost'] -= distance_penalty
-                    privacy_safe_log(consent, "   Applied distance decay to scoring")
+                    privacy_safe_log(consent, "   Applied distance decay to scoring (reduced weight)")
             else:
                 privacy_safe_log(consent, "   Skipping distance decay (no distance data)")
-            
+                        
+                
             # Sort by boost (and distance if available)
             if has_distance_data:
                 path_b_pool = path_b_pool.sort_values(
@@ -2548,8 +2717,11 @@ async def chat_endpoint(
                 "results": []
             }
 
-    # PROVIDE_INFO
-    # PROVIDE_INFO
+
+# ==========================================
+# REPLACE THE ENTIRE PROVIDE_INFO BRANCH
+# ==========================================
+
     elif intent == "PROVIDE_INFO":
         privacy_safe_log(consent, "📝 BRANCH: PROVIDE_INFO")
         
@@ -2568,27 +2740,45 @@ async def chat_endpoint(
         new_state.language_pref = LANGUAGE
         
         # ============================================
-        # STEP 2: VALIDATE & CLEAN EXTRACTED KEYWORDS
+        # STEP 2: VALIDATE & CLEAN EXTRACTED KEYWORDS (FUZZY MATCHING)
         # ============================================
-        # Remove hallucinated keywords that don't appear in user message
+        # Remove hallucinated keywords that don't semantically appear in user message
         if extracted.get('hard_keywords'):
             validated_hard = []
             for kw in extracted['hard_keywords']:
-                # Check if keyword actually appears in user message (case-insensitive)
-                if kw.lower() in req.message.lower():
+                if fuzzy_keyword_match(kw, req.message):
                     validated_hard.append(kw)
                 else:
-                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated hard keyword: '{kw}'")
+                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated hard keyword: '{kw}' (not in: '{req.message}')")
             extracted['hard_keywords'] = validated_hard
         
         if extracted.get('soft_keywords'):
             validated_soft = []
             for kw in extracted['soft_keywords']:
-                if kw.lower() in req.message.lower():
+                if fuzzy_keyword_match(kw, req.message):
                     validated_soft.append(kw)
                 else:
-                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated soft keyword: '{kw}'")
+                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated soft keyword: '{kw}' (not in: '{req.message}')")
             extracted['soft_keywords'] = validated_soft
+        
+        # Validate negative keywords
+        if extracted.get('negative_hard_keywords'):
+            validated_neg_hard = []
+            for kw in extracted['negative_hard_keywords']:
+                if fuzzy_keyword_match(kw, req.message):
+                    validated_neg_hard.append(kw)
+                else:
+                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated negative hard keyword: '{kw}'")
+            extracted['negative_hard_keywords'] = validated_neg_hard
+        
+        if extracted.get('negative_keywords'):
+            validated_neg = []
+            for kw in extracted['negative_keywords']:
+                if fuzzy_keyword_match(kw, req.message):
+                    validated_neg.append(kw)
+                else:
+                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated negative keyword: '{kw}'")
+            extracted['negative_keywords'] = validated_neg
         
         # ============================================
         # STEP 3: OVERRIDE LLM FOR PURE FACILITY TYPE REQUESTS
@@ -2770,7 +2960,10 @@ async def chat_endpoint(
             privacy_safe_log(consent, "✅ Ready to search:")
             privacy_safe_log(consent, f"   Specialty: {new_state.specialty or 'ANY'} (conf={new_state.specialty_confidence:.2f})")
             privacy_safe_log(consent, f"   Location: {new_state.district or new_state.location or 'Seoul (city-wide)'}")
-            privacy_safe_log(consent, f"   Keywords: {new_state.keywords or new_state.hard_keywords or 'none'}")
+            privacy_safe_log(consent, f"   Hard Keywords: {new_state.hard_keywords or 'none'}")
+            privacy_safe_log(consent, f"   Soft Keywords: {new_state.keywords or 'none'}")
+            privacy_safe_log(consent, f"   Negative Hard: {new_state.negative_hard_keywords or 'none'}")
+            privacy_safe_log(consent, f"   Negative Soft: {new_state.negative_keywords or 'none'}")
             
             response_text, results = execute_search(
                 new_state, 
@@ -2874,7 +3067,6 @@ async def chat_endpoint(
                 "state": new_state.model_dump(),
                 "results": []
             }
-
     
     # CHIT_CHAT
     elif intent == "CHIT_CHAT":

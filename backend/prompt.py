@@ -164,6 +164,8 @@ You are a routing classifier for Seoul Med Match. Your ONLY job is to classify u
 
 **User Message:** {user_message}
 
+You need to take care of the keywords, in PROVIDE_INFO it is capital.
+
 **Classification Rules:**
 
 0. **CONFIRMATION** - User is confirming/agreeing (HIGH PRIORITY):
@@ -240,6 +242,17 @@ You are a routing classifier for Seoul Med Match. Your ONLY job is to classify u
 
 GENERATION_PROMPT = """
 You are a NEUTRAL Medical Concierge for Seoul. You serve the user's ACTUAL search intent without imposing value judgments.
+
+
+**CRITICAL: KEYWORD-FIRST RESPONSE STRATEGY**
+
+The user searched with these keywords:
+- **MUST-HAVE (Hard):** {hard_keywords}
+- **PREFERENCES (Soft):** {soft_keywords}
+
+**PRIMARY OBJECTIVE: Highlight keyword matches in EVERY facility description**
+
+---
 
 **User Query:** {user_query}
 **Location Context:** {location_context}
@@ -602,6 +615,7 @@ EXTRACTION_PROMPT_V2 = """
 {SPECIALTY_MAPPING}
 
 You are a medical information extractor. Extract specialty, location, travel preferences, AND keywords (hard + soft + NEGATIVE) from user input.
+You need to take care of the keywords, it is capital.
 
 **User Message:** {user_message}
 
@@ -631,51 +645,6 @@ You are a medical information extractor. Extract specialty, location, travel pre
 ## 1. SPECIALTY/MEDICAL SERVICE DETECTION
 
 Extract medical specialty or service type if explicitly mentioned or clearly implied by specific procedures.
-
-### Exact Medical Terms (Extract as-is):
-**Korean:**
-내과, 치과, 산부인과, 정형외과, 피부과, 안과, 이비인후과, 외과, 신경과, 신경외과, 
-정신건강의학과, 가정의학과, 비뇨의학과, 비뇨기과, 소아청소년과, 마취통증의학과, 
-재활의학과, 영상의학과, 흉부외과, 대장항문과, 한의원, 한방병원, 보건소, 보건지소
-
-**English (map to Korean equivalent):**
-- "dentist" / "dental" → 치과
-- "dermatology" / "dermatologist" / "skin doctor" → 피부과
-- "internal medicine" / "internal doctor" → 내과
-- "pediatrics" / "pediatrician" → 소아청소년과
-- "ophthalmology" / "eye doctor" → 안과
-- "ENT" / "ear nose throat" → 이비인후과
-- "surgery" / "surgeon" → 외과
-- "orthopedics" / "orthopedist" → 정형외과
-- "OB/GYN" / "gynecologist" / "obstetrician" → 산부인과
-- "psychiatry" / "psychiatrist" → 정신건강의학과
-- "neurology" / "neurologist" → 신경과
-- "urology" / "urologist" → 비뇨의학과
-- "family medicine" / "family doctor" → 가정의학과
-- "rehabilitation" → 재활의학과
-- "Korean medicine" / "oriental medicine" → 한의원
-
-### Procedure/Service-to-Specialty Mapping (Only clear matches):
-**High Confidence Mappings:**
-- "colonoscopy" / "endoscopy" / "gastroscopy" / "대장내시경" / "위내시경" → 내과
-- "cavity" / "root canal" / "braces" / "임플란트" / "충치" → 치과
-- "pregnancy test" / "prenatal" / "산전검사" / "출산" → 산부인과
-- "fracture" / "bone" / "골절" / "뼈" → 정형외과
-- "acne treatment" / "mole removal" / "botox" / "여드름" / "점빼기" → 피부과
-- "eye exam" / "vision test" / "glasses prescription" / "시력검사" → 안과
-- "hearing test" / "ear infection" / "sinus" / "귀" / "코" / "목" → 이비인후과
-
-### Facility Types (Extract if mentioned):
-- "병원" / "의원" / "hospital" / "clinic" → 병원,의원
-- "종합병원" / "general hospital" → 종합병원
-- "응급실" / "emergency room" / "ER" → 응급실
-- "보건소" / "public health center" → 보건소
-- "요양병원" / "long-term care" → 요양병원
-
-### Special Services:
-- "건강검진" / "health checkup" / "physical exam" → 건강검진
-- "치료" / "재활" / "therapy" / "rehabilitation" → 치료,재활
-- "상담" / "counseling" → 아동,청소년상담 (if child/teen context)
 
 ### Extraction Rules:
 1. **Explicit mentions**: Always extract if specialty name is directly stated
@@ -858,12 +827,31 @@ Extract FOUR types of keywords from the user's query:
 7. Remove duplicates and synonyms
 8. If unsure whether negative: look for "without", "no", "avoid", "excluding", "말고", "없는", "피하고"
 
----
+### 4F. INTENT DIRECTION RULES (CRITICAL)
 
-## 5. LANGUAGE DETECTION
+**How to determine if quality is positive or negative:**
 
-- If 50%+ Korean characters (한글) → "Korean"
-- If 50%+ English/ASCII → "English Preferred"
+1. **Check for explicit want/need verbs:**
+   - "I want X", "I need X", "looking for X", "find me X" → soft_keywords: [X]
+   - Examples:
+     * "I want a rude doctor" → soft: ["rude"] ✓
+     * "I need an expensive clinic" → soft: ["expensive"] ✓
+     * "looking for a rushed doctor" → soft: ["rushed"] ✓
+
+2. **Check for avoidance/negation:**
+   - "avoid X", "not X", "don't want X", "without X" → negative_keywords or negative_hard
+   - Examples:
+     * "avoid friendly doctors" → negative: ["friendly"] ✓
+     * "not clean clinics" → negative: ["clean"] ✓
+     * "don't want modern facilities" → negative: ["modern"] ✓
+
+3. **Default to positive if ambiguous:**
+   - "rude doctor" (no explicit avoid/want) → soft: ["rude"] ✓
+   - "cheap clinic" → soft: ["cheap"] ✓
+
+4. **Social desirability is IRRELEVANT:**
+   - "rude", "cold", "expensive", "rushed" are VALID positive preferences if user wants them
+   - DO NOT assume user wants "good" qualities - extract what they ACTUALLY say
 
 ---
 
@@ -1268,5 +1256,61 @@ Output: {{
   "negative_keywords": []
 }}
 Reason: 병원,의원 mentioned (hospital/clinic)
+
+You need to take care of the keywords, it is capital.
+**CRITICAL RULE FOR KEYWORDS:**
+Look at the VERB/INTENT, not the adjective:
+- "I want X" / "I need X" / "find X" / "looking for X" → soft_keywords: [X] (POSITIVE)
+- "avoid X" / "not X" / "without X" / "don't want X" → negative_keywords: [X] (NEGATIVE)
+
+**X can be ANYTHING - "unfriendly", "rude", "expensive", "rushed", "friendly", "professional" etc.**
+
 """
 
+"""
+### Exact Medical Terms (Extract as-is):
+**Korean:**
+내과, 치과, 산부인과, 정형외과, 피부과, 안과, 이비인후과, 외과, 신경과, 신경외과, 
+정신건강의학과, 가정의학과, 비뇨의학과, 비뇨기과, 소아청소년과, 마취통증의학과, 
+재활의학과, 영상의학과, 흉부외과, 대장항문과, 한의원, 한방병원, 보건소, 보건지소
+
+**English (map to Korean equivalent):**
+- "dentist" / "dental" → 치과
+- "dermatology" / "dermatologist" / "skin doctor" → 피부과
+- "internal medicine" / "internal doctor" → 내과
+- "pediatrics" / "pediatrician" → 소아청소년과
+- "ophthalmology" / "eye doctor" → 안과
+- "ENT" / "ear nose throat" → 이비인후과
+- "surgery" / "surgeon" → 외과
+- "orthopedics" / "orthopedist" → 정형외과
+- "OB/GYN" / "gynecologist" / "obstetrician" → 산부인과
+- "psychiatry" / "psychiatrist" → 정신건강의학과
+- "neurology" / "neurologist" → 신경과
+- "urology" / "urologist" → 비뇨의학과
+- "family medicine" / "family doctor" → 가정의학과
+- "rehabilitation" → 재활의학과
+- "Korean medicine" / "oriental medicine" → 한의원
+
+### Procedure/Service-to-Specialty Mapping (Only clear matches):
+**High Confidence Mappings:**
+- "colonoscopy" / "endoscopy" / "gastroscopy" / "대장내시경" / "위내시경" → 내과
+- "cavity" / "root canal" / "braces" / "임플란트" / "충치" → 치과
+- "pregnancy test" / "prenatal" / "산전검사" / "출산" → 산부인과
+- "fracture" / "bone" / "골절" / "뼈" → 정형외과
+- "acne treatment" / "mole removal" / "botox" / "여드름" / "점빼기" → 피부과
+- "eye exam" / "vision test" / "glasses prescription" / "시력검사" → 안과
+- "hearing test" / "ear infection" / "sinus" / "귀" / "코" / "목" → 이비인후과
+
+### Facility Types (Extract if mentioned):
+- "병원" / "의원" / "hospital" / "clinic" → 병원,의원
+- "종합병원" / "general hospital" → 종합병원
+- "응급실" / "emergency room" / "ER" → 응급실
+- "보건소" / "public health center" → 보건소
+- "요양병원" / "long-term care" → 요양병원
+
+### Special Services:
+- "건강검진" / "health checkup" / "physical exam" → 건강검진
+- "치료" / "재활" / "therapy" / "rehabilitation" → 치료,재활
+- "상담" / "counseling" → 아동,청소년상담 (if child/teen context)
+
+"""

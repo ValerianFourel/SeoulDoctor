@@ -737,25 +737,15 @@ class RAGPipeline:
         
         return df
 
-
     @staticmethod
     def _calculate_relevance_weight(
         max_distance: float, 
-        specialty_confidence: float = 1.0  # ⭐ NEW parameter
+        specialty_confidence: float = 1.0
     ) -> float:
         """
-        Calculate adaptive relevance weight based on search radius AND specialty confidence.
+        Calculate adaptive relevance weight - KEYWORD-FOCUSED VERSION.
         
-        Radius-Adaptive Weighting (base):
-        - Small radius (≤2km): 50% relevance + 50% distance
-        - Medium radius (5km): 70% relevance + 30% distance
-        - Large radius (10km): 85% relevance + 15% distance
-        - Very large (20km+): 95% relevance + 5% distance
-        
-        Confidence Adjustment:
-        - Low confidence (0.3-0.4): Reduce relevance weight by 40%
-        - Medium confidence (0.5-0.7): Reduce relevance weight by 20%
-        - High confidence (0.8-1.0): Use full relevance weight
+        Heavily favors keyword/semantic matching over pure distance.
         
         Args:
             max_distance: Maximum search distance in km
@@ -765,45 +755,45 @@ class RAGPipeline:
             Relevance weight (0.0 to 1.0)
         """
         
-        # ===== STEP 1: Calculate base relevance weight from distance =====
+        # ===== STEP 1: Calculate base relevance weight (INCREASED FROM BEFORE) =====
         if max_distance <= 2:
-            base_relevance_weight = 0.50
+            base_relevance_weight = 0.70  # Was 0.50, now 0.70 (keywords > distance even nearby)
         elif max_distance <= 5:
             # Linear interpolation between 2-5km
-            base_relevance_weight = 0.50 + (max_distance - 2) * (0.70 - 0.50) / (5 - 2)
+            base_relevance_weight = 0.70 + (max_distance - 2) * (0.85 - 0.70) / (5 - 2)
         elif max_distance <= 10:
             # Linear interpolation between 5-10km
-            base_relevance_weight = 0.70 + (max_distance - 5) * (0.85 - 0.70) / (10 - 5)
+            base_relevance_weight = 0.85 + (max_distance - 5) * (0.95 - 0.85) / (10 - 5)
         else:
-            # Cap at 95% for very large radii
-            base_relevance_weight = min(0.95, 0.85 + (max_distance - 10) * 0.01)
+            # Cap at 98% for very large radii (keywords almost completely dominate)
+            base_relevance_weight = min(0.98, 0.95 + (max_distance - 10) * 0.005)
         
-        # ===== STEP 2: Adjust based on specialty confidence =====
+        # ===== STEP 2: Adjust based on specialty confidence (LESS aggressive reduction) =====
         if specialty_confidence < 0.4:
-            # Very low confidence → heavily favor distance (reduce relevance by 40%)
-            confidence_multiplier = 0.60
+            # Very low confidence -> still favor keywords (reduced penalty: was 0.60, now 0.75)
+            confidence_multiplier = 0.75
             logger.debug(f"   Low confidence adjustment: {confidence_multiplier:.0%} multiplier")
         elif specialty_confidence < 0.7:
-            # Medium confidence → moderate favor distance (reduce relevance by 20%)
-            confidence_multiplier = 0.80
+            # Medium confidence -> keywords still strong (reduced penalty: was 0.80, now 0.90)
+            confidence_multiplier = 0.90
             logger.debug(f"   Medium confidence adjustment: {confidence_multiplier:.0%} multiplier")
         else:
-            # High confidence → trust semantic similarity (no reduction)
+            # High confidence -> trust semantic similarity fully
             confidence_multiplier = 1.0
         
         # Apply confidence adjustment
         adjusted_relevance_weight = base_relevance_weight * confidence_multiplier
         
-        # Ensure minimum distance consideration (never go below 10% distance weight)
-        final_relevance_weight = min(0.90, adjusted_relevance_weight)
+        # NEW: Minimum keyword consideration (never go below 50% keyword weight)
+        final_relevance_weight = max(0.50, min(0.98, adjusted_relevance_weight))
         
         logger.debug(
-            f"   Relevance weight: {final_relevance_weight:.2f} "
+            f"   Relevance weight: {final_relevance_weight:.2f} (KEYWORD-FOCUSED) "
             f"(base: {base_relevance_weight:.2f}, conf_mult: {confidence_multiplier:.2f})"
         )
         
         return final_relevance_weight
-    
+        
     def build_context_for_llm(
         self, 
         df_subset: pd.DataFrame, 

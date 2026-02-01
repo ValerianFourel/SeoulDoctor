@@ -92,6 +92,71 @@ DISTANCE_MAPPING = {
 # UTILITIES
 # ==========================================
 
+# ==========================================
+# ADD THIS HELPER FUNCTION AT THE TOP OF main.py (after imports, before lifespan)
+# ==========================================
+
+def fuzzy_keyword_match(keyword: str, message: str) -> bool:
+    """
+    Check if keyword semantically appears in message.
+    More lenient than exact substring matching.
+    
+    Returns True if:
+    1. Exact substring match (original behavior)
+    2. All significant words from keyword appear in message
+    3. Synonym match for common terms
+    """
+    keyword_lower = keyword.lower().strip()
+    message_lower = message.lower()
+    
+    # Fast path: exact substring match
+    if keyword_lower in message_lower:
+        return True
+    
+    # Word-level matching (e.g., "English support" matches "English-speaking staff")
+    keyword_words = set(keyword_lower.split())
+    
+    # Remove common stopwords that don't affect meaning
+    stopwords = {'with', 'and', 'or', 'the', 'a', 'an', 'in', 'on', 'at', 'for', 'to', 'of'}
+    keyword_words = keyword_words - stopwords
+    
+    # Check if all significant words from keyword appear in message
+    if keyword_words and all(word in message_lower for word in keyword_words):
+        return True
+    
+    # Synonym matching for common medical terms
+    synonyms = {
+        'parking': ['parking lot', 'car park', 'garage', '주차', '주차장'],
+        'wheelchair': ['wheelchair accessible', 'handicap', 'disability access', '휠체어', '장애인'],
+        'english': ['english-speaking', 'english support', 'speak english', 'speaks english', '영어', '영어가능'],
+        'insurance': ['health insurance', 'accepts insurance', 'takes insurance', '보험', '건강보험'],
+        'weekend': ['weekend hours', 'saturday', 'sunday', 'weekends', '주말', '토요일', '일요일'],
+        'emergency': ['urgent', 'urgent care', 'er', '응급', '긴급'],
+        'elevator': ['lift', '엘리베이터', '승강기'],
+        'mri': ['magnetic resonance', 'imaging', 'scan'],
+        'colonoscopy': ['colon', 'endoscopy', '대장내시경', '내시경'],
+        'ultrasound': ['sonogram', 'echo', '초음파'],
+        'xray': ['x-ray', 'radiograph', '엑스레이'],
+        'clean': ['cleanliness', 'sanitary', 'hygienic', '깨끗', '청결'],
+        'friendly': ['kind', 'welcoming', 'warm', '친절', '상냥'],
+        'professional': ['skilled', 'competent', '전문', '전문적'],
+        'modern': ['contemporary', 'up-to-date', 'new', '현대', '최신'],
+        'experienced': ['veteran', 'seasoned', 'expert', '경험', '숙련'],
+    }
+    
+    # Check if keyword has synonyms in message
+    for base, syn_list in synonyms.items():
+        if base in keyword_lower:
+            if any(syn in message_lower for syn in syn_list):
+                return True
+    
+    # Check reverse (if message word is synonym of keyword)
+    for base, syn_list in synonyms.items():
+        if any(syn in keyword_lower for syn in syn_list):
+            if base in message_lower:
+                return True
+    
+    return False
 # Add this function near the top of utils.py, after imports and before other functions
 
 def normalize_seoul_to_null(location: Optional[str]) -> Optional[str]:
