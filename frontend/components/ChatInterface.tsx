@@ -4,9 +4,10 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, MapPin, Sparkles, Globe, Bug, ChevronDown, ChevronUp, X } from "lucide-react";
 import Link from 'next/link';
+import { postJson } from '../lib/api';
 
 // ⭐ DEBUG MODE VISIBILITY CONTROL
-const ENABLE_DEBUG_MODE = false; // Set to true to show debug features
+const ENABLE_DEBUG_MODE = true; // Temporary production diagnostics for agentic-search validation
 
 type State = {
   // ===== SPECIALTY INFORMATION =====
@@ -24,7 +25,7 @@ type State = {
   // ===== SEARCH PARAMETERS =====
   search_mode: string | null; // 'zone' or 'distance'
   max_distance_km: number;
-  willingness_to_travel: string;
+  travel_label: string;
   travel_confidence: number;
   
   // ===== KEYWORD FILTERING =====
@@ -32,6 +33,14 @@ type State = {
   hard_keywords: string[];
   negative_keywords: string[];
   negative_hard_keywords: string[];
+  place_terms: string[];
+  gender_terms: string[];
+  disease_terms: string[];
+  comment_terms: string[];
+  extraction_source: string | null;
+  extraction_error: string | null;
+  is_general_search: boolean;
+  is_citywide_search: boolean;
   
   // ===== HYBRID SEARCH PARAMETERS =====
   hybrid_alpha: number | null;
@@ -52,6 +61,8 @@ type State = {
   last_search_query: string | null;
   last_results_count: number | null;
   last_search_timestamp: string | null;
+  last_retrieval_trace: Record<string, unknown>[];
+  last_retrieval_observations: Record<string, unknown>[];
 };
 
 type Message = {
@@ -65,12 +76,22 @@ type FacilityResult = {
   place_id: string;
   name: string;
   category: string;
-  distance: number;
+  distance: number | null;
   english_confidence_score: number;
   Summaries: string[];
   address?: string;
   website?: string;
   relevance_rank?: number;
+  retrieval_methods?: string[];
+  retrieval_matched_terms?: string[];
+  retrieval_evidence?: Array<{
+    text: string;
+    source_type: string;
+    source_field?: string;
+    matched_terms?: string[];
+    is_verbatim?: boolean;
+  }>;
+  retrieval_trace?: Record<string, unknown>[];
 };
 
 type DebugInfo = {
@@ -81,15 +102,25 @@ type DebugInfo = {
   responseTime?: number;
 };
 
+type ChatApiResponse = {
+  response: string;
+  state: State;
+  results?: FacilityResult[];
+};
+
+type TravelPreferenceResponse = {
+  state: State;
+};
+
 // --- ACCEPTABLE DISTANCE OPTIONS CONFIGURATION ---
 const TRAVEL_OPTIONS = [
-  { label: "On Foot", distance: "0.5km", emoji: "🚶", value: 0.5 },
-  { label: "Bicycle", distance: "2km", emoji: "🚲", value: 2 },
-  { label: "Neighborhood Bus", distance: "5km", emoji: "🟢🚌", value: 5 },
-  { label: "Mainline Bus", distance: "10km", emoji: "🔵🚍", value: 10 },
-  { label: "Subway", distance: "15km", emoji: "🚇", value: 15 },
-  { label: "Car", distance: "20km", emoji: "🚗", value: 20 },
-  { label: "Train", distance: "25km", emoji: "🚆", value: 25 }
+  { label: "Walking Distance", displayLabel: "On Foot", distance: "0.5km", emoji: "🚶", value: 0.5 },
+  { label: "Nearby", displayLabel: "Nearby", distance: "1km", emoji: "📍", value: 1 },
+  { label: "Close", displayLabel: "Bicycle", distance: "2km", emoji: "🚲", value: 2 },
+  { label: "Moderate", displayLabel: "Neighborhood Bus", distance: "5km", emoji: "🟢🚌", value: 5 },
+  { label: "Flexible", displayLabel: "Mainline Bus", distance: "10km", emoji: "🔵🚍", value: 10 },
+  { label: "Willing to Travel", displayLabel: "Subway", distance: "15km", emoji: "🚇", value: 15 },
+  { label: "Anywhere in Seoul", displayLabel: "Across Seoul", distance: "25km", emoji: "🚆", value: 25 }
 ];
 
 // --- HELPER FUNCTION FOR FORMATTING AI RESPONSES ---
@@ -190,7 +221,7 @@ export default function ChatInterface() {
 
   // --- ACCEPTABLE DISTANCE SLIDER STATE ---
   const [showTravelSlider, setShowTravelSlider] = useState(false);
-  const [selectedTravelIndex, setSelectedTravelIndex] = useState(2); // Default to "Neighborhood Bus" (index 2)
+  const [selectedTravelIndex, setSelectedTravelIndex] = useState(3);
 
   const [messages, setMessages] = useState<Message[]>([
     { 
@@ -227,7 +258,7 @@ export default function ChatInterface() {
       }
     };
 
-    container.addEventListener('scroll', handleScroll);
+    container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
@@ -280,7 +311,7 @@ export default function ChatInterface() {
     // Search parameters
     search_mode: null,
     max_distance_km: 5,
-    willingness_to_travel: "Neighborhood Bus",
+    travel_label: "Moderate",
     travel_confidence: 0.5,
     
     // Keywords
@@ -288,6 +319,14 @@ export default function ChatInterface() {
     hard_keywords: [],
     negative_keywords: [],
     negative_hard_keywords: [],
+    place_terms: [],
+    gender_terms: [],
+    disease_terms: [],
+    comment_terms: [],
+    extraction_source: null,
+    extraction_error: null,
+    is_general_search: false,
+    is_citywide_search: false,
     
     // Hybrid search
     hybrid_alpha: null,
@@ -308,7 +347,16 @@ export default function ChatInterface() {
     last_search_query: null,
     last_results_count: null,
     last_search_timestamp: null,
+    last_retrieval_trace: [],
+    last_retrieval_observations: [],
   });
+
+  useEffect(() => {
+    const matchingIndex = TRAVEL_OPTIONS.findIndex(
+      (option) => option.label === currentState.travel_label,
+    );
+    if (matchingIndex >= 0) setSelectedTravelIndex(matchingIndex);
+  }, [currentState.travel_label]);
 
   const toggleFacilityExpand = (placeId: string) => {
     setExpandedFacilities(prev => {
@@ -330,20 +378,18 @@ export default function ChatInterface() {
 
   // ⭐ HANDLE ACCEPTABLE DISTANCE SLIDER CHANGE - NO MESSAGE ADDED
   const handleTravelSliderChange = async (index: number) => {
+    const previousIndex = selectedTravelIndex;
     setSelectedTravelIndex(index);
     const option = TRAVEL_OPTIONS[index];
     
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/set_travel_preference`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await postJson<TravelPreferenceResponse>(
+        '/set_travel_preference',
+        {
           travel_label: option.label,
-          current_state: currentState
-        }),
-      });
-
-      const data = await response.json();
+          current_state: currentState,
+        },
+      );
       
       if (data.state) {
         setCurrentState(data.state);
@@ -352,13 +398,14 @@ export default function ChatInterface() {
       // ❌ REMOVED: No AI confirmation message added
       
     } catch (error) {
+      setSelectedTravelIndex(previousIndex);
       console.error("Acceptable distance preference error:", error);
-      alert("Failed to update acceptable distance preference. Please try again.");
+      alert(error instanceof Error ? error.message : "Failed to update acceptable distance preference.");
     }
   };
 
   const handleSendMessage = async (text: string, stateOverride?: Partial<State>) => {
-    if (!text.trim()) return;
+    if (!text.trim() || (loading && !stateOverride)) return;
 
     const userMsg: Message = { 
       role: "user", 
@@ -395,13 +442,7 @@ export default function ChatInterface() {
     }
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestPayload),
-      });
-
-      const data = await response.json();
+      const data = await postJson<ChatApiResponse>('/chat', requestPayload);
       const responseTime = Date.now() - requestTime;
 
       // Debug: Log response
@@ -423,7 +464,7 @@ export default function ChatInterface() {
         {
           role: "ai",
           content: data.response,
-          results: data.results,
+          results: data.results ?? [],
           timestamp: new Date().toISOString()
         },
       ]);
@@ -687,7 +728,7 @@ export default function ChatInterface() {
                   <div className="flex justify-between">
                     <span>Travel Label:</span>
                     <span className="font-mono text-cyan-400 text-[10px]">
-                      {currentState.willingness_to_travel}
+                      {currentState.travel_label}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -765,6 +806,36 @@ export default function ChatInterface() {
                         <span className="text-slate-500 text-[10px]">none</span>
                       )}
                     </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Hybrid Search Configuration */}
+              <div className="bg-slate-800 rounded p-3 border border-slate-700">
+                <h3 className="font-bold text-emerald-400 mb-2">🧭 Extracted Facets</h3>
+                <div className="space-y-2 text-slate-300">
+                  {([
+                    ["Place", currentState.place_terms || []],
+                    ["Gender", currentState.gender_terms || []],
+                    ["Disease", currentState.disease_terms || []],
+                    ["Comments", currentState.comment_terms || []],
+                  ] as Array<[string, string[]]>).map(([label, terms]) => (
+                    <div key={label}>
+                      <span className="text-slate-400 text-[10px]">{label}:</span>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {terms.length ? terms.map((term) => (
+                          <span key={term} className="px-1.5 py-0.5 bg-emerald-900/30 text-emerald-300 rounded text-[10px]">
+                            {term}
+                          </span>
+                        )) : <span className="text-slate-500 text-[10px]">none</span>}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="pt-1 border-t border-slate-700 text-[10px]">
+                    <div>Extractor: <span className="font-mono text-cyan-300">{currentState.extraction_source || "unknown"}</span></div>
+                    {currentState.extraction_error && (
+                      <div>Fallback reason: <span className="font-mono text-amber-300">{currentState.extraction_error}</span></div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -915,8 +986,8 @@ export default function ChatInterface() {
                     )}
                     <div className="mt-2">
                       <span className="text-slate-400">Response Preview:</span>
-                      <pre className="mt-1 p-2 bg-slate-900 rounded text-[10px] overflow-x-auto max-h-32">
-                        {JSON.stringify(debugInfo.lastResponse, null, 2).slice(0, 500)}...
+                      <pre className="mt-1 p-2 bg-slate-900 rounded text-[10px] overflow-auto max-h-80 whitespace-pre-wrap break-all">
+                        {JSON.stringify(debugInfo.lastResponse, null, 2).slice(0, 5000)}
                       </pre>
                     </div>
                   </div>
@@ -1202,10 +1273,26 @@ export default function ChatInterface() {
                                                                             
                                 {/* Debug: Show place_id */}
                                 {ENABLE_DEBUG_MODE && debugMode && (
-                                  <div className="mt-2 pt-2 border-t border-slate-200">
+                                  <div className="mt-2 pt-2 border-t border-slate-200 space-y-2">
                                     <p className="text-xs text-slate-500 font-mono">
                                       ID: {facility.place_id}
                                     </p>
+                                    <p className="text-xs text-purple-700 font-mono">
+                                      Retrieval: {facility.retrieval_methods?.join(" + ") || "not reported"}
+                                    </p>
+                                    <p className="text-xs text-emerald-700 font-mono">
+                                      Exact matches: {facility.retrieval_matched_terms?.join(", ") || "none"}
+                                    </p>
+                                    {facility.retrieval_evidence?.map((evidence, evidenceIdx) => (
+                                      <div key={`${facility.place_id}-evidence-${evidenceIdx}`} className="rounded bg-slate-50 p-2 text-[11px] text-slate-700">
+                                        <div className="font-mono text-slate-500">
+                                          {evidence.is_verbatim ? "actual comment" : evidence.source_type}
+                                          {evidence.source_field ? ` · ${evidence.source_field}` : ""}
+                                          {evidence.matched_terms?.length ? ` · matched: ${evidence.matched_terms.join(", ")}` : ""}
+                                        </div>
+                                        <div>{evidence.text}</div>
+                                      </div>
+                                    ))}
                                   </div>
                                 )}
                               </div>
@@ -1255,7 +1342,7 @@ export default function ChatInterface() {
                   <span className="text-xl">{TRAVEL_OPTIONS[selectedTravelIndex].emoji}</span>
                   <div>
                     <h3 className="font-semibold text-slate-800 text-xs leading-tight">
-                      {TRAVEL_OPTIONS[selectedTravelIndex].label}
+                      {TRAVEL_OPTIONS[selectedTravelIndex].displayLabel}
                     </h3>
                     <p className="text-[10px] text-slate-500">
                       {TRAVEL_OPTIONS[selectedTravelIndex].distance}
@@ -1271,6 +1358,7 @@ export default function ChatInterface() {
               <div className="relative">
                 <input
                   type="range"
+                  aria-label="Maximum travel distance"
                   min="0"
                   max={TRAVEL_OPTIONS.length - 1}
                   value={selectedTravelIndex}
@@ -1296,7 +1384,8 @@ export default function ChatInterface() {
                           ? 'scale-110 opacity-100' 
                           : 'opacity-40 hover:opacity-70'
                       }`}
-                      title={`${option.label} (${option.distance})`}
+                      title={`${option.displayLabel} (${option.distance})`}
+                      aria-label={`Search distance: ${option.displayLabel}, ${option.distance}`}
                     >
                       {option.emoji}
                     </button>
@@ -1315,6 +1404,7 @@ export default function ChatInterface() {
               onClick={handleLocationClick}
               className="flex-shrink-0 p-3 sm:p-3.5 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 border border-blue-200 hover:border-blue-400 transition-all text-blue-600 hover:text-blue-700 shadow-sm"
               title="Share Location"
+              aria-label="Share current location"
             >
               <MapPin size={20} className="sm:w-5 sm:h-5" />
             </button>
@@ -1322,12 +1412,14 @@ export default function ChatInterface() {
             {/* ⭐ Acceptable Distance Button - HOVER TRIGGER WITH ARROW ICON */}
             <button
               onMouseEnter={() => setShowTravelSlider(true)}
+              onClick={() => setShowTravelSlider((visible) => !visible)}
               className={`relative flex-shrink-0 p-3 sm:p-3.5 rounded-xl border-2 transition-all shadow-sm ${
                 showTravelSlider
                   ? 'bg-gradient-to-br from-blue-100 to-blue-200 border-blue-400 text-blue-700'
                   : 'bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 border-blue-200 hover:border-blue-400 text-blue-600 hover:text-blue-700'
               }`}
               title="Set Acceptable Distance"
+              aria-label="Set acceptable travel distance"
             >
               {/* Icon: Arrow pointing right (navigation/distance) */}
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1358,6 +1450,7 @@ export default function ChatInterface() {
             <button
               onClick={() => handleSendMessage(input)}
               disabled={!input.trim() || loading}
+              aria-label="Send message"
               className={`flex-shrink-0 p-3 sm:p-3.5 rounded-xl transition-all shadow-md ${
                 input.trim() && !loading 
                   ? "bg-gradient-to-r from-blue-500 to-blue-700 text-white hover:shadow-lg hover:scale-105 active:scale-95" 

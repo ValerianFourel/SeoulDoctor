@@ -1,0 +1,69 @@
+[
+  {
+    "level": 1,
+    "language": "English",
+    "query": "Find a dentist.",
+    "expected": {"specialty": "치과"}
+  },
+  {
+    "level": 2,
+    "language": "Korean",
+    "query": "피부과를 찾고 있어요.",
+    "expected": {"specialty": "피부과"}
+  },
+  {
+    "level": 3,
+    "language": "English",
+    "query": "Find a dentist in Gangnam.",
+    "expected": {"specialty": "치과", "place_terms": ["강남구"]}
+  },
+  {
+    "level": 4,
+    "language": "Korean",
+    "query": "마포구에서 친절한 피부과를 찾아 주세요.",
+    "expected": {"specialty": "피부과", "place_terms": ["마포구"], "comment_terms": ["friendly"]}
+  },
+  {
+    "level": 5,
+    "language": "English",
+    "query": "I need a female gynecologist for endometriosis in Gangnam.",
+    "expected": {"specialty": "산부인과", "place_terms": ["강남구"], "gender_terms": ["female"], "disease_terms": ["endometriosis"]}
+  },
+  {
+    "level": 6,
+    "language": "Korean",
+    "query": "강남에서 자궁내막증을 진료하는 여성 산부인과 의사를 찾고 있어요.",
+    "expected": {"specialty": "산부인과", "place_terms": ["강남구"], "gender_terms": ["female"], "disease_terms": ["endometriosis"]}
+  },
+  {
+    "level": 7,
+    "language": "English",
+    "query": "Find a female gynecologist in Gangnam who treats endometriosis and whose patient comments say she explains things clearly.",
+    "expected": {"specialty": "산부인과", "place_terms": ["강남구"], "gender_terms": ["female"], "disease_terms": ["endometriosis"], "comment_terms": ["clear explanations"]},
+    "require_retrieval": ["dense_general", "bm25_specific"]
+  },
+  {
+    "level": 8,
+    "language": "Korean",
+    "query": "마포구에서 아토피를 진료하고 주차가 가능하며, 실제 환자 후기에서 친절하고 설명을 잘한다고 언급된 피부과를 찾아 주세요.",
+    "expected": {"specialty": "피부과", "place_terms": ["마포구"], "disease_terms": ["eczema"], "comment_terms": ["friendly", "clear explanations"]},
+    "require_retrieval": ["dense_general", "bm25_specific"],
+    "require_verbatim_comment": true
+  },
+  {
+    "level": 9,
+    "language": "Mixed",
+    "query": "강남 female OB/GYN 중 자궁내막증 진료, English support, weekend hours가 있고 comments에서 explains well이 실제로 나온 곳을 찾아줘.",
+    "expected": {"specialty": "산부인과", "place_terms": ["강남구"], "gender_terms": ["female"], "disease_terms": ["endometriosis"], "comment_terms": ["clear explanations"]},
+    "require_retrieval": ["dense_general", "bm25_specific"],
+    "require_verbatim_comment": true
+  },
+  {
+    "level": 10,
+    "language": "English",
+    "query": "Across Seoul, find a female gynecologist for endometriosis with parking and English support; prefer actual comments mentioning thorough explanations, but avoid comments about rushed consultations or long waits. Explain which exact evidence matched each constraint.",
+    "expected": {"specialty": "산부인과", "gender_terms": ["female"], "disease_terms": ["endometriosis"], "comment_terms": ["thorough"]},
+    "require_retrieval": ["dense_general", "bm25_specific"],
+    "require_verbatim_comment": true
+  }
+]

@@ -110,7 +110,7 @@ import json
 import pandas as pd
 import numpy as np
 import re
-from fastapi import FastAPI, HTTPException, Cookie, Response, Request
+from fastapi import FastAPI, HTTPException, Cookie, Header, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Dict, Any, Tuple
 from groq import Groq
@@ -153,6 +153,8 @@ from cookies import (
 
 # Import RAG Pipeline
 from rag_pipeline import RAGPipeline
+from config import GROQ_CHAT_MODEL
+from query_facets import augment_extracted_facets, retrieval_terms_from_state
 
 # ==========================================
 # LOGGING SETUP
@@ -190,9 +192,6 @@ CHROMA_PATH = "./chroma_db"
 # Defaults
 DEFAULT_LAT = 37.5219  # Yeouido
 DEFAULT_LON = 126.9243
-
-# Global state
-LANGUAGE = "English"  # Semi-fixed fixture, updated per message
 
 # Global data structures
 rag_pipeline = None  # RAG Pipeline instance
@@ -273,7 +272,11 @@ def calculate_field_boost(value, keyword_lower: str) -> bool:
     
     # Handle dicts
     if isinstance(value, dict):
-        for v in value.values():
+        for key, v in value.items():
+            if isinstance(v, bool):
+                if v and keyword_matches_word_boundary(keyword_lower, str(key).replace('_', ' ')):
+                    return True
+                continue
             # Recursively handle complex dict values
             if isinstance(v, (np.ndarray, list, tuple, dict, pd.Series)):
                 if calculate_field_boost(v, keyword_lower):
@@ -342,12 +345,12 @@ async def lifespan(app: FastAPI):
         
         df_filtered['place_id'] = df_filtered['place_id'].fillna('').astype(str)
         
-        logger.info("🤖 Initializing RAG Pipeline with Hybrid Search (BM25 + Vector)...")
+        logger.info("🤖 Initializing agentic RAG (dense general + BM25 specific)...")
         rag_pipeline = RAGPipeline(
             chroma_path=CHROMA_PATH,
             openai_api_key=OPENAI_API_KEY,
             groq_client=client,
-            collection_name="seoul_med_v3",
+            collection_name="seoul_med_agentic_v2",
             embedding_model="text-embedding-3-small"
         )
         
@@ -357,6 +360,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"✅ RAG Pipeline ready:")
         logger.info(f"   Vector documents: {rag_stats['document_count']}")
         logger.info(f"   BM25 documents: {rag_stats['bm25_document_count']}")
+        logger.info(f"   Specific evidence chunks: {rag_stats['specific_bm25_document_count']}")
         logger.info(f"   Hybrid search: {'ENABLED ✓' if rag_stats['hybrid_search_enabled'] else 'DISABLED'}")
         
     except Exception as e:
@@ -399,8 +403,6 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
     Call the extraction LLM with keyword extraction (hard + soft + negative keywords).
     Uses intent-based classification: "I want X" → positive, "avoid X" → negative
     """
-    global LANGUAGE
-    
     if not consent:
         consent = CookieConsent()
     
@@ -441,6 +443,10 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
 - soft_keywords: subjective qualities user WANTS (can include unfriendly, rude, cold, expensive, etc.)
 - negative_hard_keywords: factual exclusions (without parking, no weekend hours)
 - negative_keywords: qualities to AVOID (avoid friendly, not polite)
+- place_terms: literal place/district/landmark phrases
+- gender_terms: requested doctor gender, preserving the user's wording
+- disease_terms: diseases, conditions, or symptoms to treat
+- comment_terms: qualities that should be supported by patient comments/reviews
 
 **Format:**
 {{
@@ -454,7 +460,11 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
   "hard_keywords": [],
   "soft_keywords": [],
   "negative_hard_keywords": [],
-  "negative_keywords": []
+  "negative_keywords": [],
+  "place_terms": [],
+  "gender_terms": [],
+  "disease_terms": [],
+  "comment_terms": []
 }}
 """
     
@@ -465,13 +475,16 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
         # CALL LLM WITH HIGHER TEMPERATURE
         # ============================================
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=GROQ_CHAT_MODEL,
             messages=extraction_messages,
             temperature=0.5,  # Higher for less rigid behavior
             max_completion_tokens=512,
             response_format={"type": "json_object"}
         )
-        extracted = json.loads(completion.choices[0].message.content)
+        extracted = augment_extracted_facets(
+            user_message,
+            json.loads(completion.choices[0].message.content),
+        )
         
         # ============================================
         # DEBUG LOGGING: RAW EXTRACTION
@@ -644,13 +657,16 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
         
     except Exception as e:
         logger.error(f"Extraction Error: {e}", exc_info=True)
-        return {
+        fallback = augment_extracted_facets(user_message, {
             "travel_label": "Moderate", 
             "hard_keywords": [], 
             "soft_keywords": [],
             "negative_hard_keywords": [],
             "negative_keywords": []
-        }
+        })
+        fallback["extraction_source"] = "deterministic_fallback"
+        fallback["extraction_error"] = type(e).__name__
+        return fallback
 
 def quick_extract_location_change(user_message: str, consent: Optional[CookieConsent] = None) -> Dict[str, Any]:
     """SHORTER extraction for when user is just changing location OR travel distance."""
@@ -673,7 +689,7 @@ Return JSON: {{
     
     try:
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=GROQ_CHAT_MODEL,
             messages=extraction_messages,
             temperature=0.0,
             max_completion_tokens=128,
@@ -726,7 +742,7 @@ Return JSON: {{
     
     try:
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=GROQ_CHAT_MODEL,
             messages=extraction_messages,
             temperature=0.0,
             max_completion_tokens=128,
@@ -860,6 +876,19 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any], replace
             state.negative_keywords = list(existing_neg.union(new_neg))
             logger.info(f"➕ Added negative keywords: {state.negative_keywords}")
 
+    # ===== STRUCTURED RETRIEVAL FACETS =====
+    for field in ("place_terms", "gender_terms", "disease_terms", "comment_terms"):
+        incoming = extracted.get(field)
+        if incoming is None:
+            continue
+        if replace_keywords:
+            setattr(state, field, list(dict.fromkeys(incoming)))
+        elif incoming:
+            existing = getattr(state, field, [])
+            setattr(state, field, list(dict.fromkeys([*existing, *incoming])))
+    state.extraction_source = extracted.get("extraction_source", state.extraction_source)
+    state.extraction_error = extracted.get("extraction_error")
+
     # ===== SEARCH MODE =====
     if state.location:
         state.search_mode = detect_search_mode(state.location, state)
@@ -881,10 +910,12 @@ def execute_emergency_search(
     Returns facilities from: 응급실, 종합병원, 국립병원, 시립,도립병원
     Sorted purely by distance - no priority, no summary requirements.
     """
-    global LANGUAGE, df_facilities
+    global df_facilities
     
     if not consent:
         consent = CookieConsent()
+
+    language = state.language_pref or "English"
     
     privacy_safe_log(consent, "=" * 60)
     privacy_safe_log(consent, "🚨 EMERGENCY SEARCH ACTIVATED")
@@ -901,7 +932,7 @@ def execute_emergency_search(
     if len(emergency_df) == 0:
         logger.error("❌ CRITICAL: No emergency facilities in database!")
         
-        if LANGUAGE == "English":
+        if language == "English":
             response_text = (
                 "🚨 **CALL 119 IMMEDIATELY!**\n\n"
                 "I couldn't find emergency facility data.\n"
@@ -923,7 +954,7 @@ def execute_emergency_search(
     if not (user_lat and user_lon):
         privacy_safe_log(consent, "⚠️ No location - requesting from user")
         
-        if LANGUAGE == "English":
+        if language == "English":
             response_text = (
                 "🚨 **MEDICAL EMERGENCY**\n\n"
                 "1️⃣ **CALL 119 NOW** (Korea's emergency number)\n\n"
@@ -963,7 +994,7 @@ def execute_emergency_search(
     if len(emergency_df) == 0:
         logger.error("❌ No emergency facilities with GPS!")
         
-        if LANGUAGE == "English":
+        if language == "English":
             response_text = "🚨 **CALL 119 IMMEDIATELY!**\n\nNo GPS data available for emergency facilities."
         else:
             response_text = "🚨 **지금 바로 119에 전화하세요!**\n\n응급 시설 GPS 데이터 없음."
@@ -1012,7 +1043,7 @@ def execute_emergency_search(
     closest = results[0]
     distance = closest['distance_km']
     
-    if LANGUAGE == "English":
+    if language == "English":
         response_text = (
             f"🚨 **EMERGENCY: NEAREST FACILITIES**\n\n"
             f"📢 **Say:** \"Emergency. Need medical help. Location: {closest.get('district', 'Seoul')}.\"\n\n"
@@ -1106,10 +1137,12 @@ def execute_search(
     - ⭐ Negative keyword support
     - ⭐ City-wide search support (no location bias, no distance calculation)
     """
-    global LANGUAGE, rag_pipeline
+    global rag_pipeline
     
     if not consent:
         consent = CookieConsent()
+
+    language = state.language_pref or "English"
     
     state.last_search_query = user_message
     state.last_search_timestamp = datetime.utcnow().isoformat()
@@ -1143,7 +1176,7 @@ def execute_search(
     else:
         privacy_safe_log(consent, f"Max Distance: {max_distance}km")
     
-    privacy_safe_log(consent, f"Language: {LANGUAGE}")
+    privacy_safe_log(consent, f"Language: {language}")
     
     if search_precision == "LOW":
         privacy_safe_log(consent, "🎲 LOW PRECISION → Distance-first, all facility types")
@@ -1392,9 +1425,7 @@ def execute_search(
                 
                 elif field in ['amenities', 'medical_info_parsed']:
                     def check_dict_field(val):
-                        if isinstance(val, dict):
-                            return any(keyword_matches_word_boundary(keyword_lower, str(v)) for v in val.values())
-                        return False
+                        return calculate_field_boost(val, keyword_lower)
                     mask = mask | search_df[field].apply(check_dict_field)
                 
                 else:
@@ -1428,9 +1459,7 @@ def execute_search(
                     
                     elif field in ['amenities', 'medical_info_parsed']:
                         def check_dict_field(val):
-                            if isinstance(val, dict):
-                                return any(keyword_matches_word_boundary(neg_keyword_lower, str(v)) for v in val.values())
-                            return False
+                            return calculate_field_boost(val, neg_keyword_lower)
                         exclude_mask = exclude_mask | search_df[field].apply(check_dict_field)
                     
                     else:
@@ -1580,33 +1609,27 @@ def execute_search(
         final_df = working_df.copy()
         privacy_safe_log(consent, f"⚠️ Both paths failed, using {len(final_df)} base results")
     
-    # ===== HYBRID RAG SEMANTIC RANKING =====
-    
-    if search_precision != "LOW":
-        # Build query for semantic search
-        query_components = []
-        if state.specialty and search_precision == "HIGH":
+    # ===== AGENTIC RAG: LLM → SEARCH → OBSERVATION LOOP =====
+
+    exact_retrieval_terms = retrieval_terms_from_state(state)
+    has_retrieval_preferences = bool(state.keywords or exact_retrieval_terms)
+    should_run_rag = search_precision != "LOW" or has_retrieval_preferences
+
+    if should_run_rag:
+        query_components = [user_message]
+        if state.specialty:
             query_components.append(state.specialty)
-        if state.keywords:
-            query_components.extend(state.keywords)
-        
-        query_text = " ".join(query_components) if query_components else user_message
+        query_components.extend(state.keywords)
+        query_components.extend(exact_retrieval_terms)
+        query_text = " ".join(dict.fromkeys(part for part in query_components if part))
         
         if len(query_text.strip()) > 2 and len(final_df) > 0 and rag_pipeline:
-            privacy_safe_log(consent, "🔀 Applying Hybrid RAG (BM25 + Vector)...")
+            privacy_safe_log(consent, "🤖 Applying agentic RAG retrieval loop...")
             
             try:
-                route_decision = rag_pipeline.route_query(query_text)
-                state.query_intent = route_decision.get('intent', 'MIXED')
-                state.suggested_alpha = route_decision.get('suggested_alpha', 0.7)
-                
-                actual_alpha = rag_pipeline.calculate_alpha(
-                    route_decision, 
-                    state.manual_search_mode,
-                )
-                state.hybrid_alpha = actual_alpha
-                
-                privacy_safe_log(consent, f"   🎯 Router: {state.query_intent} (α={actual_alpha:.2f})")
+                state.query_intent = "AGENTIC"
+                state.suggested_alpha = None
+                state.hybrid_alpha = None
                 
                 final_df = rag_pipeline.apply_combined_ranking(
                     df=final_df,
@@ -1616,14 +1639,18 @@ def execute_search(
                     n_results=200,
                     use_hybrid=True,
                     manual_mode=state.manual_search_mode,
-                    is_general_search=(search_precision == "LOW"),
-                    specialty_confidence=specialty_conf
+                    is_general_search=False,
+                    specialty_confidence=specialty_conf,
+                    exact_terms=exact_retrieval_terms,
+                    use_agentic=True,
                 )
+                state.last_retrieval_trace = final_df.attrs.get("rag_trace", [])
+                state.last_retrieval_observations = final_df.attrs.get("rag_observations", [])
                 
-                privacy_safe_log(consent, f"✓ Hybrid ranking applied")
+                privacy_safe_log(consent, "✓ Agentic dense/BM25 ranking applied")
                 
             except Exception as e:
-                logger.error(f"Hybrid ranking error: {e}", exc_info=True)
+                logger.error(f"Agentic RAG ranking error: {e}", exc_info=True)
                 final_df['relevance_rank'] = 9999
                 # Sort by distance only if we have it
                 if has_distance_data:
@@ -1633,8 +1660,8 @@ def execute_search(
             state.suggested_alpha = None
             state.hybrid_alpha = None
     else:
-        # LOW PRECISION: Skip semantic ranking
-        privacy_safe_log(consent, "📍 LOW PRECISION → Skipping semantic ranking")
+        # Truly general request with no textual preferences: distance is enough.
+        privacy_safe_log(consent, "📍 General request → distance-only ranking")
         
         # Sort by distance only if we have it
         if has_distance_data:
@@ -1650,7 +1677,7 @@ def execute_search(
     
     pre_english_df = final_df.copy()
     
-    if LANGUAGE == "English" and 'has_english' in final_df.columns:
+    if language == "English" and 'has_english' in final_df.columns:
         before = len(final_df)
         final_df = final_df[final_df['has_english'] == True]
         privacy_safe_log(consent, f"🌐 English filter: {before} → {len(final_df)}")
@@ -1696,7 +1723,7 @@ def execute_search(
             facilities_context = rag_pipeline.build_context_for_llm(
                 final_df, 
                 n_results=n_results, 
-                language=LANGUAGE
+                language=language
             )
         except Exception as e:
             logger.error(f"Context building error: {e}", exc_info=True)
@@ -1707,16 +1734,16 @@ def execute_search(
             "content": GENERATION_PROMPT.format(
                 user_query=user_message,
                 location_context=location_context,
-                language=LANGUAGE,
+                language=language,
                 facilities_context=facilities_context,
-                hard_keywords=", ".join(state.hard_keywords) if state.hard_keywords else "none",
-                soft_keywords=", ".join(state.keywords) if state.keywords else "none"
+                hard_keywords=", ".join(retrieval_terms_from_state(state)) or "none",
+                soft_keywords=", ".join([*state.keywords, *state.comment_terms]) or "none"
             )
         }]
         
         try:
             gen_completion = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model=GROQ_CHAT_MODEL,
                 messages=gen_messages,
                 temperature=1.0,
                 max_completion_tokens=1024
@@ -1729,19 +1756,19 @@ def execute_search(
 
             # Add contextual disclaimers
             if search_precision == "LOW" and len(results) > 0:
-                if LANGUAGE == "English":
+                if language == "English":
                     response_text += "\n\n💡 Showing nearby facilities sorted by distance. These are general medical facilities that can help assess your needs or provide referrals."
                 else:
                     response_text += "\n\n💡 거리순으로 근처 시설을 표시합니다. 진료 후 필요시 전문의에게 의뢰됩니다."
             
             elif search_precision == "MEDIUM" and len(general_fallback_df) > 0:
-                if LANGUAGE == "English":
+                if language == "English":
                     response_text += f"\n\n💡 I included some general clinics nearby since there were limited {state.specialty} options in your area."
                 else:
                     response_text += f"\n\n💡 해당 지역에 {state.specialty} 시설이 제한적이어서 일반 병원도 포함했습니다."
             
             elif len(relaxed_filters) > 0 and n_results >= 3:
-                if LANGUAGE == "English":
+                if language == "English":
                     if any("expanded" in f for f in relaxed_filters):
                         response_text += "\n\n💡 I expanded the search area to find more options."
                     else:
@@ -1750,21 +1777,21 @@ def execute_search(
                     response_text += "\n\n💡 더 많은 옵션을 위해 검색 범위를 조정했습니다."
             
             elif n_results < 3:
-                if LANGUAGE == "English":
+                if language == "English":
                     response_text += f"\n\n⚠️ Limited availability: Only {n_results} facilities found. Consider expanding your search area or criteria."
                 else:
                     response_text += f"\n\n⚠️ 제한된 옵션: {n_results}개만 찾았습니다. 검색 범위를 확대해 보세요."
             
             # City-wide search disclaimer
             elif is_citywide:
-                if LANGUAGE == "English":
+                if language == "English":
                     response_text += "\n\n🌆 City-wide search - facilities shown from across Seoul's 25 districts."
                 else:
                     response_text += "\n\n🌆 서울 전역 검색 - 25개 구에서 검색된 결과입니다."
             
         except Exception as e:
             logger.error(f"Response generation error: {e}", exc_info=True)
-            if LANGUAGE == "English":
+            if language == "English":
                 response_text = f"I found {len(final_df)} facilities. Here are the top {n_results}:"
             else:
                 response_text = f"{len(final_df)}개의 시설을 찾았습니다. 상위 {n_results}개:"
@@ -1812,6 +1839,19 @@ def execute_search(
             
             if 'medical_info_parsed' in row.index and isinstance(row['medical_info_parsed'], dict):
                 result['medical_info_parsed'] = safe_convert_to_python(row['medical_info_parsed'])
+
+            if 'retrieval_evidence' in row.index and isinstance(row['retrieval_evidence'], list):
+                result['retrieval_evidence'] = safe_convert_to_python(row['retrieval_evidence'])
+
+            if 'retrieval_methods' in row.index and isinstance(row['retrieval_methods'], list):
+                result['retrieval_methods'] = safe_convert_to_python(row['retrieval_methods'])
+
+            if 'retrieval_matched_terms' in row.index and isinstance(row['retrieval_matched_terms'], list):
+                result['retrieval_matched_terms'] = safe_convert_to_python(row['retrieval_matched_terms'])
+
+            rag_trace = final_df.attrs.get('rag_trace', [])
+            if rag_trace:
+                result['retrieval_trace'] = safe_convert_to_python(rag_trace)
             
             result['has_english'] = safe_convert_to_python(row.get('has_english', False))
             
@@ -1851,7 +1891,7 @@ def execute_search(
         logger.warning("⚠️ No facilities found")
         
         if state.specialty and search_precision == "HIGH":
-            if LANGUAGE == "English":
+            if language == "English":
                 response_text = (
                     f"I couldn't find any {state.specialty} facilities in your search area.\n\n"
                     f"Try:\n• Expanding your search radius\n• Searching 'any doctor' to see general facilities"
@@ -1859,7 +1899,7 @@ def execute_search(
             else:
                 response_text = f"검색 지역에서 {state.specialty} 시설을 찾을 수 없습니다.\n\n검색 범위를 확대하거나 '아무 의사'로 검색해 보세요."
         else:
-            if LANGUAGE == "English":
+            if language == "English":
                 response_text = "I couldn't find any facilities matching your criteria.\n\nTry adjusting your location or search area."
             else:
                 response_text = "조건에 맞는 시설을 찾을 수 없습니다.\n\n위치나 검색 범위를 조정해 보세요."
@@ -1892,19 +1932,22 @@ def execute_search(
 @app.post("/consent")
 async def update_consent(
     consent: CookieConsent,
-    response: Response
+    response: Response,
+    request: Request,
 ):
     """Update cookie consent preferences."""
     try:
         consent.timestamp = datetime.utcnow().isoformat()
         
+        is_secure_request = request.url.scheme == "https"
         response.set_cookie(
             key="cookieConsent",
             value=json.dumps(consent.model_dump()),
             max_age=30 * 24 * 60 * 60,
-            httponly=False,
-            secure=True,
-            samesite="lax"
+            httponly=True,
+            secure=is_secure_request,
+            samesite="none" if is_secure_request else "lax",
+            path="/",
         )
         
         logger.info(f"✅ Consent updated: analytics={consent.analytics}, advertising={consent.advertising}")
@@ -1924,12 +1967,11 @@ async def update_consent(
 @app.post("/set_travel_preference")
 async def set_travel_preference(
     req: dict,
-    cookieConsent: Optional[str] = Cookie(None)
+    cookieConsent: Optional[str] = Cookie(None),
+    consent_header: Optional[str] = Header(None, alias="X-Cookie-Consent"),
 ):
     """Direct endpoint for setting travel preference from UI widget."""
-    global LANGUAGE
-    
-    consent = get_consent_from_cookie(cookieConsent)
+    consent = get_consent_from_cookie(consent_header or cookieConsent)
     consent = ensure_consent_object(consent)
     
     travel_label = req.get('travel_label')
@@ -1951,12 +1993,12 @@ async def set_travel_preference(
     state.max_distance_km = DISTANCE_MAPPING[travel_label]
     
     # Detect language from state
-    LANGUAGE = state.language_pref or "English"
+    language = state.language_pref or "English"
     
     privacy_safe_log(consent, f"✅ Travel preference set via widget: {travel_label} → {state.max_distance_km}km (confidence: 1.0)")
     
     # Generate response
-    if LANGUAGE == "English":
+    if language == "English":
         response_text = f"Got it! I'll search within {state.max_distance_km}km ({travel_label})."
     else:
         response_text = f"알겠습니다! {state.max_distance_km}km 반경으로 검색하겠습니다 ({travel_label})."
@@ -1991,15 +2033,14 @@ async def chat_endpoint(
     req: ChatRequest,
     response: Response,
     request: Request,
-    cookieConsent: Optional[str] = Cookie(None)
+    cookieConsent: Optional[str] = Cookie(None),
+    consent_header: Optional[str] = Header(None, alias="X-Cookie-Consent"),
 ):
     """
     Router-Controller Architecture with Hybrid RAG and keyword filtering.
     """
     
-    global LANGUAGE
-    
-    consent = get_consent_from_cookie(cookieConsent)
+    consent = get_consent_from_cookie(consent_header or cookieConsent)
     consent = ensure_consent_object(consent)
 
     if should_log_analytics(consent):
@@ -2009,13 +2050,13 @@ async def chat_endpoint(
     else:
         logger.info("📨 REQUEST (limited logging - no analytics consent)")
     
-    LANGUAGE = detect_language(req.message)
+    language = detect_language(req.message)
     
     if should_log_analytics(consent):
         logger.info("=" * 60)
     
     enriched_state = standardize_and_fill_state(req.current_state, consent)
-    enriched_state.language_pref = LANGUAGE
+    enriched_state.language_pref = language
     
     current_turn = enriched_state.turn_count + 1
     
@@ -2046,7 +2087,7 @@ async def chat_endpoint(
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         
         # ⭐ CRITICAL: Set ALL location fields to None for true city-wide
         new_state.location = None  # ← Not "Seoul", but None
@@ -2088,7 +2129,7 @@ async def chat_endpoint(
                 "results": results
             }
         else:
-            if LANGUAGE == "English":
+            if language == "English":
                 response_text = "I'll search all of Seoul. What type of doctor do you need? (or say 'any' for all facilities)"
             else:
                 response_text = "서울 전역에서 검색하겠습니다. 어떤 종류의 의사가 필요하신가요? (또는 '상관없음'이라고 말씀하세요)"
@@ -2106,7 +2147,7 @@ async def chat_endpoint(
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         new_state.location = req.message.strip()
         
         verified = verify_and_standardize_address(f"서울 {req.message.strip()}")
@@ -2148,7 +2189,7 @@ async def chat_endpoint(
             }
         else:
             district_name = new_state.district or req.message.strip()
-            if LANGUAGE == "English":
+            if language == "English":
                 response_text = f"Got it, I'll search in {district_name}. What type of doctor do you need? (or 'any')"
             else:
                 response_text = f"{district_name}에서 검색하겠습니다. 어떤 종류의 의사가 필요하신가요? (또는 '상관없음')"
@@ -2180,7 +2221,7 @@ async def chat_endpoint(
     
     try:
         router_completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=GROQ_CHAT_MODEL,
             messages=router_messages,
             temperature=0.0,
             max_completion_tokens=256,
@@ -2206,7 +2247,7 @@ async def chat_endpoint(
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         new_state.conversation_phase = "emergency"
         
         if not (new_state.latitude and new_state.longitude):
@@ -2236,7 +2277,7 @@ async def chat_endpoint(
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         
         # ===== DETECT TRUE "ANY" KEYWORDS (NOT FACILITY TYPES) =====
         
@@ -2389,7 +2430,10 @@ async def chat_endpoint(
             # Check if we have enough information to search
             has_location = bool(new_state.location or new_state.latitude or new_state.district)
             has_specialty = bool(new_state.specialty)
-            has_keywords = bool(new_state.keywords or new_state.hard_keywords)
+            has_keywords = bool(
+                new_state.keywords or new_state.hard_keywords
+                or new_state.gender_terms or new_state.disease_terms or new_state.comment_terms
+            )
             
             # We can proceed if we have ANY of: location, specialty, or keywords
             can_proceed = has_location or has_specialty or has_keywords
@@ -2429,7 +2473,7 @@ async def chat_endpoint(
                 
                 privacy_safe_log(consent, "⚠️ Insufficient information - requesting clarification")
                 
-                if LANGUAGE == "English":
+                if language == "English":
                     response_text = (
                         "I'd be happy to help! To find the right facility, I need:\n\n"
                         "**Where?**\n"
@@ -2466,7 +2510,7 @@ async def chat_endpoint(
         
         new_state = State()
         new_state.turn_count = 0
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         
         reset_keywords = ["reset", "restart", "quit", "exit", "stop", "cancel", 
                          "새로 시작", "처음부터", "다시 시작", "그만", "종료"]
@@ -2474,9 +2518,9 @@ async def chat_endpoint(
         is_explicit_reset = any(kw in req.message.lower() for kw in reset_keywords)
         
         if is_explicit_reset:
-            response_text = get_reset_confirmation(LANGUAGE)
+            response_text = get_reset_confirmation(language)
         else:
-            response_text = get_greeting_message(LANGUAGE)
+            response_text = get_greeting_message(language)
         
         return {
             "response": response_text,
@@ -2499,7 +2543,7 @@ async def chat_endpoint(
             
             new_state = enriched_state.model_copy()
             new_state.turn_count = current_turn
-            new_state.language_pref = LANGUAGE
+            new_state.language_pref = language
             
             if extracted.get('specialty'):
                 new_state.specialty = extracted['specialty']
@@ -2551,7 +2595,7 @@ async def chat_endpoint(
                 }
             
             new_state.conversation_phase = "gathering"
-            if LANGUAGE == "English":
+            if language == "English":
                 response_text = "What type of medical facility are you looking for? (or 'any')"
             else:
                 response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (또는 '상관없음')"
@@ -2570,7 +2614,7 @@ async def chat_endpoint(
             
             new_state = enriched_state.model_copy()
             new_state.turn_count = current_turn
-            new_state.language_pref = LANGUAGE
+            new_state.language_pref = language
             
             # ⭐ CRITICAL: Set ALL location fields to None
             new_state.location = None  # ← Not "Seoul", but None
@@ -2612,7 +2656,7 @@ async def chat_endpoint(
                     "results": results
                 }
             else:
-                if LANGUAGE == "English":
+                if language == "English":
                     response_text = "I'll search all of Seoul. What type of doctor do you need? (or 'any')"
                 else:
                     response_text = "서울 전역에서 검색하겠습니다. 어떤 종류의 의사가 필요하신가요? (또는 '상관없음')"
@@ -2628,7 +2672,7 @@ async def chat_endpoint(
         
         cleansed_state = smart_cleanse_state(enriched_state, change_detection)
         cleansed_state.turn_count = current_turn
-        cleansed_state.language_pref = LANGUAGE
+        cleansed_state.language_pref = language
         
         specialty_will_change = change_detection.get('specialty') == 'change'
         location_will_change = change_detection.get('location') == 'change'
@@ -2670,7 +2714,7 @@ async def chat_endpoint(
             privacy_safe_log(consent, f"✓ Preserved distance: {new_state.max_distance_km}km")
         
         new_state = standardize_and_fill_state(new_state, consent)
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         
         new_state = ensure_city_wide_defaults(new_state, consent)
         
@@ -2706,7 +2750,7 @@ async def chat_endpoint(
             }
         else:
             new_state.conversation_phase = "gathering"
-            if LANGUAGE == "English":
+            if language == "English":
                 response_text = "What type of medical facility are you looking for? (or 'any')"
             else:
                 response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (또는 '상관없음')"
@@ -2737,7 +2781,7 @@ async def chat_endpoint(
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         
         # ============================================
         # STEP 2: VALIDATE & CLEAN EXTRACTED KEYWORDS (FUZZY MATCHING)
@@ -2924,7 +2968,7 @@ async def chat_endpoint(
             replace_keywords=(not is_refinement)
         )
         new_state = standardize_and_fill_state(new_state, consent)
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         
         # Ensure location defaults (city-wide if nothing specified)
         new_state = ensure_city_wide_defaults(new_state, consent)
@@ -2939,7 +2983,13 @@ async def chat_endpoint(
         
         has_specialty = bool(new_state.specialty)
         has_location = bool(new_state.location or new_state.latitude or new_state.district)
-        has_keywords = bool(new_state.keywords or new_state.hard_keywords)
+        has_keywords = bool(
+            new_state.keywords
+            or new_state.hard_keywords
+            or new_state.gender_terms
+            or new_state.disease_terms
+            or new_state.comment_terms
+        )
         
         can_proceed = (
             # High confidence specialty alone
@@ -2964,6 +3014,10 @@ async def chat_endpoint(
             privacy_safe_log(consent, f"   Soft Keywords: {new_state.keywords or 'none'}")
             privacy_safe_log(consent, f"   Negative Hard: {new_state.negative_hard_keywords or 'none'}")
             privacy_safe_log(consent, f"   Negative Soft: {new_state.negative_keywords or 'none'}")
+            privacy_safe_log(consent, f"   Place Facets: {new_state.place_terms or 'none'}")
+            privacy_safe_log(consent, f"   Gender Facets: {new_state.gender_terms or 'none'}")
+            privacy_safe_log(consent, f"   Disease Facets: {new_state.disease_terms or 'none'}")
+            privacy_safe_log(consent, f"   Comment Facets: {new_state.comment_terms or 'none'}")
             
             response_text, results = execute_search(
                 new_state, 
@@ -3013,7 +3067,7 @@ async def chat_endpoint(
             # Generate appropriate prompt based on what's missing
             if not has_specialty and not has_keywords:
                 # Missing specialty/keywords
-                if LANGUAGE == "English":
+                if language == "English":
                     response_text = (
                         "What type of medical facility are you looking for?\n\n"
                         "Examples:\n"
@@ -3034,7 +3088,7 @@ async def chat_endpoint(
             
             elif has_specialty and not has_location:
                 # Have specialty but no location
-                if LANGUAGE == "English":
+                if language == "English":
                     response_text = (
                         f"Got it, you're looking for {new_state.specialty}. Where should I search?\n\n"
                         "• Click the location button below\n"
@@ -3051,7 +3105,7 @@ async def chat_endpoint(
             
             else:
                 # Generic fallback
-                if LANGUAGE == "English":
+                if language == "English":
                     response_text = (
                         "What type of medical facility are you looking for?\n\n"
                         "Examples: clinic, hospital, dentist, dermatologist, internal medicine, or 'any doctor'"
@@ -3074,7 +3128,7 @@ async def chat_endpoint(
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         
         is_closing = any(word in req.message.lower() for word in 
                         ["thanks", "thank you", "감사합니다", "고마워"])
@@ -3096,7 +3150,7 @@ async def chat_endpoint(
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         
         response_text = generate_recovery_prompt(new_state)
         
@@ -3110,14 +3164,14 @@ async def chat_endpoint(
     else:
         logger.warning(f"Unknown intent: {intent}")
         
-        if LANGUAGE == "English":
+        if language == "English":
             response_text = "I'm not sure how to help. Could you rephrase your request?"
         else:
             response_text = "잘 이해하지 못했습니다. 다시 말씀해 주시겠어요?"
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
-        new_state.language_pref = LANGUAGE
+        new_state.language_pref = language
         
         return {
             "response": response_text,

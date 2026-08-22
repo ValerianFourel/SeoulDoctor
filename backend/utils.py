@@ -18,6 +18,7 @@ from location import (
     google_maps_place_details, kakao_geocode, kakao_reverse_geocode,
     verify_and_standardize_address
 )
+from config import DISTANCE_MAPPING, GROQ_CHAT_MODEL
 LOCAL_PARQUET_PATH = "./local_facilities_cache.parquet"
 
 load_dotenv()
@@ -75,18 +76,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-# Mapping semantic labels to numerical search radii
-DISTANCE_MAPPING = {
-    "Walking Distance": 0.5,  # 500m
-    "Nearby": 1.0,           # 1km
-    "Close": 2.0,            # 2km
-    "Moderate": 5.0,         # 5km
-    "Flexible": 10.0,        # 10km
-    "Willing to Travel": 15.0, # 15km
-    "Anywhere in Seoul": 25.0  # 25km (Approx max radius for Seoul)
-}
-
 
 # ==========================================
 # UTILITIES
@@ -328,7 +317,7 @@ def detect_field_changes(
     
     try:
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=GROQ_CHAT_MODEL,
             messages=detection_messages,
             temperature=0.0,
             max_completion_tokens=256,
@@ -984,4 +973,3 @@ def clean_llm_response(response_text: str) -> str:
     response_text = '\n'.join(cleaned_lines)
     
     return response_text
-

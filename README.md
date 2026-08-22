@@ -68,7 +68,8 @@ An AI-powered conversational interface that:
 - **LOW Precision** (<30% confidence): Distance-first, all facility types
 
 #### Hybrid Search Strategy
-- **BM25 Keyword Search**: Fast exact-match retrieval
+- **Agentic Retrieval Loop**: The LLM chooses dense general search, specific BM25 evidence search, refinement, or finish
+- **Specific BM25 Search**: Exact-token retrieval over individual summaries, highlights, amenities, and medical facts
 - **Vector Semantic Search**: Understanding intent and context
 - **Dynamic Alpha Routing**: Query classifier determines optimal BM25/Vector balance
   - FACTUAL queries (α=0.3-0.5): Favor keyword matching
@@ -161,7 +162,7 @@ An AI-powered conversational interface that:
                   │
 ┌─────────────────▼───────────────────────────────────────────────┐
 │                  EXTRACTION & VALIDATION                        │
-│  - Entity Extraction (LLM: llama-3.1-8b-instant)               │
+│  - Entity Extraction (LLM: openai/gpt-oss-20b)                 │
 │  - Keyword Validation (fuzzy matching)                         │
 │  - Intent-based Classification (positive vs negative)          │
 │  - Location Verification (Google/Kakao APIs)                   │
@@ -219,7 +220,7 @@ An AI-powered conversational interface that:
 ┌─────────────────▼───────────────────────────────────────────────┐
 │                 RESPONSE GENERATION                             │
 │  - Context Building (top N facilities)                         │
-│  - LLM Generation (llama-3.1-8b-instant)                       │
+│  - LLM Generation (openai/gpt-oss-20b)                         │
 │  - Keyword-First Formatting                                    │
 │  - English/Korean Response                                     │
 └─────────────────────────────────────────────────────────────────┘
@@ -247,7 +248,7 @@ An AI-powered conversational interface that:
 - **ASGI Server**: Uvicorn with uvloop
 
 ### AI/ML
-- **LLM Provider**: Groq (llama-3.1-8b-instant)
+- **LLM Provider**: Groq (`openai/gpt-oss-20b`)
   - Entity extraction
   - Intent routing
   - Query classification
@@ -351,6 +352,16 @@ NAVER_CLIENT_ID=your_naver_client_id
 NAVER_CLIENT_SECRET=your_naver_secret
 ```
 
+Create `frontend/.env.local` for the browser application:
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+
+# Optional: omit this until a real AdSense slot has been provisioned
+NEXT_PUBLIC_ADSENSE_SLOT_ID=your_adsense_slot_id
+```
+
 ### Download Dataset
 
 The dataset is automatically downloaded from Hugging Face Hub on first startup. Alternatively, manually download:
@@ -398,15 +409,16 @@ CHROMA_PATH = "./chroma_db"
 
 ### Distance Mapping
 
-**utils.py:**
+**config.py:**
 ```python
 DISTANCE_MAPPING = {
-    "Walking": 1.0,      # 1km
-    "Short": 3.0,        # 3km
-    "Moderate": 5.0,     # 5km (default)
-    "Far": 10.0,         # 10km
-    "Very Far": 15.0,    # 15km
-    "Anywhere in Seoul": 25.0  # 25km (city-wide)
+    "Walking Distance": 0.5,
+    "Nearby": 1.0,
+    "Close": 2.0,
+    "Moderate": 5.0,
+    "Flexible": 10.0,
+    "Willing to Travel": 15.0,
+    "Anywhere in Seoul": 25.0,
 }
 ```
 
@@ -1066,46 +1078,46 @@ Search:
 
 ---
 
-## 🤖 RAG Pipeline
+## 🤖 Agentic RAG Pipeline
 
-### Architecture
+### Active Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│           RAG Pipeline Components               │
-├─────────────────────────────────────────────────┤
-│                                                 │
-│  ┌────────────────────────────────────────┐   │
-│  │  BM25 Keyword Index                    │   │
-│  │  - 40k tokenized documents             │   │
-│  │  - Okapi BM25 algorithm                │   │
-│  │  - Fast exact-match retrieval          │   │
-│  └────────────────────────────────────────┘   │
-│                                                 │
-│  ┌────────────────────────────────────────┐   │
-│  │  Vector Semantic Index                 │   │
-│  │  - ChromaDB persistent storage         │   │
-│  │  - OpenAI embeddings (1536-dim)        │   │
-│  │  - Cosine similarity search            │   │
-│  └────────────────────────────────────────┘   │
-│                                                 │
-│  ┌────────────────────────────────────────┐   │
-│  │  Query Router (FACTUAL vs MIXED)       │   │
-│  │  - LLM-based classification            │   │
-│  │  - Determines optimal α                │   │
-│  │  - α=0.3-0.5 for FACTUAL               │   │
-│  │  - α=0.6-0.8 for MIXED                 │   │
-│  └────────────────────────────────────────┘   │
-│                                                 │
-│  ┌────────────────────────────────────────┐   │
-│  │  Hybrid Search Engine                  │   │
-│  │  - Combines BM25 + Vector scores       │   │
-│  │  - Normalizes to 0-1 range             │   │
-│  │  - Weighted combination                │   │
-│  │  - Sorts by combined score             │   │
-│  └────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────┘
+User query + extracted hard terms
+              │
+              ▼
+┌───────────────────────────────────────────────┐
+│ Retrieval planner: openai/gpt-oss-20b         │
+│ Chooses one action per iteration (max 3):     │
+│ dense_general | bm25_specific | hybrid | stop │
+└───────────────┬───────────────────────────────┘
+                │
+       ┌────────┴─────────┐
+       ▼                  ▼
+Dense general index   Specific evidence BM25
+- facility-level      - one summary/highlight/fact
+- semantic meaning    - literal token/phrase matching
+- Chroma embeddings   - exact terms preserved
+       │                  │
+       └────────┬─────────┘
+                ▼
+        Search observations
+                │
+       refine query or finish
+                │
+                ▼
+ Reciprocal-rank fusion + distance ranking
+                │
+                ▼
+ Answer with evidence; optional short quote from
+ an indexed review summary (never labeled verbatim)
 ```
+
+The loop is bounded to three retrieval iterations. Hard requirements always
+trigger `bm25_specific`, even if the planner initially chooses dense search.
+Retrieved text is treated as untrusted data. The current dataset contains
+generated review summaries and highlights rather than raw patient comments;
+therefore quoted evidence is explicitly labeled as an indexed review summary.
 
 ### Document Indexing
 
@@ -1120,17 +1132,15 @@ modern equipment. 친절한 직원과 현대적 장비. parking, English support
 weekend hours"
 ```
 
-**BM25 Indexing:**
+**Specific BM25 Indexing:**
 ```python
-# Tokenization
-tokenized = text_blob.lower().split()
+# Each summary/highlight/fact becomes its own evidence record
+records = build_specific_evidence_records(facilities)
 
-# Add to corpus
-bm25_corpus.append(tokenized)
-bm25_doc_ids.append(place_id)
+# Literal tokenizer: no stemming and no substring matching
+specific_corpus = [tokenize_exact(record["text"]) for record in records]
 
-# Initialize BM25
-bm25 = BM25Okapi(bm25_corpus)
+specific_bm25 = BM25Okapi(specific_corpus)
 ```
 
 **Vector Indexing:**
@@ -1154,7 +1164,10 @@ vector_db.add(
 )
 ```
 
-### Query Routing
+### Legacy Hybrid Fallback
+
+The earlier FACTUAL/MIXED alpha router remains available as a fallback through
+`semantic_search()`, but production ranking now uses `agentic_search()`.
 
 **Router Prompt:**
 ```python
@@ -1627,7 +1640,8 @@ logger.debug(f"PATH B RESULTS: {len(path_b_results_df)}")
 seoul-doctor-matchmaker/
 ├── backend/
 │   ├── main.py                  # FastAPI app, routes, search logic
-│   ├── rag_pipeline.py          # Hybrid RAG (BM25 + Vector)
+│   ├── agentic_retrieval.py     # Exact tokens, evidence chunks, plan validation
+│   ├── rag_pipeline.py          # Agentic dense/BM25 retrieval loop
 │   ├── prompt.py                # All LLM prompts
 │   ├── models.py                # Pydantic state models
 │   ├── utils.py                 # Helper functions
@@ -1691,7 +1705,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- **Groq**: Fast LLM inference (llama-3.1-8b-instant)
+- **Groq**: Fast LLM inference (`openai/gpt-oss-20b`)
 - **OpenAI**: High-quality embeddings (text-embedding-3-small)
 - **ChromaDB**: Vector database
 - **Google Maps**: Geocoding services

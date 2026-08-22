@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 class State(BaseModel):
     """
@@ -44,6 +44,14 @@ class State(BaseModel):
     # ⭐ NEW: Negative keywords (things to AVOID)
     negative_keywords: List[str] = Field(default_factory=list)  # Soft negatives (avoid these qualities)
     negative_hard_keywords: List[str] = Field(default_factory=list)  # Hard negatives (must NOT have)
+
+    # First-class facets used by the bilingual retrieval/debug pipeline.
+    place_terms: List[str] = Field(default_factory=list)
+    gender_terms: List[str] = Field(default_factory=list)
+    disease_terms: List[str] = Field(default_factory=list)
+    comment_terms: List[str] = Field(default_factory=list)
+    extraction_source: Optional[str] = None
+    extraction_error: Optional[str] = None
     # ⭐ NEW: Track if this is a general/random search
     is_general_search: bool = False
     # ⭐ NEW: Track if this is a city-wide search (no specific location)
@@ -77,6 +85,8 @@ class State(BaseModel):
     last_search_query: Optional[str] = None
     last_results_count: Optional[int] = None
     last_search_timestamp: Optional[str] = None
+    last_retrieval_trace: List[Dict[str, Any]] = Field(default_factory=list)
+    last_retrieval_observations: List[Dict[str, Any]] = Field(default_factory=list)
     
     class Config:
         arbitrary_types_allowed = True
@@ -92,4 +102,4 @@ class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
     response: str
     state: State
-    results: List[dict] = []
+    results: List[dict] = Field(default_factory=list)
