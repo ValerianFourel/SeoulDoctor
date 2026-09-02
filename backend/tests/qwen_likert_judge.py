@@ -360,6 +360,8 @@ def parse_rating(
     policy: Mapping[str, Any],
     citation_catalog: Mapping[str, Any],
 ) -> dict[str, Any]:
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Qwen judge returned empty content")
     candidate = content.strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL)
     if fenced:
@@ -497,7 +499,8 @@ def request_rating(
         model=MODEL,
         messages=list(messages),
         temperature=0,
-        max_tokens=2400,
+        max_tokens=4096,
+        reasoning_effort="low",
         response_format={
             "type": "json_schema",
             "json_schema": {
