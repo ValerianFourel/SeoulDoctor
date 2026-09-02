@@ -18,6 +18,7 @@ sys.modules.setdefault(
 )
 
 from qwen_likert_judge import (  # noqa: E402
+    MODEL,
     _evaluation_policy,
     parse_rating,
     project_journey_for_review,
@@ -45,6 +46,9 @@ POLICY = {
 
 
 class QwenLikertJudgeTests(unittest.TestCase):
+    def test_judge_uses_qwen_27b(self):
+        self.assertEqual(MODEL, "qwen/qwen3.8-27b")
+
     def test_review_projection_keeps_target_and_bounded_audit_evidence(self):
         candidates = [
             {"place_id": str(index), "retrieval_rank_1based": index}

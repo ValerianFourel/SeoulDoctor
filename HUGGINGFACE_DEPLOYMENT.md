@@ -72,4 +72,4 @@ backend/venv/bin/python backend/tests/run_openrouter_bilingual_eval.py \
   --endpoint https://OWNER-SPACE.hf.space/chat
 ```
 
-The runner checkpoints complete English and Korean conversations under `backend/tests/evaluation_runs/`. Those files are ignored by Git and created with owner-only permissions. The runner sends selected facility fields and review excerpts to Qwen Max through OpenRouter. Run it only with authorization for that external processing and local transcript storage.
+The runner checkpoints complete English and Korean conversations under `backend/tests/evaluation_runs/`. Those files are ignored by Git and created with owner-only permissions. The independent Likert grader sends selected facility fields and review excerpts to Qwen3.8 27B through OpenRouter. Run it only with authorization for that external processing and local transcript storage.

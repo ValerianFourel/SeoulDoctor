@@ -20,7 +20,7 @@ from llm_client import build_openrouter_client  # noqa: E402
 from patient_journey import atomic_write, scrub_sensitive  # noqa: E402
 
 
-MODEL = "qwen/qwen3.8-max"
+MODEL = "qwen/qwen3.8-27b"
 MAX_RETRIEVAL_CANDIDATES = 20
 MAX_RESULTS = 20
 MAX_TRACE_RECORDS = 24
