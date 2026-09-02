@@ -73,6 +73,11 @@ def retrieval_tool_schemas(raw_reviews_available: bool) -> List[Dict[str, Any]]:
                                 "items": {"type": "string"},
                                 "minItems": 1,
                                 "maxItems": 10000,
+                                "description": (
+                                    "Optional priority hints. The backend still searches "
+                                    "the complete eligible specialty/location scope so a "
+                                    "premature shortlist cannot hide relevant comments."
+                                ),
                             },
                             "query_terms": {
                                 "type": "array",

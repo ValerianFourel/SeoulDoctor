@@ -16,7 +16,9 @@ from pathlib import Path
 from rank_bm25 import BM25Okapi
 import json
 from config import GROQ_AGENT_MODEL, GROQ_CHAT_MODEL, GROQ_REASONING_EFFORT
+from llm_client import request_json_completion, request_tool_completion
 from raw_review_store import RawReviewStore
+from query_facets import expand_multilingual_retrieval_terms
 from agentic_retrieval import (
     build_specific_evidence_records,
     contains_exact_phrase,
@@ -351,15 +353,14 @@ class RAGPipeline:
         try:
             router_prompt = QUERY_ROUTER_PROMPT.format(SPECIALTY_MAPPING=SPECIALTY_MAPPING, query=query_text)
 
-            completion = self.groq_client.chat.completions.create(
+            route_decision, _ = request_json_completion(
+                self.groq_client,
                 model=GROQ_CHAT_MODEL,
                 messages=[{"role": "system", "content": router_prompt}],
                 temperature=0.0,
-                max_completion_tokens=256,
-                response_format={"type": "json_object"}
+                max_completion_tokens=768,
+                required_keys=("intent", "suggested_alpha", "reasoning"),
             )
-            
-            route_decision = json.loads(completion.choices[0].message.content)
             
             logger.debug(
                 f"🎯 Query router: {route_decision['intent']} "
@@ -601,14 +602,14 @@ Previous observations: {json.dumps(observations[-2:], ensure_ascii=False)}
 """
 
         try:
-            completion = self.groq_client.chat.completions.create(
+            payload, _ = request_json_completion(
+                self.groq_client,
                 model=GROQ_CHAT_MODEL,
                 messages=[{"role": "system", "content": planner_prompt}],
                 temperature=0.0,
-                max_completion_tokens=384,
-                response_format={"type": "json_object"},
+                max_completion_tokens=768,
+                required_keys=("action", "query", "exact_terms", "quote_evidence"),
             )
-            payload = json.loads(completion.choices[0].message.content)
         except Exception as exc:
             logger.error("❌ Agentic retrieval planning failed: %s", exc, exc_info=True)
             payload = {
@@ -639,9 +640,9 @@ Previous observations: {json.dumps(observations[-2:], ensure_ascii=False)}
         if not query_text or len(query_text.strip()) < 2:
             return None
 
-        required_exact_terms = [
+        required_exact_terms = expand_multilingual_retrieval_terms([
             str(term).strip() for term in (exact_terms or []) if str(term).strip()
-        ][:8]
+        ])
         candidate_scope = list(dict.fromkeys(
             str(place_id).strip()
             for place_id in (candidate_ids or [])
@@ -656,13 +657,30 @@ Previous observations: {json.dumps(observations[-2:], ensure_ascii=False)}
         facility_matched_terms = defaultdict(set)
         executed_actions = set()
         quote_evidence = False
+        coverage_assessed = False
+        coverage_sufficient = False
+        retrieval_status = "pending"
+        termination_reason = "not_started"
 
         def add_dense_results(search_query: str, limit: int = 30) -> Dict[str, Any]:
             """Fuse multilingual dense and facility-level BM25 retrieval."""
             bounded_limit = max(5, min(int(limit or 30), n_results, 50))
-            dense_results = self.vector_search(search_query, bounded_limit)
-            lexical_results = self.bm25_search(search_query, bounded_limit)
             allowed = set(candidate_scope)
+            # Global top-50 retrieval regularly starves a small radius scope.
+            # Fetch a wider semantic window and all positive BM25 hits before
+            # applying the authoritative backend scope.
+            semantic_limit = (
+                min(max(bounded_limit * 20, 1000), 3000)
+                if allowed
+                else bounded_limit
+            )
+            lexical_limit = (
+                len(getattr(self, "bm25_doc_ids", [])) or bounded_limit
+                if allowed
+                else bounded_limit
+            )
+            dense_results = self.vector_search(search_query, semantic_limit)
+            lexical_results = self.bm25_search(search_query, lexical_limit)
             fused = defaultdict(float)
             documents_by_id: Dict[str, str] = {}
 
@@ -784,10 +802,15 @@ Previous observations: {json.dumps(observations[-2:], ensure_ascii=False)}
             # or indexed search. This prevents arbitrary bulk review access.
             allowed_ids = set(candidate_scope) or set(facility_scores)
             if requested_ids:
-                candidate_review_ids = [
+                requested_scope = [
                     str(place_id) for place_id in requested_ids
                     if str(place_id) in allowed_ids
-                ][:10000]
+                ]
+                candidate_review_ids = list(dict.fromkeys([
+                    *requested_scope,
+                    *candidate_scope,
+                    *facility_scores,
+                ]))[:10000]
             else:
                 candidate_review_ids = (
                     candidate_scope or list(facility_scores)
@@ -834,6 +857,20 @@ Previous observations: {json.dumps(observations[-2:], ensure_ascii=False)}
 
         tool_schemas = retrieval_tool_schemas(raw_review_store is not None)
         raw_status = "available" if raw_review_store else "unavailable"
+        review_relevant = bool(
+            raw_review_store
+            and any(
+                marker in query_text.casefold()
+                for marker in (
+                    "review",
+                    "comment",
+                    "patient experience",
+                    "후기",
+                    "리뷰",
+                    "환자 경험",
+                )
+            )
+        )
         agent_messages: List[Dict[str, Any]] = [
             {
                 "role": "system",
@@ -895,10 +932,61 @@ Target translation language: {target_language}.
                     "reasoning": "Deterministic retrieval completed.",
                 },
             ])
+            retrieval_status = "deterministic_fallback"
+            termination_reason = "agent_client_unavailable"
         else:
             assessment_seen = False
             assessment_sufficient = False
+            stop_requested = False
+            agent_failed = False
             for iteration in range(max(1, min(max_iterations, 12))):
+                action_names = [
+                    item.get("action")
+                    for item in trace
+                    if isinstance(item, dict)
+                ]
+                mandatory_tool = None
+                if "search_facilities" not in action_names:
+                    mandatory_tool = "search_facilities"
+                elif (
+                    required_exact_terms
+                    and "search_indexed_evidence" not in action_names
+                ):
+                    mandatory_tool = "search_indexed_evidence"
+                elif (
+                    review_relevant
+                    and "search_multilingual_comments" not in action_names
+                ):
+                    mandatory_tool = "search_multilingual_comments"
+                elif available_raw_evidence:
+                    last_raw = max(
+                        (
+                            index
+                            for index, action in enumerate(action_names)
+                            if action == "search_multilingual_comments"
+                        ),
+                        default=-1,
+                    )
+                    last_selection = max(
+                        (
+                            index
+                            for index, action in enumerate(action_names)
+                            if action == "select_comment_evidence"
+                        ),
+                        default=-1,
+                    )
+                    if last_raw > last_selection:
+                        mandatory_tool = "select_comment_evidence"
+                if mandatory_tool is None and not assessment_seen:
+                    mandatory_tool = "assess_search_coverage"
+                if mandatory_tool is None and assessment_sufficient:
+                    mandatory_tool = "finish_search"
+                tool_choice: Any = "auto"
+                if mandatory_tool:
+                    tool_choice = {
+                        "type": "function",
+                        "function": {"name": mandatory_tool},
+                    }
                 try:
                     reasoning_effort = GROQ_REASONING_EFFORT
                     if GROQ_AGENT_MODEL.startswith("qwen/"):
@@ -907,16 +995,15 @@ Target translation language: {target_language}.
                             if reasoning_effort in {"none", "default"}
                             else "default"
                         )
-                    completion = self.groq_client.chat.completions.create(
+                    message, _ = request_tool_completion(
+                        self.groq_client,
                         model=GROQ_AGENT_MODEL,
                         messages=agent_messages,
                         tools=tool_schemas,
-                        tool_choice="auto",
-                        parallel_tool_calls=False,
+                        tool_choice=tool_choice,
                         reasoning_effort=reasoning_effort,
                         max_completion_tokens=1536,
                     )
-                    message = completion.choices[0].message
                 except Exception as exc:
                     logger.error(
                         "Function-calling retrieval agent failed: %s",
@@ -928,10 +1015,12 @@ Target translation language: {target_language}.
                         "action": "agent_error",
                         "reasoning": str(exc),
                     })
+                    agent_failed = True
+                    termination_reason = "agent_error"
                     break
 
-                tool_calls = getattr(message, "tool_calls", None) or []
-                if not tool_calls:
+                proposed_tool_calls = getattr(message, "tool_calls", None) or []
+                if not proposed_tool_calls:
                     response_content = str(
                         getattr(message, "content", "") or ""
                     ).strip()
@@ -968,9 +1057,10 @@ Target translation language: {target_language}.
                     })
                     continue
 
-                agent_messages.append(assistant_message_payload(message))
-                stop_requested = False
-
+                tool_calls = proposed_tool_calls[:1]
+                assistant_payload = assistant_message_payload(message)
+                assistant_payload["tool_calls"] = assistant_payload["tool_calls"][:1]
+                agent_messages.append(assistant_payload)
                 for tool_call in tool_calls:
                     tool_name = tool_call.function.name
                     try:
@@ -1012,13 +1102,16 @@ Target translation language: {target_language}.
                                 ][:12],
                             )
                         elif tool_name == "search_multilingual_comments":
+                            requested_terms = [
+                                str(term)
+                                for term in arguments.get("query_terms", [])
+                                if str(term).strip()
+                            ]
                             tool_result = add_raw_comment_results(
                                 list(arguments.get("facility_ids") or []),
-                                [
-                                    str(term)
-                                    for term in arguments.get("query_terms", [])
-                                    if str(term).strip()
-                                ][:24],
+                                expand_multilingual_retrieval_terms(
+                                    [*requested_terms, *required_exact_terms]
+                                ),
                                 int(arguments.get("limit") or 30),
                             )
                         elif tool_name == "select_comment_evidence":
@@ -1056,18 +1149,60 @@ Target translation language: {target_language}.
                             }
                         elif tool_name == "assess_search_coverage":
                             assessment_seen = True
-                            assessment_sufficient = bool(
-                                arguments.get("evidence_sufficient", False)
+                            missing_constraints = list(
+                                arguments.get("missing_constraints") or []
+                            )[:20]
+                            completed_actions = {
+                                item.get("action")
+                                for item in trace
+                                if isinstance(item, dict)
+                            }
+                            missing_stages = []
+                            if "search_facilities" not in completed_actions:
+                                missing_stages.append("facility semantic/BM25 search")
+                            if (
+                                required_exact_terms
+                                and "search_indexed_evidence" not in completed_actions
+                            ):
+                                missing_stages.append("literal indexed-evidence search")
+                            if (
+                                review_relevant
+                                and "search_multilingual_comments" not in completed_actions
+                            ):
+                                missing_stages.append("multilingual raw-comment search")
+                            if (
+                                review_relevant
+                                and available_raw_evidence
+                                and not selected_raw_evidence
+                            ):
+                                missing_stages.append("same-facility evidence selection")
+                            literal_evidence_missing = bool(
+                                required_exact_terms
+                                and not any(
+                                    "bm25_specific" in methods
+                                    for methods in facility_methods.values()
+                                )
                             )
+                            if literal_evidence_missing:
+                                missing_constraints.append(
+                                    "literal indexed-evidence search has not run"
+                                )
+                            missing_constraints.extend(missing_stages)
+                            assessment_sufficient = (
+                                bool(arguments.get("evidence_sufficient", False))
+                                and not missing_constraints
+                                and not literal_evidence_missing
+                                and not missing_stages
+                            )
+                            coverage_assessed = True
+                            coverage_sufficient = assessment_sufficient
                             tool_result = {
                                 "tool": tool_name,
                                 "evidence_sufficient": assessment_sufficient,
                                 "satisfied_constraints": list(
                                     arguments.get("satisfied_constraints") or []
                                 )[:20],
-                                "missing_constraints": list(
-                                    arguments.get("missing_constraints") or []
-                                )[:20],
+                                "missing_constraints": missing_constraints,
                                 "refinement_query": str(
                                     arguments.get("refinement_query") or ""
                                 ),
@@ -1110,6 +1245,9 @@ Target translation language: {target_language}.
                         "action": tool_name,
                         "arguments": arguments,
                         "result_count": tool_result.get("result_count"),
+                        "ignored_additional_tool_calls": max(
+                            0, len(proposed_tool_calls) - 1
+                        ),
                     })
                     agent_messages.append({
                         "role": "tool",
@@ -1123,7 +1261,32 @@ Target translation language: {target_language}.
                     })
 
                 if stop_requested:
+                    retrieval_status = "complete"
+                    termination_reason = "finish_search"
                     break
+
+            if not facility_scores:
+                observations.append(add_dense_results(query_text, min(n_results, 30)))
+                trace.append({
+                    "iteration": "safeguard",
+                    "action": "deterministic_hybrid",
+                    "reasoning": (
+                        "The retrieval agent produced no candidates; ran the local "
+                        "semantic and facility-BM25 fallback."
+                    ),
+                })
+
+            if not stop_requested:
+                retrieval_status = "incomplete"
+                if not agent_failed:
+                    termination_reason = "iteration_limit"
+                trace.append({
+                    "iteration": "termination",
+                    "action": "retrieval_incomplete",
+                    "reasoning": termination_reason,
+                    "coverage_assessed": coverage_assessed,
+                    "coverage_sufficient": coverage_sufficient,
+                })
 
         # Exact requirements always receive literal BM25 evidence, even if the
         # planner only requested a dense action.
@@ -1163,6 +1326,11 @@ Target translation language: {target_language}.
             "matched_exact_terms": {
                 place_id: sorted(facility_matched_terms[place_id]) for place_id in ids
             },
+            "candidate_scope_count": len(candidate_scope),
+            "coverage_assessed": coverage_assessed,
+            "coverage_sufficient": coverage_sufficient,
+            "retrieval_status": retrieval_status,
+            "termination_reason": termination_reason,
         }
     
     def vector_search(self, query_text: str, n_results: int = 200) -> Optional[Dict[str, Any]]:
@@ -1391,7 +1559,22 @@ Target translation language: {target_language}.
         )
         df.attrs["rag_trace"] = rag_results.get("trace", [])
         df.attrs["rag_observations"] = rag_results.get("observations", [])
+        df.attrs["rag_metadata"] = {
+            "candidate_scope_count": rag_results.get("candidate_scope_count", 0),
+            "coverage_assessed": rag_results.get("coverage_assessed", False),
+            "coverage_sufficient": rag_results.get("coverage_sufficient", False),
+            "retrieval_status": rag_results.get("retrieval_status", "unknown"),
+            "termination_reason": rag_results.get("termination_reason", "unknown"),
+        }
         df.attrs["rag_quote_evidence"] = rag_results.get("quote_evidence", False)
+        df.attrs["rag_candidates"] = [
+            {
+                "place_id": str(place_id),
+                "retrieval_rank_1based": rank,
+                "methods": methods_by_facility.get(str(place_id), []),
+            }
+            for rank, place_id in enumerate(rag_results["ids"][0], start=1)
+        ]
         df["rag_quote_evidence"] = bool(rag_results.get("quote_evidence", False))
         
         # Log ranking statistics

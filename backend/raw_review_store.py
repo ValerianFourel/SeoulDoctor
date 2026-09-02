@@ -18,8 +18,10 @@ import requests
 
 
 logger = logging.getLogger(__name__)
-HANGUL_PATTERN = re.compile(r"[가-힣]")
-LATIN_PATTERN = re.compile(r"[A-Za-z]")
+HANGUL_CHAR_CLASS = r"[ᄀ-ᇿ㄰-㆏ꥠ-꥿가-힣ힰ-퟿]"
+HANGUL_PATTERN = re.compile(HANGUL_CHAR_CLASS)
+LATIN_CHAR_CLASS = r"[A-Za-z]"
+LATIN_PATTERN = re.compile(LATIN_CHAR_CLASS)
 JAPANESE_PATTERN = re.compile(r"[ぁ-ゟ゠-ヿ]")
 HAN_PATTERN = re.compile(r"[一-龯]")
 CYRILLIC_PATTERN = re.compile(r"[А-Яа-яЁё]")
@@ -262,29 +264,49 @@ class RawReviewStore:
         """Return reproducible script coverage counts for the local snapshot."""
         row = self.connection.execute(
             """
+            WITH tagged AS (
+                SELECT
+                    regexp_matches(review_text, ?) AS has_hangul,
+                    regexp_matches(review_text, ?) AS has_latin,
+                    regexp_matches(
+                        regexp_replace(review_text, ?, '', 'g'),
+                        '\\p{L}'
+                    ) AS has_non_hangul_non_latin_letter
+                FROM raw_reviews
+            )
             SELECT
                 count(*) AS total,
                 count(*) FILTER (
-                    WHERE regexp_matches(review_text, '[가-힣]')
-                      AND NOT regexp_matches(review_text, '[A-Za-z]')
-                ) AS hangul_only,
+                    WHERE has_hangul AND NOT has_latin
+                ) AS hangul_without_latin,
                 count(*) FILTER (
-                    WHERE regexp_matches(review_text, '[가-힣]')
-                      AND regexp_matches(review_text, '[A-Za-z]')
+                    WHERE has_hangul AND has_latin
                 ) AS hangul_latin_mixed,
                 count(*) FILTER (
-                    WHERE NOT regexp_matches(review_text, '[가-힣]')
-                      AND regexp_matches(review_text, '[A-Za-z]')
-                ) AS latin_no_hangul,
+                    WHERE has_latin
+                      AND NOT has_hangul
+                      AND NOT has_non_hangul_non_latin_letter
+                ) AS latin_only_english_like,
                 count(*) FILTER (
-                    WHERE NOT regexp_matches(review_text, '[가-힣]')
-                      AND NOT regexp_matches(review_text, '[A-Za-z]')
+                    WHERE NOT has_hangul
+                      AND (
+                          NOT has_latin
+                          OR has_non_hangul_non_latin_letter
+                      )
                 ) AS other
-            FROM raw_reviews
-            """
+            FROM tagged
+            """,
+            [
+                HANGUL_CHAR_CLASS,
+                LATIN_CHAR_CLASS,
+                HANGUL_CHAR_CLASS + "|" + LATIN_CHAR_CLASS,
+            ],
         ).fetchone()
         keys = (
-            "total", "hangul_only", "hangul_latin_mixed",
-            "latin_no_hangul", "other",
+            "total",
+            "hangul_without_latin",
+            "hangul_latin_mixed",
+            "latin_only_english_like",
+            "other",
         )
         return {key: int(value) for key, value in zip(keys, row)}

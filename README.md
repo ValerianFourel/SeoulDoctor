@@ -47,7 +47,7 @@ Seoul Doctor Matchmaker is an intelligent medical facility search system designe
 
 Foreign residents in Seoul face several challenges:
 - **Language Barrier**: Most medical facilities have limited English-language information
-- **Information Overload**: 40,000+ medical facilities in Seoul with varying specialties
+- **Information Overload**: Thousands of medical facilities in Seoul with varying specialties
 - **Preference Matching**: Hard to find facilities matching specific criteria (parking, insurance, English-speaking staff)
 - **Location Complexity**: Seoul's 25 districts and 424 neighborhoods create geographical challenges
 
@@ -107,7 +107,7 @@ An AI-powered conversational interface that:
 - **Address Verification**: Standardization and validation
 
 #### Distance Filtering
-- **Travel Preferences**: Walking (1km), Short (3km), Moderate (5km), Far (10km), Very Far (15km), Anywhere (25km)
+- **Travel Preferences**: Walking Distance (0.5 km), Nearby (1 km), Close (2 km), Moderate (5 km), Flexible (10 km), Willing to Travel (15 km), and Anywhere in Seoul (25 km)
 - **Adaptive Weighting**: Closer facilities prioritized unless keywords dominate
 - **Emergency Mode**: Distance-only ranking for urgent care
 
@@ -122,7 +122,19 @@ An AI-powered conversational interface that:
 #### Facility Information
 - **Basic**: Name, address, phone, category, business hours
 - **Review Summaries**: AI-generated from Naver reviews (English + Korean)
-- **Raw Reviews**: 1,791,749 searchable verbatim comments in an on-demand Parquet snapshot. A script-based scan found 1,713,071 Hangul-only rows, 20,420 mixed Hangul/Latin rows, 5,179 Latin-without-Hangul rows, and 53,079 other rows.
+- **Raw Reviews**: 1,791,749 searchable, nonempty verbatim comments in an on-demand Parquet snapshot. A script-based scan found 1,735,083 Hangul-without-Latin rows, 5,125 Latin-only English-like rows, 20,427 mixed Hangul-and-Latin rows, and 31,114 other rows. These are script groups, not claims about each review's language.
+
+Reproduce the review counts against the local snapshot:
+
+```bash
+backend/venv/bin/python backend/tests/profile_review_languages.py
+```
+
+Probe the seeded reverse-target case without calling an LLM:
+
+```bash
+backend/venv/bin/python backend/tests/probe_reverse_target.py
+```
 - **Key Highlights**: Top 5 notable features extracted from reviews
 - **Amenities**: Parking, wheelchair access, elevator, etc.
 - **English Support**: Confidence score for English-speaking staff
@@ -1329,7 +1341,7 @@ def build_context_for_llm(df_subset, n_results=10, language="English"):
 ### Source Data
 
 **Naver Maps Web Scraping:**
-- 40,000+ medical facilities across Seoul
+- 8,484 medical facilities in the current Seoul snapshot
 - Categories: 50+ specialties (치과, 피부과, 내과, etc.)
 - Reviews: Millions of user reviews
 - Metadata: Amenities, hours, contact info, GPS

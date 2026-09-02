@@ -58,11 +58,11 @@ type State = {
   conversation_phase: string;
   
   // ===== SEARCH RESULTS METADATA =====
-  last_search_query: string | null;
-  last_results_count: number | null;
-  last_search_timestamp: string | null;
-  last_retrieval_trace: Record<string, unknown>[];
-  last_retrieval_observations: Record<string, unknown>[];
+  last_search_query?: string | null;
+  last_results_count?: number | null;
+  last_search_timestamp?: string | null;
+  last_retrieval_trace?: Record<string, unknown>[];
+  last_retrieval_observations?: Record<string, unknown>[];
 };
 
 type Message = {
@@ -936,7 +936,7 @@ export default function ChatInterface() {
               </div>
 
               {/* Search Metadata */}
-              {(currentState.last_search_query || currentState.last_results_count !== null) && (
+              {(currentState.last_search_query || currentState.last_results_count != null) && (
                 <div className="bg-slate-800 rounded p-3 border border-slate-700">
                   <h3 className="font-bold text-indigo-400 mb-2">📊 Last Search</h3>
                   <div className="space-y-1 text-slate-300">
@@ -948,7 +948,7 @@ export default function ChatInterface() {
                         </p>
                       </div>
                     )}
-                    {currentState.last_results_count !== null && (
+                    {currentState.last_results_count != null && (
                       <div className="flex justify-between">
                         <span>Results:</span>
                         <span className="font-mono text-green-400">

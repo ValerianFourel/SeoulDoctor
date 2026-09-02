@@ -157,7 +157,18 @@ class AgenticLoopTests(unittest.TestCase):
                         arguments=json.dumps(arguments, ensure_ascii=False),
                     ),
                 )
-                message = types.SimpleNamespace(content=None, tool_calls=[tool_call])
+                tool_calls = [tool_call]
+                if call_id == "call-1":
+                    tool_calls.append(types.SimpleNamespace(
+                        id="premature-finish",
+                        function=types.SimpleNamespace(
+                            name="finish_search",
+                            arguments=json.dumps({
+                                "reason": "Issued before reading search results."
+                            }),
+                        ),
+                    ))
+                message = types.SimpleNamespace(content=None, tool_calls=tool_calls)
                 return types.SimpleNamespace(
                     choices=[types.SimpleNamespace(message=message)]
                 )
@@ -224,6 +235,35 @@ class AgenticLoopTests(unittest.TestCase):
         self.assertIn("search_multilingual_comments", exposed_names)
         self.assertIn("assess_search_coverage", exposed_names)
         self.assertIn("select_comment_evidence", exposed_names)
+        retrieval_actions = [
+            item["action"]
+            for item in result["trace"]
+            if item.get("action") in {
+                "search_facilities",
+                "search_multilingual_comments",
+                "select_comment_evidence",
+                "assess_search_coverage",
+                "finish_search",
+            }
+        ]
+        self.assertEqual(retrieval_actions, [
+            "search_facilities",
+            "search_multilingual_comments",
+            "select_comment_evidence",
+            "assess_search_coverage",
+            "finish_search",
+        ])
+        forced_names = [
+            request["tool_choice"]["function"]["name"]
+            for request in completions.requests
+        ]
+        self.assertEqual(forced_names, [
+            "search_facilities",
+            "search_multilingual_comments",
+            "select_comment_evidence",
+            "assess_search_coverage",
+            "finish_search",
+        ])
 
     def test_finish_is_rejected_until_coverage_is_assessed(self):
         class FakeCompletions:
@@ -297,21 +337,189 @@ class AgenticLoopTests(unittest.TestCase):
         self.assertIn("facility_semantic", result["methods"]["clinic-1"])
         self.assertIn("facility_bm25", result["methods"]["clinic-1"])
 
-    def test_omitted_comment_ids_use_the_complete_candidate_scope(self):
+    def test_missing_constraints_override_a_model_success_claim(self):
         class FakeCompletions:
             def __init__(self):
                 self.sequence = [
-                    ("call-1", "search_multilingual_comments", {
-                        "query_terms": ["kind", "친절"],
+                    ("call-1", "search_facilities", {
+                        "query": "kind dentist",
                         "limit": 10,
                     }),
                     ("call-2", "assess_search_coverage", {
+                        "satisfied_constraints": ["dentist"],
+                        "missing_constraints": ["kind patient comments"],
+                        "evidence_sufficient": True,
+                        "reason": "Contradictory model output.",
+                    }),
+                ]
+
+            def create(self, **kwargs):
+                del kwargs
+                call_id, name, arguments = self.sequence.pop(0)
+                call = types.SimpleNamespace(
+                    id=call_id,
+                    function=types.SimpleNamespace(
+                        name=name,
+                        arguments=json.dumps(arguments),
+                    ),
+                )
+                return types.SimpleNamespace(choices=[
+                    types.SimpleNamespace(message=types.SimpleNamespace(
+                        content=None,
+                        tool_calls=[call],
+                    ))
+                ])
+
+        pipeline = object.__new__(RAGPipeline)
+        pipeline.groq_client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(completions=FakeCompletions())
+        )
+        pipeline.raw_review_store = None
+        pipeline.vector_search = lambda query, n_results: {
+            "ids": [["clinic-1"]],
+            "documents": [["A dentist"]],
+            "distances": [[0.1]],
+        }
+        pipeline.bm25_search = lambda query, n_results: {
+            "ids": ["clinic-1"],
+            "scores": [1.0],
+        }
+        pipeline.specific_bm25 = None
+        pipeline.specific_evidence_records = []
+
+        result = pipeline.agentic_search(
+            "kind dentist",
+            candidate_ids=["clinic-1"],
+            n_results=10,
+            max_iterations=2,
+        )
+
+        assessment = result["observations"][-1]
+        self.assertEqual(assessment["tool"], "assess_search_coverage")
+        self.assertFalse(assessment["evidence_sufficient"])
+        self.assertFalse(result["coverage_sufficient"])
+
+    def test_literal_evidence_search_must_precede_successful_coverage(self):
+        class FakeCompletions:
+            def __init__(self):
+                self.sequence = [
+                    ("call-1", "search_facilities", {
+                        "query": "dentist with Tuesday evening hours",
+                        "limit": 10,
+                    }),
+                    ("call-2", "assess_search_coverage", {
+                        "satisfied_constraints": ["Tuesday evening hours"],
+                        "missing_constraints": [],
+                        "evidence_sufficient": True,
+                        "reason": "The semantic result looks relevant.",
+                    }),
+                    ("call-3", "finish_search", {
+                        "reason": "Stopping before literal evidence.",
+                    }),
+                    ("call-4", "search_indexed_evidence", {
+                        "query": "Tuesday evening hours 화요일 야간 진료",
+                        "exact_terms": ["Tuesday evening hours"],
+                    }),
+                    ("call-5", "assess_search_coverage", {
+                        "satisfied_constraints": ["Tuesday evening hours"],
+                        "missing_constraints": [],
+                        "evidence_sufficient": True,
+                        "reason": "Literal evidence now supports the requirement.",
+                    }),
+                    ("call-6", "finish_search", {
+                        "reason": "Coverage includes literal evidence.",
+                    }),
+                ]
+
+            def create(self, **kwargs):
+                del kwargs
+                call_id, name, arguments = self.sequence.pop(0)
+                call = types.SimpleNamespace(
+                    id=call_id,
+                    function=types.SimpleNamespace(
+                        name=name,
+                        arguments=json.dumps(arguments, ensure_ascii=False),
+                    ),
+                )
+                return types.SimpleNamespace(choices=[
+                    types.SimpleNamespace(message=types.SimpleNamespace(
+                        content=None,
+                        tool_calls=[call],
+                    ))
+                ])
+
+        pipeline = object.__new__(RAGPipeline)
+        pipeline.groq_client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(completions=FakeCompletions())
+        )
+        pipeline.raw_review_store = None
+        pipeline.vector_search = lambda query, n_results: {
+            "ids": [["clinic-1"]],
+            "documents": [["A dentist"]],
+            "distances": [[0.1]],
+        }
+        pipeline.bm25_search = lambda query, n_results: {
+            "ids": ["clinic-1"],
+            "scores": [1.0],
+        }
+        pipeline.specific_bm25_search = (
+            lambda query, exact_terms, n_results, candidate_ids=None: {
+                "matches": [{
+                    "place_id": "clinic-1",
+                    "text": "Open Tuesday evening",
+                    "source_type": "business_hours",
+                    "source_field": "business_hours",
+                    "matched_terms": ["Tuesday evening hours"],
+                    "score": 1.0,
+                    "is_verbatim": False,
+                }],
+                "facility_ids": ["clinic-1"],
+            }
+        )
+
+        result = pipeline.agentic_search(
+            "dentist with Tuesday evening hours",
+            exact_terms=["Tuesday evening hours"],
+            candidate_ids=["clinic-1"],
+            n_results=10,
+        )
+
+        assessments = [
+            item for item in result["observations"]
+            if item.get("tool") == "assess_search_coverage"
+        ]
+        self.assertFalse(assessments[0]["evidence_sufficient"])
+        self.assertTrue(assessments[1]["evidence_sufficient"])
+        self.assertEqual(result["retrieval_status"], "complete")
+        self.assertEqual(result["trace"][-1]["action"], "finish_search")
+
+    def test_model_comment_ids_cannot_shrink_the_candidate_scope(self):
+        class FakeCompletions:
+            def __init__(self):
+                self.sequence = [
+                    ("call-1", "search_facilities", {
+                        "query": "kind doctor with patient comments",
+                        "limit": 10,
+                    }),
+                    ("call-2", "search_multilingual_comments", {
+                        "facility_ids": ["clinic-0"],
+                        "query_terms": ["kind", "친절"],
+                        "limit": 10,
+                    }),
+                    ("call-3", "select_comment_evidence", {
+                        "selections": [{
+                            "evidence_id": "review:last",
+                            "translated_text": "Kind care",
+                            "relevance_reason": "Direct review support",
+                        }],
+                    }),
+                    ("call-4", "assess_search_coverage", {
                         "satisfied_constraints": ["kind"],
                         "missing_constraints": [],
                         "evidence_sufficient": True,
                         "reason": "A scoped review supports the requirement.",
                     }),
-                    ("call-3", "finish_search", {
+                    ("call-5", "finish_search", {
                         "reason": "Coverage is complete.",
                     }),
                 ]
@@ -362,17 +570,26 @@ class AgenticLoopTests(unittest.TestCase):
             chat=types.SimpleNamespace(completions=FakeCompletions())
         )
         pipeline.raw_review_store = raw_store
+        pipeline.vector_search = lambda query, n_results: {
+            "ids": [["clinic-0"]],
+            "documents": [["Kind doctor"]],
+            "distances": [[0.1]],
+        }
+        pipeline.bm25_search = lambda query, n_results: {
+            "ids": ["clinic-0"],
+            "scores": [1.0],
+        }
         pipeline.specific_bm25 = None
         pipeline.specific_evidence_records = []
 
         result = pipeline.agentic_search(
-            "kind doctor",
+            "kind doctor with patient comments",
             candidate_ids=candidate_ids,
             n_results=10,
         )
 
         self.assertEqual(raw_store.facility_ids, candidate_ids)
-        self.assertEqual(result["ids"][0], [candidate_ids[-1]])
+        self.assertIn(candidate_ids[-1], result["ids"][0])
 
     def test_no_tool_response_cannot_bypass_coverage_assessment(self):
         class FakeCompletions:
@@ -447,6 +664,74 @@ class AgenticLoopTests(unittest.TestCase):
             [entry["action"] for entry in result["trace"]],
         )
         self.assertEqual(result["trace"][-1]["action"], "finish_search")
+
+    def test_iteration_limit_is_reported_as_incomplete(self):
+        class FakeCompletions:
+            def create(self, **kwargs):
+                del kwargs
+                message = types.SimpleNamespace(
+                    content="I am still thinking.",
+                    tool_calls=[],
+                )
+                return types.SimpleNamespace(
+                    choices=[types.SimpleNamespace(message=message)]
+                )
+
+        pipeline = object.__new__(RAGPipeline)
+        pipeline.groq_client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(completions=FakeCompletions())
+        )
+        pipeline.raw_review_store = None
+        pipeline.vector_search = lambda query, n_results: {
+            "ids": [["clinic-1"]],
+            "documents": [["Kind dentist"]],
+            "distances": [[0.1]],
+        }
+        pipeline.bm25_search = lambda query, n_results: {
+            "ids": ["clinic-1"],
+            "scores": [1.0],
+        }
+        pipeline.specific_bm25 = None
+        pipeline.specific_evidence_records = []
+
+        result = pipeline.agentic_search(
+            "kind dentist",
+            candidate_ids=["clinic-1"],
+            n_results=10,
+            max_iterations=2,
+        )
+
+        self.assertEqual(result["retrieval_status"], "incomplete")
+        self.assertFalse(result["coverage_assessed"])
+        self.assertFalse(result["coverage_sufficient"])
+        self.assertEqual(result["termination_reason"], "iteration_limit")
+        self.assertEqual(result["candidate_scope_count"], 1)
+        self.assertEqual(result["trace"][-1]["action"], "retrieval_incomplete")
+
+    def test_candidate_scope_count_records_the_enforced_cap(self):
+        pipeline = object.__new__(RAGPipeline)
+        pipeline.groq_client = None
+        pipeline.raw_review_store = None
+        pipeline.vector_search = lambda query, n_results: {
+            "ids": [["clinic-1"]],
+            "documents": [["Kind dentist"]],
+            "distances": [[0.1]],
+        }
+        pipeline.bm25_search = lambda query, n_results: {
+            "ids": ["clinic-1"],
+            "scores": [1.0],
+        }
+        pipeline.specific_bm25 = None
+        pipeline.specific_evidence_records = []
+
+        result = pipeline.agentic_search(
+            "kind dentist",
+            candidate_ids=[f"clinic-{index}" for index in range(10_001)],
+            n_results=10,
+        )
+
+        self.assertEqual(result["candidate_scope_count"], 10_000)
+        self.assertEqual(result["retrieval_status"], "deterministic_fallback")
 
 if __name__ == "__main__":
     unittest.main()

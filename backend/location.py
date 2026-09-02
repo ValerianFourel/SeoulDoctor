@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any
 import logging
 from dotenv import load_dotenv
 import os
+from cookies import CookieConsent, should_log_analytics
 logger = logging.getLogger(__name__)
 import requests 
 load_dotenv()
@@ -15,9 +16,37 @@ DEFAULT_LAT = 37.5219  # Yeouido
 DEFAULT_LON = 126.9243
 
 
+def _log_location_detail(
+    consent: Optional[CookieConsent],
+    level: str,
+    message: str,
+    *args: Any,
+) -> None:
+    """Log raw location data only when the caller granted analytics consent."""
+    if consent is not None and should_log_analytics(consent):
+        getattr(logger, level)(message, *args)
+
+
 # --- 4. GOOGLE MAPS API FUNCTIONS ---
 
-def google_maps_geocode(address: str, add_seoul: bool = False) -> Optional[Dict[str, Any]]:
+def _log_google_request_error(operation: str, error: BaseException) -> None:
+    """Log Google transport failures without serializing the key-bearing URL."""
+    response = getattr(error, "response", None)
+    status_code = getattr(response, "status_code", None)
+    status = f", HTTP {status_code}" if status_code is not None else ""
+    logger.error(
+        "Google Maps %s request failed (%s%s)",
+        operation,
+        type(error).__name__,
+        status,
+    )
+
+
+def google_maps_geocode(
+    address: str,
+    add_seoul: bool = False,
+    consent: Optional[CookieConsent] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Convert address to coordinates using Google Maps Geocoding API.
     Returns dict with {lat, lon, address_korean, district, dong, formatted_address} or None.
@@ -74,21 +103,37 @@ def google_maps_geocode(address: str, add_seoul: bool = False) -> Optional[Dict[
             result.setdefault('district', '')
             result.setdefault('dong', '')
             
-            logger.info(f"✓ Google geocoded: {address[:30]}... → {result.get('district', 'Unknown')}")
+            _log_location_detail(
+                consent,
+                "info",
+                "Google geocoded: %s... → %s",
+                address[:30],
+                result.get("district", "Unknown"),
+            )
             return result
         else:
-            logger.warning(f"Google geocoding failed: {data.get('status')} for '{address}'")
+            _log_location_detail(
+                consent,
+                "warning",
+                "Google geocoding failed for %s: %s",
+                address[:30],
+                data.get("status"),
+            )
             return None
             
     except requests.exceptions.RequestException as e:
-        logger.error(f"Google Maps geocoding error: {e}")
+        _log_google_request_error("geocoding", e)
         return None
     except (KeyError, ValueError, IndexError) as e:
         logger.error(f"Google Maps geocoding parse error: {e}")
         return None
 
 
-def google_maps_reverse_geocode(lat: float, lon: float) -> Optional[Dict[str, Any]]:
+def google_maps_reverse_geocode(
+    lat: float,
+    lon: float,
+    consent: Optional[CookieConsent] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Convert coordinates to address using Google Maps Reverse Geocoding API.
     Returns dict with {address_korean, district, dong, formatted_address} or None.
@@ -133,20 +178,30 @@ def google_maps_reverse_geocode(lat: float, lon: float) -> Optional[Dict[str, An
             result.setdefault('district', '')
             result.setdefault('dong', '')
             
-            logger.info(f"✓ Google reverse geocoded: ({lat:.4f}, {lon:.4f}) → {result.get('district', 'Unknown')}")
+            _log_location_detail(
+                consent,
+                "info",
+                "Google reverse geocoded: (%.4f, %.4f) → %s",
+                lat,
+                lon,
+                result.get("district", "Unknown"),
+            )
             return result
         else:
             return None
             
     except requests.exceptions.RequestException as e:
-        logger.error(f"Google Maps reverse geocoding error: {e}")
+        _log_google_request_error("reverse geocoding", e)
         return None
     except (KeyError, ValueError, IndexError) as e:
         logger.error(f"Google Maps reverse geocoding parse error: {e}")
         return None
 
 
-def google_maps_place_search(query: str) -> Optional[Dict[str, Any]]:
+def google_maps_place_search(
+    query: str,
+    consent: Optional[CookieConsent] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Search for a place using Google Maps Places API (Text Search).
     Returns dict with {lat, lon, address_korean, district, dong, place_name} or None.
@@ -191,13 +246,19 @@ def google_maps_place_search(query: str) -> Optional[Dict[str, Any]]:
             result.setdefault('district', '')
             result.setdefault('dong', '')
             
-            logger.info(f"✓ Google place search: {query[:30]}... → {result.get('place_name', 'Unknown')}")
+            _log_location_detail(
+                consent,
+                "info",
+                "Google place search: %s... → %s",
+                query[:30],
+                result.get("place_name", "Unknown"),
+            )
             return result
         else:
             return None
             
     except requests.exceptions.RequestException as e:
-        logger.error(f"Google Maps place search error: {e}")
+        _log_google_request_error("place search", e)
         return None
     except (KeyError, ValueError, IndexError) as e:
         logger.error(f"Google Maps place search parse error: {e}")
@@ -241,14 +302,20 @@ def google_maps_place_details(place_id: str) -> Optional[Dict[str, Any]]:
         else:
             return None
             
-    except Exception as e:
-        logger.error(f"Google Maps place details error: {e}")
+    except requests.exceptions.RequestException as e:
+        _log_google_request_error("place details", e)
+        return None
+    except (KeyError, ValueError, IndexError, TypeError) as e:
+        logger.error(f"Google Maps place details parse error: {e}")
         return None
 
 
 # --- 5. ENHANCED KAKAO API FUNCTIONS (kept as fallback) ---
 
-def kakao_geocode(address: str) -> Optional[Dict[str, Any]]:
+def kakao_geocode(
+    address: str,
+    consent: Optional[CookieConsent] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Convert address to coordinates using Kakao API with full address standardization.
     Returns dict with {lat, lon, address_korean, district, dong, address_type} or None.
@@ -290,20 +357,104 @@ def kakao_geocode(address: str) -> Optional[Dict[str, Any]]:
             else:
                 return None
             
-            logger.info(f"✓ Geocoded: {address[:30]}... → {result['district']}")
+            _log_location_detail(
+                consent,
+                "info",
+                "Kakao geocoded: %s... → %s",
+                address[:30],
+                result["district"],
+            )
             return result
         else:
             return None
             
     except requests.exceptions.RequestException as e:
-        logger.error(f"Kakao geocoding error: {e}")
+        logger.error("Kakao geocoding request failed (%s)", type(e).__name__)
         return None
     except (KeyError, ValueError, IndexError) as e:
-        logger.error(f"Kakao geocoding parse error: {e}")
+        logger.error("Kakao geocoding parse error (%s)", type(e).__name__)
         return None
 
 
-def kakao_reverse_geocode(lat: float, lon: float) -> Optional[Dict[str, Any]]:
+def kakao_keyword_search(
+    query: str,
+    consent: Optional[CookieConsent] = None,
+) -> Optional[Dict[str, Any]]:
+    """Resolve a Seoul landmark or place name through Kakao local search."""
+    if not KAKAO_REST_API_KEY:
+        logger.warning("KAKAO_REST_API_KEY not set - skipping keyword search")
+        return None
+
+    url = "https://dapi.kakao.com/v2/local/search/keyword.json"
+    headers = {"Authorization": f"KakaoAK {KAKAO_REST_API_KEY}"}
+    try:
+        response = requests.get(
+            url,
+            headers=headers,
+            params={"query": query, "size": 15},
+            timeout=5,
+        )
+        response.raise_for_status()
+        documents = response.json().get("documents", [])
+        document = next(
+            (
+                item
+                for item in documents
+                if str(
+                    item.get("road_address_name")
+                    or item.get("address_name")
+                    or ""
+                ).startswith("서울")
+            ),
+            None,
+        )
+        if not document:
+            return None
+
+        latitude = float(document["y"])
+        longitude = float(document["x"])
+        address = (
+            document.get("road_address_name")
+            or document.get("address_name")
+            or ""
+        )
+        result = {
+            "lat": latitude,
+            "lon": longitude,
+            "place_name": document.get("place_name", ""),
+            "address_korean": address,
+            "formatted_address": address,
+            "address_type": "place_keyword",
+            "district": "",
+            "dong": "",
+        }
+        reverse = kakao_reverse_geocode(latitude, longitude, consent=consent)
+        if reverse:
+            result.update(reverse)
+        _log_location_detail(
+            consent,
+            "info",
+            "Kakao keyword search: %s... → %s",
+            query[:30],
+            result.get("place_name", "Unknown"),
+        )
+        return result
+    except requests.exceptions.RequestException as error:
+        logger.error(
+            "Kakao keyword search request failed (%s)",
+            type(error).__name__,
+        )
+        return None
+    except (KeyError, TypeError, ValueError, IndexError) as error:
+        logger.error("Kakao keyword search parse error (%s)", type(error).__name__)
+        return None
+
+
+def kakao_reverse_geocode(
+    lat: float,
+    lon: float,
+    consent: Optional[CookieConsent] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Convert coordinates to address using Kakao API.
     Returns dict with {address_korean, district, dong} or None.
@@ -339,20 +490,30 @@ def kakao_reverse_geocode(lat: float, lon: float) -> Optional[Dict[str, Any]]:
             else:
                 return None
             
-            logger.info(f"✓ Reverse geocoded: ({lat:.4f}, {lon:.4f}) → {result['district']}")
+            _log_location_detail(
+                consent,
+                "info",
+                "Kakao reverse geocoded: (%.4f, %.4f) → %s",
+                lat,
+                lon,
+                result["district"],
+            )
             return result
         else:
             return None
             
     except requests.exceptions.RequestException as e:
-        logger.error(f"Kakao reverse geocoding error: {e}")
+        logger.error("Kakao reverse geocoding request failed (%s)", type(e).__name__)
         return None
     except (KeyError, ValueError, IndexError) as e:
-        logger.error(f"Kakao reverse geocoding parse error: {e}")
+        logger.error("Kakao reverse geocoding parse error (%s)", type(e).__name__)
         return None
 
 
-def verify_and_standardize_address(location_text: str) -> Optional[Dict[str, Any]]:
+def verify_and_standardize_address(
+    location_text: str,
+    consent: Optional[CookieConsent] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Verify and standardize any location input using Google Maps API with fallbacks.
     Returns standardized address info with coordinates and zone details.
@@ -361,37 +522,59 @@ def verify_and_standardize_address(location_text: str) -> Optional[Dict[str, Any
     1. Try Google Maps geocoding directly
     2. Try Google Maps with ", Seoul" added
     3. Try Google Maps place search (for landmarks, business names)
-    4. Try Kakao Maps as final fallback (if available)
+    4. Try Kakao address and landmark search as final fallbacks
     
     This is the main entry point for address verification.
     """
     if not location_text:
         return None
     
-    logger.debug(f"🔍 Verifying location: '{location_text}'")
+    _log_location_detail(consent, "debug", "Verifying location: %s", location_text)
     
     # ===== STRATEGY 1: Direct Google Maps Geocoding =====
     if GOOGLE_MAPS_API_KEY:
         logger.debug("Trying Google Maps direct geocoding...")
-        result = google_maps_geocode(location_text, add_seoul=False)
+        result = google_maps_geocode(
+            location_text, add_seoul=False, consent=consent
+        )
         if result:
-            logger.info(f"✅ Google Maps (direct): '{location_text}' → {result.get('district', 'Unknown')}")
+            _log_location_detail(
+                consent,
+                "info",
+                "Google Maps direct geocoding succeeded: %s → %s",
+                location_text,
+                result.get("district", "Unknown"),
+            )
             return result
     
     # ===== STRATEGY 2: Google Maps with ", Seoul" =====
     if GOOGLE_MAPS_API_KEY:
         logger.debug("Trying Google Maps with ', Seoul' appended...")
-        result = google_maps_geocode(location_text, add_seoul=True)
+        result = google_maps_geocode(
+            location_text, add_seoul=True, consent=consent
+        )
         if result:
-            logger.info(f"✅ Google Maps (+ Seoul): '{location_text}' → {result.get('district', 'Unknown')}")
+            _log_location_detail(
+                consent,
+                "info",
+                "Google Maps Seoul-suffixed geocoding succeeded: %s → %s",
+                location_text,
+                result.get("district", "Unknown"),
+            )
             return result
     
     # ===== STRATEGY 3: Google Maps Place Search =====
     if GOOGLE_MAPS_API_KEY:
         logger.debug("Trying Google Maps place search...")
-        result = google_maps_place_search(location_text)
+        result = google_maps_place_search(location_text, consent=consent)
         if result:
-            logger.info(f"✅ Google Maps (place search): '{location_text}' → {result.get('place_name', 'Unknown')}")
+            _log_location_detail(
+                consent,
+                "info",
+                "Google Maps place search succeeded: %s → %s",
+                location_text,
+                result.get("place_name", "Unknown"),
+            )
             return result
     
     # ===== STRATEGY 4: Kakao Maps Fallback =====
@@ -399,27 +582,71 @@ def verify_and_standardize_address(location_text: str) -> Optional[Dict[str, Any
         logger.debug("Trying Kakao Maps as fallback...")
         
         # Try direct Kakao geocoding
-        result = kakao_geocode(location_text)
+        result = kakao_geocode(location_text, consent=consent)
         if result:
-            logger.info(f"✅ Kakao Maps (fallback): '{location_text}' → {result.get('district', 'Unknown')}")
+            _log_location_detail(
+                consent,
+                "info",
+                "Kakao geocoding succeeded: %s → %s",
+                location_text,
+                result.get("district", "Unknown"),
+            )
+            return result
+
+        result = kakao_keyword_search(location_text, consent=consent)
+        if result:
+            _log_location_detail(
+                consent,
+                "info",
+                "Kakao keyword search succeeded: %s → %s",
+                location_text,
+                result.get("place_name", "Unknown"),
+            )
             return result
         
         # Try adding "서울" prefix for Kakao
         if not location_text.startswith("서울") and not location_text.lower().startswith("seoul"):
-            result = kakao_geocode(f"서울 {location_text}")
+            result = kakao_geocode(f"서울 {location_text}", consent=consent)
             if result:
-                logger.info(f"✅ Kakao Maps (+ 서울): '{location_text}' → {result.get('district', 'Unknown')}")
+                _log_location_detail(
+                    consent,
+                    "info",
+                    "Kakao Seoul-suffixed geocoding succeeded: %s → %s",
+                    location_text,
+                    result.get("district", "Unknown"),
+                )
+                return result
+
+            result = kakao_keyword_search(
+                f"서울 {location_text}", consent=consent
+            )
+            if result:
+                _log_location_detail(
+                    consent,
+                    "info",
+                    "Kakao Seoul-suffixed keyword search succeeded: %s → %s",
+                    location_text,
+                    result.get("place_name", "Unknown"),
+                )
                 return result
         
         # Try adding "구" suffix for Kakao
         if "구" not in location_text and "동" not in location_text:
-            result = kakao_geocode(f"서울 {location_text}구")
+            result = kakao_geocode(
+                f"서울 {location_text}구", consent=consent
+            )
             if result:
-                logger.info(f"✅ Kakao Maps (+ 구): '{location_text}' → {result.get('district', 'Unknown')}")
+                _log_location_detail(
+                    consent,
+                    "info",
+                    "Kakao district-suffixed geocoding succeeded: %s → %s",
+                    location_text,
+                    result.get("district", "Unknown"),
+                )
                 return result
     
     # ===== ALL STRATEGIES FAILED =====
-    logger.warning(f"❌ All geocoding attempts failed for: '{location_text}'")
+    logger.warning("All geocoding attempts failed")
     logger.warning("   → Google Maps API: " + ("Available" if GOOGLE_MAPS_API_KEY else "NOT CONFIGURED"))
     logger.warning("   → Kakao Maps API: " + ("Available" if KAKAO_REST_API_KEY else "NOT CONFIGURED"))
     

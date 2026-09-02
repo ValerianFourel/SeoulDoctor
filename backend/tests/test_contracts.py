@@ -21,7 +21,11 @@ from agentic_retrieval import (  # noqa: E402
     tokenize_exact,
     validate_retrieval_plan,
 )
-from query_facets import augment_extracted_facets, retrieval_terms_from_state  # noqa: E402
+from query_facets import (  # noqa: E402
+    augment_extracted_facets,
+    may_relax_distance_constraint,
+    retrieval_terms_from_state,
+)
 from raw_review_store import detect_language_hint  # noqa: E402
 
 
@@ -62,6 +66,11 @@ class ConfigurationContractTests(unittest.TestCase):
 
 
 class RequestBoundaryTests(unittest.TestCase):
+    def test_chat_endpoint_runs_blocking_work_in_fastapi_threadpool(self):
+        source = (BACKEND_DIR / "main.py").read_text()
+        self.assertIn("def chat_endpoint(", source)
+        self.assertNotIn("async def chat_endpoint(", source)
+
     def test_chat_message_rejects_empty_or_oversized_input(self):
         for message in ("", "   ", "x" * 4_001):
             with self.subTest(length=len(message)):
@@ -70,6 +79,23 @@ class RequestBoundaryTests(unittest.TestCase):
 
         accepted = ChatRequest(message=" x ", current_state=State())
         self.assertEqual(accepted.message, "x")
+
+    def test_client_retrieval_telemetry_can_be_cleared_at_the_server_boundary(self):
+        state = State(
+            last_retrieval_trace=[{"action": "spoofed"}],
+            last_retrieval_observations=[{"tool": "spoofed"}],
+            last_retrieval_metadata={"retrieval_status": "complete"},
+            last_retrieval_candidates=[{"place_id": "spoofed"}],
+            last_retrieval_run_id="spoofed",
+        )
+
+        state.clear_retrieval_telemetry()
+
+        self.assertEqual(state.last_retrieval_trace, [])
+        self.assertEqual(state.last_retrieval_observations, [])
+        self.assertEqual(state.last_retrieval_metadata, {})
+        self.assertEqual(state.last_retrieval_candidates, [])
+        self.assertIsNone(state.last_retrieval_run_id)
 
 
 class ConsentContractTests(unittest.TestCase):
@@ -86,6 +112,57 @@ class ConsentContractTests(unittest.TestCase):
 
 
 class AgenticRetrievalContractTests(unittest.TestCase):
+    def test_omitted_distance_cannot_overwrite_an_existing_radius(self):
+        extracted = augment_extracted_facets(
+            "Require detailed explanations and avoid aggressive upselling.",
+            {"travel_label": "Moderate"},
+        )
+        self.assertIsNone(extracted["travel_label"])
+
+    def test_refinement_can_explicitly_preserve_the_existing_radius(self):
+        for query in (
+            "Refine the same nearby search rather than broadening it.",
+            "범위를 넓히지 말고 같은 주변 검색을 더 정교하게 해 주세요.",
+        ):
+            with self.subTest(query=query):
+                extracted = augment_extracted_facets(
+                    query,
+                    {"travel_label": "Nearby"},
+                )
+                self.assertIsNone(extracted["travel_label"])
+
+    def test_generic_facility_noun_cannot_replace_an_existing_specialty(self):
+        for query, model_specialty in (
+            ("Which clinic best matches and why?", "clinic"),
+            ("어느 병원이 가장 잘 맞는지 알려 주세요.", "병원"),
+        ):
+            with self.subTest(query=query):
+                extracted = augment_extracted_facets(
+                    query,
+                    {"specialty": model_specialty},
+                )
+                self.assertIsNone(extracted["specialty"])
+
+    def test_numeric_distance_is_recovered_in_english_and_korean(self):
+        for query in (
+            "Find a dermatologist within 2 km",
+            "대흥역에서 2km 이내 피부과",
+        ):
+            with self.subTest(query=query):
+                extracted = augment_extracted_facets(query, {})
+                self.assertEqual(extracted["travel_label"], "Close")
+
+        walking = augment_extracted_facets(
+            "Find a dentist within 500 metres",
+            {},
+        )
+        self.assertEqual(walking["travel_label"], "Walking Distance")
+
+    def test_explicit_distance_is_never_relaxed_to_fill_results(self):
+        self.assertTrue(may_relax_distance_constraint(0.5))
+        self.assertFalse(may_relax_distance_constraint(0.6))
+        self.assertFalse(may_relax_distance_constraint(1.0))
+
     def test_bilingual_facets_survive_an_empty_llm_payload(self):
         extracted = augment_extracted_facets(
             "강남에서 자궁내막증을 진료하는 여성 산부인과 의사",
@@ -98,8 +175,9 @@ class AgenticRetrievalContractTests(unittest.TestCase):
 
     def test_retrieval_terms_include_korean_and_english_aliases(self):
         state = State(
+            hard_keywords=["fast treatment"],
             gender_terms=["female"],
-            disease_terms=["endometriosis"],
+            disease_terms=["endometriosis", "cheilitis"],
             comment_terms=["clear explanations"],
         )
         terms = retrieval_terms_from_state(state)
@@ -109,6 +187,11 @@ class AgenticRetrievalContractTests(unittest.TestCase):
         self.assertIn("자궁내막증", terms)
         self.assertIn("clear explanations", terms)
         self.assertIn("설명 잘", terms)
+        self.assertIn("cheilitis", terms)
+        self.assertIn("구순염", terms)
+        self.assertIn("자세한 설명", terms)
+        self.assertIn("fast treatment", terms)
+        self.assertIn("빠른 진료", terms)
 
     def test_exact_token_matching_does_not_use_substrings(self):
         document_tokens = tokenize_exact("The consultation felt unprofessional.")
@@ -147,6 +230,7 @@ class AgenticRetrievalContractTests(unittest.TestCase):
 
     def test_review_language_hints_preserve_mixed_scripts(self):
         self.assertEqual(detect_language_hint("친절합니다"), "Korean")
+        self.assertEqual(detect_language_hint("친절"), "Korean")
         self.assertEqual(
             detect_language_hint("MRI 검사 친절해요"),
             "Korean + Latin (mixed)",

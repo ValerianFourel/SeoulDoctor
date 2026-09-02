@@ -42,6 +42,12 @@ CHAT_RATE_LIMIT_REQUESTS = _bounded_positive_int_env(
 CHAT_RATE_LIMIT_WINDOW_SECONDS = _bounded_positive_int_env(
     "CHAT_RATE_LIMIT_WINDOW_SECONDS", 60, 3_600
 )
+ENABLE_RETRIEVAL_DEBUG = os.getenv(
+    "ENABLE_RETRIEVAL_DEBUG", "false"
+).strip().casefold() in {"1", "true", "yes", "on"}
+RETRIEVAL_DEBUG_LIMIT = _bounded_positive_int_env(
+    "RETRIEVAL_DEBUG_LIMIT", 50, 200
+)
 
 OPENROUTER_CHAT_MODEL = os.getenv(
     "OPENROUTER_CHAT_MODEL", "openai/gpt-oss-120b"

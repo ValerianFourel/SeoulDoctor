@@ -49,6 +49,15 @@ Default Space disk is ephemeral. Attach a read-write Hugging Face Storage Bucket
 
 ## Verify the deployment
 
+Build and smoke-test the image locally without loading real credentials:
+
+```bash
+docker build --tag seouldoc-hf-eval:latest .
+scripts/smoke_hf_image.sh
+```
+
+The smoke command uses dummy provider values, disables container networking, mounts the local source data read-only, and removes its temporary container on success or failure. It copies Chroma into the container's temporary writable storage because Chroma performs SQLite housekeeping during startup; the source index remains read-only.
+
 Wait for the Space status to become **Running**. Check these paths:
 
 - `/` loads the SeoulDoc interface.

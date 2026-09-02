@@ -13,6 +13,9 @@
 **/.ruff_cache
 **/venv
 **/.venv
+backend/tests
+backend/patient_journey.py
+backend/tmp*.py
 backend/chroma_db
 backend/data
 backend/*.parquet

@@ -12,14 +12,19 @@ if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
 from run_openrouter_bilingual_eval import (  # noqa: E402
+    DEFAULT_SCENARIOS_PATH,
     SimulatorRequestError,
+    _decision_messages,
     atomic_write_json,
+    evaluation_exit_code,
+    health_endpoint_for,
     load_scenarios,
     parse_decision,
     post_chat,
     request_simulator_decision,
     run_scenario,
     select_scenarios,
+    validate_app_health,
 )
 
 
@@ -52,6 +57,48 @@ def scenario():
     }
 
 
+HIDDEN_SENTINELS = (
+    "oracle-only-target-7f2e",
+    "sealed-evidence-1a4c",
+    "rank-rubric-9d83",
+    "grader-success-5b60",
+    "hidden-constraint-2e91",
+)
+
+
+def protected_scenario():
+    item = scenario()
+    item["hidden_constraints"] = [HIDDEN_SENTINELS[4]]
+    item["success_criteria"] = [HIDDEN_SENTINELS[3]]
+    item["oracle"] = {
+        "target_facility_id": HIDDEN_SENTINELS[0],
+        "sealed_evidence_ids": [HIDDEN_SENTINELS[1]],
+        "ranking_rubric": HIDDEN_SENTINELS[2],
+        "nested": {"grader_only": list(HIDDEN_SENTINELS)},
+    }
+    item["public_patient_card"] = {
+        "persona": "A patient looking for a dentist in Mapo.",
+        "opening_message": "Find a dentist in Mapo.",
+        "staged_requests": ["Please also check patient comments."],
+        "stop_condition": "Stop after a grounded answer or a clear evidence gap.",
+        "grader_note": HIDDEN_SENTINELS[0],
+    }
+    return item
+
+
+def assert_no_hidden_sentinels(test_case, value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            assert_no_hidden_sentinels(test_case, key)
+            assert_no_hidden_sentinels(test_case, item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            assert_no_hidden_sentinels(test_case, item)
+    elif isinstance(value, str):
+        for sentinel in HIDDEN_SENTINELS:
+            test_case.assertNotIn(sentinel, value)
+
+
 class FakeProviderError(Exception):
     status_code = 400
 
@@ -81,6 +128,68 @@ class FakeCompletionResponse:
 
 
 class BilingualEvalTests(unittest.TestCase):
+    def test_default_casebook_is_the_canonical_grounded_contract(self):
+        self.assertEqual(
+            DEFAULT_SCENARIOS_PATH.name,
+            "grounded_bilingual_scenarios.json",
+        )
+
+    def test_health_endpoint_is_derived_from_chat_endpoint(self):
+        self.assertEqual(
+            health_endpoint_for("http://127.0.0.1:7860/chat"),
+            "http://127.0.0.1:7860/health",
+        )
+        self.assertEqual(
+            health_endpoint_for("https://space.example/api/chat?debug=1"),
+            "https://space.example/api/health",
+        )
+
+    def test_health_gate_requires_exact_models_and_complete_indexes(self):
+        healthy = {
+            "status": "ok",
+            "model_provider": "openrouter",
+            "model": "openai/gpt-oss-120b",
+            "agent_model": "openai/gpt-oss-120b",
+            "facilities": 8_484,
+            "vector_documents": 8_484,
+            "raw_reviews": 1_791_749,
+        }
+
+        self.assertEqual(
+            validate_app_health(healthy, "openai/gpt-oss-120b"),
+            [],
+        )
+
+        unhealthy = dict(healthy)
+        unhealthy["agent_model"] = "another/model"
+        unhealthy["raw_reviews"] = 0
+        failures = validate_app_health(unhealthy, "openai/gpt-oss-120b")
+        self.assertTrue(any("agent_model" in failure for failure in failures))
+        self.assertTrue(any("raw_reviews" in failure for failure in failures))
+
+    def test_unsatisfied_or_incomplete_run_has_nonzero_exit(self):
+        self.assertEqual(
+            evaluation_exit_code({
+                "status": "completed",
+                "summary": {"errors": 0, "not_satisfied": 0},
+            }),
+            0,
+        )
+        self.assertEqual(
+            evaluation_exit_code({
+                "status": "completed",
+                "summary": {"errors": 0, "not_satisfied": 1},
+            }),
+            1,
+        )
+        self.assertEqual(
+            evaluation_exit_code({
+                "status": "preflight_failed",
+                "summary": {"errors": 0, "not_satisfied": 0},
+            }),
+            1,
+        )
+
     def test_load_and_select_scenarios(self):
         korean = scenario()
         korean["id"] = "ko-test-01"
@@ -132,6 +241,68 @@ class BilingualEvalTests(unittest.TestCase):
         self.assertEqual(calls[0]["response_format"]["type"], "json_schema")
         self.assertEqual(calls[1]["response_format"]["type"], "json_object")
         self.assertEqual(result["usage"]["total_tokens"], 30)
+
+    def test_simulator_request_allowlists_patient_visible_scenario(self):
+        calls = []
+
+        class Completions:
+            def create(self, **kwargs):
+                calls.append(kwargs)
+                return FakeCompletionResponse(decision(action="stop", message=""))
+
+        case = protected_scenario()
+        messages = _decision_messages(case, [], turn=1, max_turns=3)
+        request_simulator_decision(
+            SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+            "qwen/qwen3.8-max",
+            messages,
+        )
+
+        self.assertEqual(len(calls), 1)
+        assert_no_hidden_sentinels(self, calls[0]["messages"])
+        payload = json.loads(calls[0]["messages"][1]["content"])
+        visible = payload["patient_visible_scenario"]
+        self.assertEqual(
+            set(visible),
+            {"source_language", "patient_card", "staged_prompts", "stop_condition"},
+        )
+        self.assertEqual(
+            visible["patient_card"],
+            {
+                "persona": "A patient looking for a dentist in Mapo.",
+                "opening_message": "Find a dentist in Mapo.",
+            },
+        )
+        self.assertEqual(visible["staged_prompts"], ["Please also check patient comments."])
+
+    def test_scenario_artifact_retains_grader_only_data_after_blinding(self):
+        case = protected_scenario()
+        captured_messages = []
+
+        def fake_decision_requester(client, model, messages, first_turn_opening=None):
+            del client, model, first_turn_opening
+            captured_messages.append(messages)
+            return {
+                "model": "qwen/qwen3.8-max",
+                "decision": decision(action="stop", message=""),
+                "request_messages": messages,
+                "attempts": [],
+                "usage": {"total_tokens": 1},
+            }
+
+        result = run_scenario(
+            case,
+            client=object(),
+            model="qwen/qwen3.8-max",
+            session=object(),
+            endpoint="https://example.test/chat",
+            max_turns=3,
+            timeout=5,
+            decision_requester=fake_decision_requester,
+        )
+
+        self.assertEqual(result["scenario"]["oracle"], case["oracle"])
+        assert_no_hidden_sentinels(self, captured_messages)
 
     def test_non_compatibility_provider_error_does_not_retry(self):
         calls = []

@@ -109,6 +109,7 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 import json
 from hashlib import sha256
+from uuid import uuid4
 import pandas as pd
 import numpy as np
 import re
@@ -123,7 +124,12 @@ import logging
 
 # Local imports
 from distance import haversine, fuzzy_match_location
-from models import ChatRequest, State
+from models import (
+    ChatRequest,
+    State,
+    serialize_results_for_chat,
+    serialize_state_for_chat,
+)
 from utils import (
     safe_convert_to_python, DISTANCE_MAPPING, clean_llm_response,
     standardize_and_fill_state,detect_search_mode,detect_language, fuzzy_keyword_match,
@@ -158,11 +164,23 @@ from raw_review_store import ensure_raw_review_parquet
 from config import (
     CHAT_RATE_LIMIT_REQUESTS,
     CHAT_RATE_LIMIT_WINDOW_SECONDS,
+    ENABLE_RETRIEVAL_DEBUG,
+    GROQ_AGENT_MODEL,
     GROQ_CHAT_MODEL,
+    GROQ_REASONING_EFFORT,
     LLM_PROVIDER,
+    RETRIEVAL_DEBUG_LIMIT,
 )
-from llm_client import build_llm_client
-from query_facets import augment_extracted_facets, retrieval_terms_from_state
+from llm_client import (
+    build_llm_client,
+    request_json_completion,
+    request_text_completion,
+)
+from query_facets import (
+    augment_extracted_facets,
+    may_relax_distance_constraint,
+    retrieval_terms_from_state,
+)
 from rate_limit import SlidingWindowRateLimiter
 
 # ==========================================
@@ -214,6 +232,7 @@ available_specialties = []  # Unique specialties from parquet data
 # ==========================================
 # HELPER FUNCTIONS
 # ==========================================
+
 
 
 
@@ -412,6 +431,7 @@ def root_status() -> Dict[str, Any]:
         "status": "ready" if rag_pipeline is not None and client is not None else "starting",
         "model_provider": LLM_PROVIDER,
         "model": GROQ_CHAT_MODEL,
+        "agent_model": GROQ_AGENT_MODEL,
     }
 
 
@@ -438,6 +458,7 @@ def health_check() -> Dict[str, Any]:
         "raw_reviews": int(stats.get("raw_review_count", 0)),
         "model_provider": LLM_PROVIDER,
         "model": GROQ_CHAT_MODEL,
+        "agent_model": GROQ_AGENT_MODEL,
     }
 
 
@@ -499,7 +520,7 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
 - specialty: matched Korean specialty or null (default: 병원,의원 if unclear)
 - specialty_confidence: 0.0-1.0
 - location: extracted location or null (null if not mentioned)
-- travel_label: one from travel labels list (default: "Moderate")
+- travel_label: one from travel labels list, or null when travel is not mentioned
 - hard_keywords: factual must-haves (parking, MRI, insurance, weekend hours, English-speaking)
 - soft_keywords: subjective qualities user WANTS (can include unfriendly, rude, cold, expensive, etc.)
 - negative_hard_keywords: factual exclusions (without parking, no weekend hours)
@@ -516,7 +537,7 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
   "location": "string or null",
   "latitude": null,
   "longitude": null,
-  "travel_label": "Moderate",
+  "travel_label": null,
   "language_pref": "English Preferred",
   "hard_keywords": [],
   "soft_keywords": [],
@@ -535,16 +556,17 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
         # ============================================
         # CALL LLM WITH HIGHER TEMPERATURE
         # ============================================
-        completion = client.chat.completions.create(
+        extracted_payload, _ = request_json_completion(
+            client,
             model=GROQ_CHAT_MODEL,
             messages=extraction_messages,
-            temperature=0.5,  # Higher for less rigid behavior
-            max_completion_tokens=512,
-            response_format={"type": "json_object"}
+            temperature=0.2,
+            max_completion_tokens=1024,
+            required_keys=("specialty", "location", "travel_label"),
         )
         extracted = augment_extracted_facets(
             user_message,
-            json.loads(completion.choices[0].message.content),
+            extracted_payload,
         )
         
         # ============================================
@@ -671,12 +693,11 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
                 privacy_safe_log(consent,
                     f"🚶 Travel preference: '{travel_label}' → {distance_km}km radius")
             else:
-                extracted['travel_label'] = "Moderate"
+                extracted['travel_label'] = None
                 privacy_safe_log(consent,
-                    f"⚠️ Invalid travel label, defaulting to 'Moderate' (5km)")
+                    "⚠️ Invalid travel label ignored")
         else:
-            extracted['travel_label'] = "Moderate"
-            privacy_safe_log(consent, "ℹ️ No travel preference specified, defaulting to 'Moderate' (5km)")
+            privacy_safe_log(consent, "ℹ️ No travel update in this message")
         
         # ============================================
         # FINAL KEYWORD LOGGING
@@ -697,8 +718,8 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
         # LOCATION VERIFICATION
         # ============================================
         if extracted.get('location'):
-            logger.debug(f"📍 Location extraction: '{extracted['location']}'")
-            verified = verify_and_standardize_address(extracted['location'])
+            privacy_safe_log(consent, "📍 Location extraction received")
+            verified = verify_and_standardize_address(extracted['location'], consent=consent)
             
             if verified:
                 extracted['latitude'] = verified['lat']
@@ -710,7 +731,7 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
                 privacy_safe_log(consent,
                     f"✅ Geocoding verified: {verified['district']} ({verified['lat']:.4f}, {verified['lon']:.4f})")
             else:
-                logger.warning(f"⚠️ Could not verify: '{extracted['location']}'")
+                logger.warning("Could not verify an extracted location")
         
         privacy_safe_log(consent, "=" * 60 + "\n")
         
@@ -749,21 +770,21 @@ Return JSON: {{
     extraction_messages = [{"role": "system", "content": extraction_prompt}]
     
     try:
-        completion = client.chat.completions.create(
+        extracted, _ = request_json_completion(
+            client,
             model=GROQ_CHAT_MODEL,
             messages=extraction_messages,
             temperature=0.0,
-            max_completion_tokens=128,
-            response_format={"type": "json_object"}
+            max_completion_tokens=512,
+            required_keys=("location", "travel_label"),
         )
-        extracted = json.loads(completion.choices[0].message.content)
         
         if extracted.get('travel_label') and extracted['travel_label'] in DISTANCE_MAPPING:
             privacy_safe_log(consent, 
                 f"🚶 Quick travel update: '{extracted['travel_label']}' → {DISTANCE_MAPPING[extracted['travel_label']]}km")
         
         if extracted.get('location'):
-            verified = verify_and_standardize_address(extracted['location'])
+            verified = verify_and_standardize_address(extracted['location'], consent=consent)
             
             if verified:
                 extracted['latitude'] = verified['lat']
@@ -773,7 +794,7 @@ Return JSON: {{
                 extracted['dong'] = verified['dong']
                 privacy_safe_log(consent, f"✅ Quick location change: {verified['district']}")
             else:
-                logger.warning(f"⚠️ Could not verify: '{extracted['location']}'")
+                logger.warning("Could not verify an extracted location")
         
         return extracted
         
@@ -802,14 +823,14 @@ Return JSON: {{
     extraction_messages = [{"role": "system", "content": extraction_prompt}]
     
     try:
-        completion = client.chat.completions.create(
+        extracted, _ = request_json_completion(
+            client,
             model=GROQ_CHAT_MODEL,
             messages=extraction_messages,
             temperature=0.0,
-            max_completion_tokens=128,
-            response_format={"type": "json_object"}
+            max_completion_tokens=512,
+            required_keys=("specialty", "specialty_confidence"),
         )
-        extracted = json.loads(completion.choices[0].message.content)
         
         if extracted.get('specialty'):
             privacy_safe_log(consent,
@@ -846,7 +867,7 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any], replace
             # Specific location (e.g., "Gangnam", "Hongdae")
             state.location = normalized_location
             state.is_citywide_search = False  # User specified a specific location
-            logger.info(f"📍 Location set: {normalized_location}")
+            logger.info("Specific location set")
         else:
             # User said "Seoul" (or variant) → treat as city-wide
             state.location = None
@@ -884,9 +905,9 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any], replace
         
         if state.travel_label in DISTANCE_MAPPING:
             state.max_distance_km = DISTANCE_MAPPING[state.travel_label]
-            logger.info(f"📏 Distance updated: {state.travel_label} → {state.max_distance_km}km (confidence: {state.travel_confidence})")
+            logger.info("Travel preference updated")
         else:
-            logger.warning(f"⚠️ Unknown travel label '{state.travel_label}', using default 5km")
+            logger.warning("Unknown travel preference; using default distance")
             state.travel_label = "Moderate"
             state.max_distance_km = 5.0
             state.travel_confidence = 0.5
@@ -896,46 +917,46 @@ def merge_extraction_into_state(state: State, extracted: Dict[str, Any], replace
         # REPLACEMENT MODE (default)
         if extracted.get('hard_keywords') is not None:
             state.hard_keywords = extracted['hard_keywords']
-            logger.info(f"🔄 Replaced hard keywords: {state.hard_keywords}")
+            logger.info("Replaced required search terms")
         
         if extracted.get('soft_keywords') is not None:
             state.keywords = extracted['soft_keywords']
-            logger.info(f"🔄 Replaced soft keywords: {state.keywords}")
+            logger.info("Replaced preferred search terms")
     else:
         # ADDITIVE MODE (only when explicitly refining)
         if extracted.get('hard_keywords'):
             existing_hard = set(state.hard_keywords)
             new_hard = set(extracted['hard_keywords'])
             state.hard_keywords = list(existing_hard.union(new_hard))
-            logger.info(f"➕ Added hard keywords: {state.hard_keywords}")
+            logger.info("Added required search terms")
         
         if extracted.get('soft_keywords'):
             existing_soft = set(state.keywords)
             new_soft = set(extracted['soft_keywords'])
             state.keywords = list(existing_soft.union(new_soft))
-            logger.info(f"➕ Added soft keywords: {state.keywords}")
+            logger.info("Added preferred search terms")
     
     # ===== NEGATIVE KEYWORDS =====
     if replace_keywords:
         if extracted.get('negative_hard_keywords') is not None:
             state.negative_hard_keywords = extracted['negative_hard_keywords']
-            logger.info(f"🚫 Replaced negative hard keywords: {state.negative_hard_keywords}")
+            logger.info("Replaced excluded search terms")
         
         if extracted.get('negative_keywords') is not None:
             state.negative_keywords = extracted['negative_keywords']
-            logger.info(f"🚫 Replaced negative keywords: {state.negative_keywords}")
+            logger.info("Replaced avoided search terms")
     else:
         if extracted.get('negative_hard_keywords'):
             existing_neg_hard = set(state.negative_hard_keywords)
             new_neg_hard = set(extracted['negative_hard_keywords'])
             state.negative_hard_keywords = list(existing_neg_hard.union(new_neg_hard))
-            logger.info(f"➕ Added negative hard keywords: {state.negative_hard_keywords}")
+            logger.info("Added excluded search terms")
         
         if extracted.get('negative_keywords'):
             existing_neg = set(state.negative_keywords)
             new_neg = set(extracted['negative_keywords'])
             state.negative_keywords = list(existing_neg.union(new_neg))
-            logger.info(f"➕ Added negative keywords: {state.negative_keywords}")
+            logger.info("Added avoided search terms")
 
     # ===== STRUCTURED RETRIEVAL FACETS =====
     for field in ("place_terms", "gender_terms", "disease_terms", "comment_terms"):
@@ -1151,14 +1172,16 @@ def execute_emergency_search(
     privacy_safe_log(consent, f"   Returned {len(results)} facilities")
     privacy_safe_log(consent, "=" * 60 + "\n")
     
-    return response_text, results
+    return response_text, serialize_results_for_chat(
+        results, include_debug=ENABLE_RETRIEVAL_DEBUG
+    )
 
 def filter_by_zone(df: pd.DataFrame, district: str, dong: Optional[str] = None) -> pd.DataFrame:
     """Filter facilities by zone (district and optionally dong)."""
     if not district:
         return df
     
-    logger.info(f"🏘️ Zone filter: {district} {dong or ''}")
+    logger.info("Zone filter applied")
     
     if 'file_district' in df.columns:
         mask = df['file_district'].str.contains(district, na=False, case=False)
@@ -1203,6 +1226,8 @@ def execute_search(
     if not consent:
         consent = CookieConsent()
 
+    state.clear_retrieval_telemetry()
+    state.last_retrieval_run_id = uuid4().hex
     language = state.language_pref or "English"
     
     state.last_search_query = user_message
@@ -1304,10 +1329,10 @@ def execute_search(
         # Reverse geocode
         reverse_result = None
         if GOOGLE_MAPS_API_KEY:
-            reverse_result = google_maps_reverse_geocode(user_lat, user_lon)
+            reverse_result = google_maps_reverse_geocode(user_lat, user_lon, consent=consent)
         
         if not reverse_result and KAKAO_REST_API_KEY:
-            reverse_result = kakao_reverse_geocode(user_lat, user_lon)
+            reverse_result = kakao_reverse_geocode(user_lat, user_lon, consent=consent)
         
         if reverse_result:
             location_context = f"near {reverse_result['address_korean']}"
@@ -1726,11 +1751,39 @@ def execute_search(
                 )
                 state.last_retrieval_trace = final_df.attrs.get("rag_trace", [])
                 state.last_retrieval_observations = final_df.attrs.get("rag_observations", [])
+                state.last_retrieval_metadata = {
+                    **final_df.attrs.get("rag_metadata", {}),
+                    "run_id": state.last_retrieval_run_id,
+                }
+                if ENABLE_RETRIEVAL_DEBUG:
+                    retrieval_by_id = {
+                        item["place_id"]: item
+                        for item in final_df.attrs.get("rag_candidates", [])
+                    }
+                    state.last_retrieval_candidates = [
+                        {
+                            **retrieval_by_id.get(str(row["place_id"]), {
+                                "place_id": str(row["place_id"]),
+                                "retrieval_rank_1based": None,
+                                "methods": [],
+                            }),
+                            "combined_rank_1based": combined_rank,
+                        }
+                        for combined_rank, (_, row) in enumerate(
+                            final_df.head(RETRIEVAL_DEBUG_LIMIT).iterrows(),
+                            start=1,
+                        )
+                    ]
                 
                 privacy_safe_log(consent, "✓ Agentic dense/BM25 ranking applied")
                 
             except Exception as e:
                 logger.error(f"Agentic RAG ranking error: {e}", exc_info=True)
+                state.last_retrieval_metadata = {
+                    "run_id": state.last_retrieval_run_id,
+                    "retrieval_status": "error",
+                    "termination_reason": type(e).__name__,
+                }
                 final_df['relevance_rank'] = 9999
                 # Sort by distance only if we have it
                 if has_distance_data:
@@ -1752,6 +1805,12 @@ def execute_search(
         
         state.query_intent = "GENERAL"
         state.hybrid_alpha = None
+        state.last_retrieval_metadata = {
+            "run_id": state.last_retrieval_run_id,
+            "retrieval_status": "not_run",
+            "termination_reason": "general_distance_only",
+            "candidate_scope_count": int(len(final_df)),
+        }
     
     # ===== ENGLISH FILTER =====
     
@@ -1773,7 +1832,11 @@ def execute_search(
         pre_validation_df = final_df.copy()
         final_df = final_df[final_df['distance_km'] < max_distance]
         
-        if len(final_df) < 3 and len(pre_validation_df) >= 3:
+        if (
+            len(final_df) < 3
+            and len(pre_validation_df) >= 3
+            and may_relax_distance_constraint(state.travel_confidence)
+        ):
             final_df = pre_validation_df.head(5)
             relaxed_filters.append("included slightly farther facilities")
     
@@ -1822,13 +1885,14 @@ def execute_search(
         }]
         
         try:
-            gen_completion = client.chat.completions.create(
+            response_text, _ = request_text_completion(
+                client,
                 model=GROQ_CHAT_MODEL,
                 messages=gen_messages,
-                temperature=1.0,
-                max_completion_tokens=1024
+                temperature=0.4,
+                max_completion_tokens=1536,
+                reasoning_effort=GROQ_REASONING_EFFORT,
             )
-            response_text = gen_completion.choices[0].message.content
             response_text = re.sub(r'[\u0400-\u04FF]+', 'Seoul', response_text)
             response_text = re.sub(r'대한민국 서울특별시 중구 세종대로 110', 'Seoul', response_text)
             response_text = re.sub(r'Seoul, 서울특별시 대한민국', '', response_text)
@@ -1880,6 +1944,8 @@ def execute_search(
         
         for idx, (_, row) in enumerate(final_df.head(n_results).iterrows(), start=1):
             result = {
+                "entity_type": "facility",
+                "final_rank": idx,
                 "place_id": safe_convert_to_python(row['place_id']),
                 "name": safe_convert_to_python(row['name']),
                 "category": safe_convert_to_python(row['category']),
@@ -2003,7 +2069,9 @@ def execute_search(
     privacy_safe_log(consent, "=" * 60 + "\n")
 
     response_text = clean_llm_response(response_text)
-    return response_text, results
+    return response_text, serialize_results_for_chat(
+        results, include_debug=ENABLE_RETRIEVAL_DEBUG
+    )
 
 # ==========================================
 # API ENDPOINTS
@@ -2066,6 +2134,7 @@ async def set_travel_preference(
     except Exception as e:
         logger.error(f"State reconstruction error: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail="Invalid state")
+    state.clear_retrieval_telemetry()
     
     # Update travel preferences with HIGH confidence (widget-based)
     state.travel_label = travel_label
@@ -2085,7 +2154,9 @@ async def set_travel_preference(
     
     return {
         "response": response_text,
-        "state": state.model_dump()
+        "state": serialize_state_for_chat(
+            state, include_debug=ENABLE_RETRIEVAL_DEBUG
+        ),
     }
 
 
@@ -2109,7 +2180,7 @@ CITY_WIDE_KEYWORDS = {
 
 
 @app.post("/chat")
-async def chat_endpoint(
+def chat_endpoint(
     req: ChatRequest,
     response: Response,
     request: Request,
@@ -2158,6 +2229,7 @@ async def chat_endpoint(
         logger.info("=" * 60)
     
     enriched_state = standardize_and_fill_state(req.current_state, consent)
+    enriched_state.clear_retrieval_telemetry()
     enriched_state.language_pref = language
     
     current_turn = enriched_state.turn_count + 1
@@ -2227,7 +2299,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": results
             }
         else:
@@ -2238,7 +2312,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": []
             }
 
@@ -2252,7 +2328,7 @@ async def chat_endpoint(
         new_state.language_pref = language
         new_state.location = req.message.strip()
         
-        verified = verify_and_standardize_address(f"서울 {req.message.strip()}")
+        verified = verify_and_standardize_address(f"서울 {req.message.strip()}", consent=consent)
         
         if verified:
             new_state.latitude = verified['lat']
@@ -2286,7 +2362,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": results
             }
         else:
@@ -2298,7 +2376,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": []
             }
     
@@ -2322,14 +2402,14 @@ async def chat_endpoint(
     }]
     
     try:
-        router_completion = client.chat.completions.create(
+        route, _ = request_json_completion(
+            client,
             model=GROQ_CHAT_MODEL,
             messages=router_messages,
             temperature=0.0,
-            max_completion_tokens=256,
-            response_format={"type": "json_object"}
+            max_completion_tokens=768,
+            required_keys=("intent",),
         )
-        route = json.loads(router_completion.choices[0].message.content)
         intent = route.get("intent")
         
         if should_log_analytics(consent):
@@ -2368,7 +2448,9 @@ async def chat_endpoint(
         
         return {
             "response": response_text,
-            "state": new_state.model_dump(),
+            "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
             "results": results
         }
     
@@ -2452,7 +2534,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": results
             }
         
@@ -2503,7 +2587,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": results
             }
         
@@ -2563,7 +2649,9 @@ async def chat_endpoint(
                 
                 return {
                     "response": response_text,
-                    "state": new_state.model_dump(),
+                    "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                     "results": results
                 }
             
@@ -2602,7 +2690,9 @@ async def chat_endpoint(
                 
                 return {
                     "response": response_text,
-                    "state": new_state.model_dump(),
+                    "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                     "results": []
                 }
 
@@ -2626,7 +2716,9 @@ async def chat_endpoint(
         
         return {
             "response": response_text,
-            "state": new_state.model_dump(),
+            "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
             "results": []
         }
 
@@ -2685,14 +2777,18 @@ async def chat_endpoint(
                 
                 return {
                     "response": response_text,
-                    "state": new_state.model_dump(),
+                    "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                     "results": results
                 }
             elif new_state.specialty and new_state.specialty_confidence < 0.3:
                 response_text = ask_for_specialty_clarification(new_state)
                 return {
                     "response": response_text,
-                    "state": new_state.model_dump(),
+                    "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                     "results": []
                 }
             
@@ -2704,7 +2800,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": []
             }
         
@@ -2754,7 +2852,9 @@ async def chat_endpoint(
                 
                 return {
                     "response": response_text,
-                    "state": new_state.model_dump(),
+                    "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                     "results": results
                 }
             else:
@@ -2765,7 +2865,9 @@ async def chat_endpoint(
                 
                 return {
                     "response": response_text,
-                    "state": new_state.model_dump(),
+                    "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                     "results": []
                 }
         
@@ -2840,14 +2942,18 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": results
             }
         elif new_state.specialty and new_state.specialty_confidence < 0.3:
             response_text = ask_for_specialty_clarification(new_state)
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": []
             }
         else:
@@ -2859,7 +2965,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": []
             }
 
@@ -3131,7 +3239,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": results
             }
         
@@ -3150,7 +3260,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": []
             }
         
@@ -3220,7 +3332,9 @@ async def chat_endpoint(
             
             return {
                 "response": response_text,
-                "state": new_state.model_dump(),
+                "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
                 "results": []
             }
     
@@ -3242,7 +3356,9 @@ async def chat_endpoint(
         
         return {
             "response": response_text,
-            "state": new_state.model_dump(),
+            "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
             "results": []
         }
     
@@ -3258,7 +3374,9 @@ async def chat_endpoint(
         
         return {
             "response": response_text,
-            "state": new_state.model_dump(),
+            "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
             "results": []
         }
     
@@ -3277,6 +3395,8 @@ async def chat_endpoint(
         
         return {
             "response": response_text,
-            "state": new_state.model_dump(),
+            "state": serialize_state_for_chat(
+                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
+                ),
             "results": []
         }
