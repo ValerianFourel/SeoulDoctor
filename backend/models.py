@@ -1,5 +1,11 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field, StringConstraints
+from typing import Annotated, Optional, List, Dict, Any
+
+
+ChatMessage = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=4_000),
+]
 
 class State(BaseModel):
     """
@@ -94,7 +100,7 @@ class State(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
-    message: str
+    message: ChatMessage
     current_state: State
 
 

@@ -2,45 +2,43 @@
 import { useState } from 'react';
 import Link from 'next/link';
 
-
 export default function ContactPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
- const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-  // 1. THIS IS THE MOST IMPORTANT LINE
-  event.preventDefault(); 
-  
-  setIsSubmitting(true);
-  setStatus('idle');
+  const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
 
-  // 2. We use FormData to gather the info
-  const formData = new FormData(event.currentTarget);
-  formData.append("access_key", "910f6abd-3031-4cae-b81f-0fb2598ec199");
+    setIsSubmitting(true);
+    setStatus('idle');
 
-  try {
-    const response = await fetch("https://api.web3forms.com/submit", {
-      method: "POST", // 3. Ensure this is POST
-      body: formData,
-      // 4. This header ensures the browser knows we are talking to an API
-      headers: {
-        Accept: "application/json",
-      },
-    });
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    formData.append('access_key', '910f6abd-3031-4cae-b81f-0fb2598ec199');
 
-    const data = await response.json();
-    if (data.success) {
-      setStatus('success');
-      (event.target as HTMLFormElement).reset();
-    } else {
+    try {
+      const response = await fetch('https://api.web3forms.com/submit', {
+        method: 'POST',
+        body: formData,
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      const data = (await response.json()) as { success?: boolean };
+      if (response.ok && data.success) {
+        setStatus('success');
+        form.reset();
+        return;
+      }
+
       setStatus('error');
+    } catch {
+      setStatus('error');
+    } finally {
+      setIsSubmitting(false);
     }
-  } catch (error) {
-    setStatus('error');
-  } finally {
-    setIsSubmitting(false);
-  }
-};
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-12 px-4 sm:px-6 lg:px-8">
@@ -86,6 +84,7 @@ export default function ContactPage() {
                 name="name"
                 id="name"
                 required
+                maxLength={120}
                 placeholder="Your Name"
                 className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
               />
@@ -100,6 +99,7 @@ export default function ContactPage() {
                 name="email"
                 id="email"
                 required
+                maxLength={254}
                 placeholder="email@example.com"
                 className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
               />
@@ -113,11 +113,21 @@ export default function ContactPage() {
                 name="message"
                 id="message"
                 required
+                maxLength={4000}
                 rows={5}
                 placeholder="How can we help you?"
                 className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all resize-none"
               ></textarea>
             </div>
+
+            <p className="text-xs leading-5 text-slate-500">
+              Web3Forms processes this form and delivers it by email. Do not include
+              medical details. See our{' '}
+              <Link className="font-medium text-blue-700 underline" href="/privacy">
+                privacy information
+              </Link>
+              .
+            </p>
 
             <button
               type="submit"

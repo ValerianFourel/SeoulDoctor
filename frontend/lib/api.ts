@@ -1,13 +1,10 @@
 const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
 
 const getApiUrl = (path: string): string => {
-  if (!configuredApiUrl) {
-    throw new Error("NEXT_PUBLIC_API_URL is not configured.");
-  }
-
-  const baseUrl = configuredApiUrl.replace(/\/$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${baseUrl}${normalizedPath}`;
+  const baseUrl = configuredApiUrl?.replace(/\/+$/, "");
+
+  return baseUrl ? `${baseUrl}${normalizedPath}` : normalizedPath;
 };
 
 const getErrorMessage = (body: unknown, status: number): string => {

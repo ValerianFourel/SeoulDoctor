@@ -99,6 +99,7 @@ RAG SEMANTIC SEARCH:
 """
 # FORCE UNBUFFERED OUTPUT - Must be at the very top
 import os
+from pathlib import Path
 import sys
 os.environ['PYTHONUNBUFFERED'] = '1'
 if hasattr(sys.stdout, 'reconfigure'):
@@ -107,13 +108,13 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(line_buffering=True)
 
 import json
+from hashlib import sha256
 import pandas as pd
 import numpy as np
 import re
 from fastapi import FastAPI, HTTPException, Cookie, Header, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Dict, Any, Tuple
-from groq import Groq
 from contextlib import asynccontextmanager
 from huggingface_hub import hf_hub_download
 from dotenv import load_dotenv
@@ -153,8 +154,16 @@ from cookies import (
 
 # Import RAG Pipeline
 from rag_pipeline import RAGPipeline
-from config import GROQ_CHAT_MODEL
+from raw_review_store import ensure_raw_review_parquet
+from config import (
+    CHAT_RATE_LIMIT_REQUESTS,
+    CHAT_RATE_LIMIT_WINDOW_SECONDS,
+    GROQ_CHAT_MODEL,
+    LLM_PROVIDER,
+)
+from llm_client import build_llm_client
 from query_facets import augment_extracted_facets, retrieval_terms_from_state
+from rate_limit import SlidingWindowRateLimiter
 
 # ==========================================
 # LOGGING SETUP
@@ -187,7 +196,9 @@ NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
-CHROMA_PATH = "./chroma_db"
+CHROMA_PATH = os.getenv(
+    "CHROMA_PATH", str(Path(__file__).resolve().parent / "chroma_db")
+)
 
 # Defaults
 DEFAULT_LAT = 37.5219  # Yeouido
@@ -302,14 +313,22 @@ def calculate_field_boost(value, keyword_lower: str) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global rag_pipeline, df_facilities, df_filtered, available_specialties, client
-    logger.info("🚀 Booting Seoul Med Match Backend...")
+    logger.info(
+        "🚀 Booting Seoul Med Match Backend (provider=%s, model=%s)",
+        LLM_PROVIDER, GROQ_CHAT_MODEL,
+    )
 
     try:
         df_facilities = download_and_cache_parquet()
         logger.info(f"✅ Loaded {len(df_facilities)} facilities from parquet")
         
-        df_filtered = df_facilities[df_facilities['Summaries'].notna()].copy()
-        logger.info(f"✅ Filtered to {len(df_filtered)} facilities with summaries")
+        raw_reviews_path = ensure_raw_review_parquet()
+        if raw_reviews_path:
+            df_filtered = df_facilities.copy()
+            logger.info(f"✅ Search coverage expanded to all {len(df_filtered)} facilities")
+        else:
+            df_filtered = df_facilities[df_facilities['Summaries'].notna()].copy()
+            logger.info(f"✅ Filtered to {len(df_filtered)} facilities with summaries")
         
         if 'category' in df_filtered.columns:
             available_specialties = sorted(df_filtered['category'].dropna().unique().tolist())
@@ -351,7 +370,8 @@ async def lifespan(app: FastAPI):
             openai_api_key=OPENAI_API_KEY,
             groq_client=client,
             collection_name="seoul_med_agentic_v2",
-            embedding_model="text-embedding-3-small"
+            embedding_model="text-embedding-3-small",
+            raw_reviews_path=raw_reviews_path,
         )
         
         rag_pipeline.initialize_collection(df_filtered, force_recreate=False)
@@ -361,6 +381,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"   Vector documents: {rag_stats['document_count']}")
         logger.info(f"   BM25 documents: {rag_stats['bm25_document_count']}")
         logger.info(f"   Specific evidence chunks: {rag_stats['specific_bm25_document_count']}")
+        logger.info(f"   Raw review comments: {'ENABLED' if rag_stats['raw_reviews_enabled'] else 'DISABLED'}")
         logger.info(f"   Hybrid search: {'ENABLED ✓' if rag_stats['hybrid_search_enabled'] else 'DISABLED'}")
         
     except Exception as e:
@@ -377,7 +398,48 @@ async def lifespan(app: FastAPI):
 # ==========================================
 
 app = FastAPI(lifespan=lifespan)
-client = Groq(api_key=GROQ_API_KEY)
+client = build_llm_client()
+chat_rate_limiter = SlidingWindowRateLimiter(
+    max_requests=CHAT_RATE_LIMIT_REQUESTS,
+    window_seconds=CHAT_RATE_LIMIT_WINDOW_SECONDS,
+)
+
+@app.get("/")
+def root_status() -> Dict[str, Any]:
+    """Small public status route for container probes and human operators."""
+    return {
+        "service": "SeoulDoc API",
+        "status": "ready" if rag_pipeline is not None and client is not None else "starting",
+        "model_provider": LLM_PROVIDER,
+        "model": GROQ_CHAT_MODEL,
+    }
+
+
+@app.get("/health")
+def health_check() -> Dict[str, Any]:
+    """Fail health checks when startup completed without usable search data."""
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Configured LLM provider '{LLM_PROVIDER}' is unavailable",
+        )
+    ready = (
+        rag_pipeline is not None
+        and df_filtered is not None
+        and not df_filtered.empty
+    )
+    if not ready:
+        raise HTTPException(status_code=503, detail="Search indexes are not ready")
+    stats = rag_pipeline.get_statistics()
+    return {
+        "status": "ok",
+        "facilities": int(len(df_filtered)),
+        "vector_documents": int(stats.get("document_count", 0)),
+        "raw_reviews": int(stats.get("raw_review_count", 0)),
+        "model_provider": LLM_PROVIDER,
+        "model": GROQ_CHAT_MODEL,
+    }
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -385,7 +447,6 @@ app.add_middleware(
         "http://localhost:3000",
         "https://seouldoc.io",
         "https://www.seouldoc.io",
-        "https://seoul-doctor.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -1624,6 +1685,24 @@ def execute_search(
         query_text = " ".join(dict.fromkeys(part for part in query_components if part))
         
         if len(query_text.strip()) > 2 and len(final_df) > 0 and rag_pipeline:
+            # Give agentic retrieval the complete specialty/location/distance
+            # scope, not only the 3-5 legacy heuristic finalists. This makes
+            # every eligible facility's comments reachable by the multilingual
+            # retrieval loop; evidence scoring still determines the final rank.
+            if len(working_df) > len(final_df):
+                final_ids = set(final_df["place_id"].astype(str))
+                remaining_candidates = working_df[
+                    ~working_df["place_id"].astype(str).isin(final_ids)
+                ]
+                final_df = pd.concat(
+                    [final_df, remaining_candidates],
+                    ignore_index=True,
+                )
+                privacy_safe_log(
+                    consent,
+                    f"🌐 Expanded RAG evidence scope to {len(final_df)} eligible facilities",
+                )
+
             privacy_safe_log(consent, "🤖 Applying agentic RAG retrieval loop...")
             
             try:
@@ -1643,6 +1722,7 @@ def execute_search(
                     specialty_confidence=specialty_conf,
                     exact_terms=exact_retrieval_terms,
                     use_agentic=True,
+                    target_language=language,
                 )
                 state.last_retrieval_trace = final_df.attrs.get("rag_trace", [])
                 state.last_retrieval_observations = final_df.attrs.get("rag_observations", [])
@@ -2039,6 +2119,28 @@ async def chat_endpoint(
     """
     Router-Controller Architecture with Hybrid RAG and keyword filtering.
     """
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Configured LLM provider '{LLM_PROVIDER}' is unavailable",
+        )
+
+    remote_host = request.client.host if request.client else "unknown"
+    client_key = sha256(remote_host.encode("utf-8")).hexdigest()
+    rate_limit = chat_rate_limiter.check(client_key)
+    rate_limit_headers = {
+        "X-RateLimit-Limit": str(CHAT_RATE_LIMIT_REQUESTS),
+        "X-RateLimit-Remaining": str(rate_limit.remaining),
+    }
+    if not rate_limit.allowed:
+        rate_limit_headers["Retry-After"] = str(rate_limit.retry_after_seconds)
+        raise HTTPException(
+            status_code=429,
+            detail="Chat rate limit exceeded. Try again later.",
+            headers=rate_limit_headers,
+        )
+    for name, value in rate_limit_headers.items():
+        response.headers[name] = value
     
     consent = get_consent_from_cookie(consent_header or cookieConsent)
     consent = ensure_consent_object(consent)

@@ -1,8 +1,9 @@
-"""Run the progressive bilingual search ladder against a deployed Render API."""
+"""Run the progressive bilingual search ladder against a SeoulDoc API."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import json
 from pathlib import Path
 import sys
@@ -11,7 +12,9 @@ import time
 import requests
 
 
-DEFAULT_ENDPOINT = "https://seouldoctor.onrender.com/chat"
+DEFAULT_ENDPOINT = os.getenv(
+    "SEOULDOC_EVAL_ENDPOINT", "http://127.0.0.1:7860/chat"
+)
 CASES_PATH = Path(__file__).with_name("agentic_search_stress_cases.json")
 
 

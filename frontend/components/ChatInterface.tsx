@@ -6,8 +6,8 @@ import { Send, MapPin, Sparkles, Globe, Bug, ChevronDown, ChevronUp, X } from "l
 import Link from 'next/link';
 import { postJson } from '../lib/api';
 
-// ⭐ DEBUG MODE VISIBILITY CONTROL
-const ENABLE_DEBUG_MODE = true; // Temporary production diagnostics for agentic-search validation
+const ENABLE_DEBUG_MODE =
+  process.env.NEXT_PUBLIC_ENABLE_DEBUG_MODE === "true";
 
 type State = {
   // ===== SPECIALTY INFORMATION =====
@@ -85,9 +85,14 @@ type FacilityResult = {
   retrieval_methods?: string[];
   retrieval_matched_terms?: string[];
   retrieval_evidence?: Array<{
+    evidence_id?: string;
     text: string;
     source_type: string;
     source_field?: string;
+    language?: string;
+    translated_text?: string;
+    relevance_reason?: string;
+    visit_date?: string;
     matched_terms?: string[];
     is_verbatim?: boolean;
   }>;
@@ -1271,6 +1276,42 @@ export default function ChatInterface() {
                                   </div>
                                 )}
                                                                             
+                                {facility.retrieval_evidence?.some((evidence) => evidence.is_verbatim) && (
+                                  <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                                      Relevant patient comments
+                                    </p>
+                                    <div className="space-y-2">
+                                      {facility.retrieval_evidence
+                                        .filter((evidence) => evidence.is_verbatim)
+                                        .slice(0, 2)
+                                        .map((evidence, evidenceIdx) => (
+                                          <div
+                                            key={evidence.evidence_id || `${facility.place_id}-comment-${evidenceIdx}`}
+                                            className="rounded-md bg-white p-2 text-sm text-slate-700"
+                                          >
+                                            <p className="font-medium text-slate-900">
+                                              “{evidence.translated_text || evidence.text}”
+                                            </p>
+                                            {evidence.translated_text && (
+                                              <details className="mt-1 text-xs text-slate-500">
+                                                <summary className="cursor-pointer">Original review</summary>
+                                                <p className="mt-1">{evidence.text}</p>
+                                              </details>
+                                            )}
+                                            <p className="mt-1 text-[11px] text-slate-500">
+                                              Verbatim review{evidence.visit_date ? ` · ${evidence.visit_date}` : ""}
+                                              {evidence.relevance_reason ? ` · ${evidence.relevance_reason}` : ""}
+                                            </p>
+                                          </div>
+                                        ))}
+                                    </div>
+                                    <p className="mt-2 text-[10px] text-emerald-700">
+                                      AI-selected and translated; verify context on the source map page.
+                                    </p>
+                                  </div>
+                                )}
+
                                 {/* Debug: Show place_id */}
                                 {ENABLE_DEBUG_MODE && debugMode && (
                                   <div className="mt-2 pt-2 border-t border-slate-200 space-y-2">
@@ -1440,6 +1481,7 @@ export default function ChatInterface() {
                 className="w-full px-4 py-3 sm:px-5 sm:py-4 rounded-xl bg-white border-2 border-blue-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all text-slate-800 placeholder-slate-400 outline-none text-sm sm:text-base shadow-sm"
                 placeholder="Describe what you need..."
                 value={input}
+                maxLength={4000}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onFocus={handleInputFocus}

@@ -9,17 +9,21 @@ from cookies import (
 from prompt import FIELD_CHANGE_DETECTION_PROMPT
 import sys
 import os
+from pathlib import Path
 import json
 from huggingface_hub import hf_hub_download
 from dotenv import load_dotenv
-from groq import Groq
 from location import (
     google_maps_geocode, google_maps_reverse_geocode, google_maps_place_search,
     google_maps_place_details, kakao_geocode, kakao_reverse_geocode,
     verify_and_standardize_address
 )
 from config import DISTANCE_MAPPING, GROQ_CHAT_MODEL
-LOCAL_PARQUET_PATH = "./local_facilities_cache.parquet"
+from llm_client import build_llm_client
+LOCAL_PARQUET_PATH = os.getenv(
+    "FACILITIES_CACHE_PATH",
+    str(Path(__file__).resolve().parent / "local_facilities_cache.parquet"),
+)
 
 load_dotenv()
 DEFAULT_MAX_DISTANCE = 25.0  # km - default search radius
@@ -35,7 +39,7 @@ HF_REPO_ID = "ValerianFourel/seoul-medical-facilities"
 HF_FILENAME = "facilities_metareviews_rag_ready.parquet"
 
 
-client = Groq(api_key=GROQ_API_KEY)
+client = build_llm_client()
 
 
 HF_TOKEN = os.getenv("HF_TOKEN") 

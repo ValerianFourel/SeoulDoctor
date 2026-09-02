@@ -1,4 +1,6 @@
 **/.env
+**/.env.*
+!**/.env.example
 frontend/node_modules/
 **/.next
 **/*.tsbuildinfo
@@ -7,3 +9,6 @@ frontend/node_modules/
 **/chroma_db
 **/*.parquet
 **/tmp*.py
+LLMAgentsSkills/
+frontend/out/
+backend/tests/evaluation_runs/

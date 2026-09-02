@@ -3,15 +3,18 @@ import unittest
 from pathlib import Path
 
 import pandas as pd
+from pydantic import ValidationError
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ROOT_DIR = BACKEND_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
-from config import DISTANCE_MAPPING, GROQ_CHAT_MODEL  # noqa: E402
+from config import (  # noqa: E402
+    DISTANCE_MAPPING, GROQ_CHAT_MODEL, LLM_PROVIDER,
+)
 from cookies import CookieConsent, get_consent_from_cookie  # noqa: E402
-from models import ChatResponse, State  # noqa: E402
+from models import ChatRequest, ChatResponse, State  # noqa: E402
 from agentic_retrieval import (  # noqa: E402
     build_specific_evidence_records,
     contains_exact_phrase,
@@ -19,11 +22,15 @@ from agentic_retrieval import (  # noqa: E402
     validate_retrieval_plan,
 )
 from query_facets import augment_extracted_facets, retrieval_terms_from_state  # noqa: E402
+from raw_review_store import detect_language_hint  # noqa: E402
 
 
 class ConfigurationContractTests(unittest.TestCase):
-    def test_groq_model_is_gpt_oss_20b(self):
-        self.assertEqual(GROQ_CHAT_MODEL, "openai/gpt-oss-20b")
+    def test_configured_model_matches_provider(self):
+        if LLM_PROVIDER == "openrouter":
+            self.assertEqual(GROQ_CHAT_MODEL, "openai/gpt-oss-120b")
+        else:
+            self.assertEqual(GROQ_CHAT_MODEL, "openai/gpt-oss-120b")
 
     def test_default_travel_preference_is_valid(self):
         state = State()
@@ -52,6 +59,17 @@ class ConfigurationContractTests(unittest.TestCase):
         second = ChatResponse(response="two", state=State())
         first.results.append({"place_id": "one"})
         self.assertEqual(second.results, [])
+
+
+class RequestBoundaryTests(unittest.TestCase):
+    def test_chat_message_rejects_empty_or_oversized_input(self):
+        for message in ("", "   ", "x" * 4_001):
+            with self.subTest(length=len(message)):
+                with self.assertRaises(ValidationError):
+                    ChatRequest(message=message, current_state=State())
+
+        accepted = ChatRequest(message=" x ", current_state=State())
+        self.assertEqual(accepted.message, "x")
 
 
 class ConsentContractTests(unittest.TestCase):
@@ -126,6 +144,15 @@ class AgenticRetrievalContractTests(unittest.TestCase):
             for record in records
             if record["source_type"] != "verbatim_review"
         ))
+
+    def test_review_language_hints_preserve_mixed_scripts(self):
+        self.assertEqual(detect_language_hint("친절합니다"), "Korean")
+        self.assertEqual(
+            detect_language_hint("MRI 검사 친절해요"),
+            "Korean + Latin (mixed)",
+        )
+        self.assertEqual(detect_language_hint("Good dentist"), "Latin-script")
+        self.assertEqual(detect_language_hint("😊"), "Unknown/other")
 
     def test_required_terms_force_a_search_before_finish(self):
         plan = validate_retrieval_plan(
