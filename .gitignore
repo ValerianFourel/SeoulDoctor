@@ -6,9 +6,13 @@ frontend/node_modules/
 **/*.tsbuildinfo
 **/venv
 **/__pycache__
+**/.ruff_cache/
 **/chroma_db
+**/search_indexes/
 **/*.parquet
 **/tmp*.py
 LLMAgentsSkills/
 frontend/out/
 backend/tests/evaluation_runs/
+.audit/
+.codex-handoff/
