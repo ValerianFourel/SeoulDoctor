@@ -9,6 +9,7 @@ import pytest
 from scripts.random_holdout_sampler import (
     Candidate,
     public_card,
+    iter_release_parquet,
     select_candidates,
     validate_record,
     write_outputs,
@@ -100,10 +101,28 @@ def test_public_cards_do_not_expose_private_oracle_values() -> None:
         assert secret not in serialized
 
 
+def test_public_card_translates_known_specialty_for_english() -> None:
+    candidate = Candidate(
+        place_id="p",
+        evidence_id="e",
+        facility_name="Hidden",
+        specialty="피부과",
+        location="서빙고동",
+        comment="친절하고 꼼꼼하게 진료합니다.",
+        themes=("friendly", "careful"),
+        facility_priority=1,
+        evidence_priority=2,
+    )
+    english = public_card(candidate, 1, 7, "en")["patient_card"]
+    korean = public_card(candidate, 1, 7, "ko")["patient_card"]
+    assert "dermatology care" in english
+    assert "피부과 진료" in korean
+
+
 def test_outputs_separate_public_casebook_and_private_oracle(tmp_path: Path) -> None:
     selected, counts = select_candidates(iter(record(index) for index in range(8)), seed=5, sample_size=6)
     output = tmp_path / "run"
-    write_outputs(selected, output, seed=5, source_revision="revision-1", source_hash="a" * 64, counts=counts)
+    write_outputs(selected, output, seed=5, source_revision="revision-1", source_hashes={"input": "a" * 64}, counts=counts)
 
     cards = json.loads((output / "public_casebook.json").read_text())
     oracle = json.loads((output / "private_oracle.json").read_text())
@@ -118,6 +137,40 @@ def test_outputs_separate_public_casebook_and_private_oracle(tmp_path: Path) -> 
     assert manifest["model_labels"]["coordinator"] == "gpt-5.6-sol"
     assert len(manifest["scenario_ids"]) == 12
     assert manifest["artifact_hashes"]["public_casebook.json"] == manifest["casebook_sha256"]
+
+
+def test_release_parquet_adapter_joins_facility_metadata_and_streams_reviews(tmp_path: Path) -> None:
+    pyarrow = pytest.importorskip("pyarrow")
+    import pyarrow.parquet as parquet
+
+    facilities = pyarrow.Table.from_pylist(
+        [
+            {"place_id": "p1", "name": "Hidden One", "category": "피부과", "address": "서울 마포구", "file_district": "Mapo-gu", "file_dong": "대흥동"},
+            {"place_id": "p2", "name": "Hidden Two", "category": "치과", "address": "서울 용산구", "file_district": "Yongsan-gu", "file_dong": "이촌동"},
+        ]
+    )
+    reviews = pyarrow.Table.from_pylist(
+        [
+            {"place_id": "p1", "review_index": 1.0, "review_text": "직원들이 친절하고 치료에 대한 설명이 정말 자세했습니다."},
+            {"place_id": "missing", "review_index": 2.0, "review_text": "친절하고 설명이 자세하지만 시설 정보가 없습니다."},
+        ]
+    )
+    facilities_path = tmp_path / "facilities.parquet"
+    reviews_path = tmp_path / "reviews.parquet"
+    parquet.write_table(facilities, facilities_path)
+    parquet.write_table(reviews, reviews_path)
+
+    rows = list(iter_release_parquet(facilities_path, reviews_path, batch_size=1))
+    assert rows == [
+        {
+            "place_id": "p1",
+            "evidence_id": "p1:review:1.0",
+            "facility_name": "Hidden One",
+            "specialty": "피부과",
+            "location": "대흥동",
+            "comment": "직원들이 친절하고 치료에 대한 설명이 정말 자세했습니다.",
+        }
+    ]
 
 
 def test_too_few_distinct_facilities_fails_without_resampling() -> None:

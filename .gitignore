@@ -7,3 +7,4 @@ frontend/node_modules/
 **/chroma_db
 **/*.parquet
 **/tmp*.py
+.codex-handoff/

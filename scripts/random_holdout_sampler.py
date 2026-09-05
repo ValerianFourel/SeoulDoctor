@@ -16,7 +16,7 @@ import secrets
 import subprocess
 import sys
 from datetime import datetime, timezone
-from typing import Iterator, TextIO
+from typing import Iterable, Iterator, TextIO
 
 
 SAMPLER_VERSION = "1.0.0"
@@ -41,6 +41,22 @@ URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?82[- ]?)?0?1[016789][- ]?\d{3,4}[- ]?\d{4}(?!\d)")
 EMERGENCY_TERMS = ("suicide", "unconscious", "chest pain", "응급", "자살", "의식불명", "가슴 통증")
 INSTRUCTION_TERMS = ("ignore previous", "system prompt", "follow these instructions", "이전 지시", "시스템 프롬프트")
+SPECIALTY_EN = {
+    "가정의학과": "family medicine",
+    "내과": "internal medicine",
+    "마취통증의학과": "pain medicine",
+    "비뇨의학과": "urology",
+    "산부인과": "obstetrics and gynecology",
+    "소아청소년과": "pediatrics",
+    "안과": "ophthalmology",
+    "이비인후과": "ear, nose, and throat care",
+    "재활의학과": "rehabilitation medicine",
+    "정신건강의학과": "mental health care",
+    "정형외과": "orthopedics",
+    "치과": "dentistry",
+    "피부과": "dermatology",
+    "한의원": "Korean medicine",
+}
 
 
 @dataclass(frozen=True)
@@ -129,6 +145,53 @@ def iter_records(path: Path, fmt: str) -> Iterator[dict[str, object]]:
             yield value
 
 
+def iter_release_parquet(facilities_path: Path, reviews_path: Path, batch_size: int = 8192) -> Iterator[dict[str, object]]:
+    """Join the small facility table to streamed review batches.
+
+    The pinned release currently has thousands of facilities but millions of
+    reviews. Keeping only the six public facility facets per place is bounded by
+    facility count; complete review rows are streamed one batch at a time.
+    """
+    try:
+        import pyarrow.parquet as parquet
+    except ImportError as error:  # pragma: no cover - depends on deployment extras
+        raise ValueError("Parquet input requires pyarrow") from error
+
+    facility_columns = ("place_id", "name", "category", "address", "file_district", "file_dong")
+    facility_table = parquet.read_table(facilities_path, columns=list(facility_columns))
+    facilities: dict[str, dict[str, str]] = {}
+    for row in facility_table.to_pylist():
+        place_id = normalize(row.get("place_id"))
+        if not place_id:
+            continue
+        location_parts = [normalize(row.get(field)) for field in ("file_dong", "file_district", "address")]
+        location = next((part for part in location_parts if part), "")
+        facilities[place_id] = {
+            "facility_name": normalize(row.get("name")),
+            "specialty": normalize(row.get("category")),
+            "location": location,
+        }
+
+    review_file = parquet.ParquetFile(reviews_path)
+    review_columns = ("place_id", "review_index", "review_text")
+    for batch in review_file.iter_batches(batch_size=batch_size, columns=list(review_columns)):
+        for review in batch.to_pylist():
+            place_id = normalize(review.get("place_id"))
+            facility = facilities.get(place_id)
+            if facility is None:
+                continue
+            review_index = review.get("review_index")
+            evidence_id = f"{place_id}:review:{review_index}"
+            yield {
+                "place_id": place_id,
+                "evidence_id": evidence_id,
+                "facility_name": facility["facility_name"],
+                "specialty": facility["specialty"],
+                "location": facility["location"],
+                "comment": review.get("review_text"),
+            }
+
+
 def file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -137,7 +200,7 @@ def file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def select_candidates(records: Iterator[dict[str, object]], seed: int, sample_size: int) -> tuple[list[Candidate], dict[str, int]]:
+def select_candidates(records: Iterable[dict[str, object]], seed: int, sample_size: int) -> tuple[list[Candidate], dict[str, int]]:
     if sample_size < 1:
         raise ValueError("sample size must be positive")
     selected: dict[str, Candidate] = {}
@@ -198,16 +261,16 @@ def public_card(candidate: Candidate, pair_index: int, seed: int, language: str)
     preferences = ", ".join(labels)
     scenario_id = f"random-{seed:016x}-{pair_index:02d}-{language}"
     if language == "en":
+        specialty = SPECIALTY_EN.get(candidate.specialty, candidate.specialty)
         prompt = (
-            f"You are looking for a {candidate.specialty} facility around {candidate.location}. "
-            f"Patient experiences related to {preferences} matter to you. Ask SeoulDoc naturally "
-            "for suitable options and request evidence explaining why they fit. Do not name or hint "
-            "at a particular facility."
+            f"You need {specialty} care near {candidate.location}. You especially value patient "
+            f"experiences involving {preferences}. Ask SeoulDoc naturally for a few suitable options "
+            "and for review evidence explaining why they fit. Do not name or hint at a particular facility."
         )
     else:
         prompt = (
-            f"{candidate.location} 근처에서 {candidate.specialty} 의료기관을 찾고 있습니다. "
-            f"환자 경험 중 {preferences}을 중요하게 생각합니다. 특정 의료기관을 지목하거나 "
+            f"{candidate.location} 근처에서 {candidate.specialty} 진료를 받고 싶습니다. "
+            f"다음과 같은 환자 경험을 특히 중요하게 생각합니다: {preferences}. 특정 의료기관을 지목하거나 "
             "암시하지 말고, 조건에 맞는 곳과 그 이유를 보여 주는 근거를 자연스럽게 요청하세요."
         )
     return {"scenario_id": scenario_id, "pair_id": f"random-{seed:016x}-{pair_index:02d}", "language": language, "patient_card": prompt}
@@ -225,7 +288,7 @@ def write_outputs(
     output_dir: Path,
     seed: int,
     source_revision: str,
-    source_hash: str,
+    source_hashes: dict[str, str],
     counts: dict[str, int],
     coordinator_model: str = "gpt-5.6-sol",
     application_model: str = "unknown",
@@ -271,7 +334,7 @@ def write_outputs(
         "scenario_ids": [card["scenario_id"] for card in cards],
         "source_revision": source_revision,
         "result_dataset_revision": None,
-        "source_sha256": source_hash,
+        "source_sha256": source_hashes,
         "counts": counts,
         "completed_stage": "casebook_frozen",
         "application_calls_completed": 0,
@@ -295,7 +358,10 @@ def parse_seed(value: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True)
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--source", type=Path, help="normalized JSONL or CSV records")
+    source_group.add_argument("--reviews-parquet", type=Path, help="release Dataset reviews.parquet")
+    parser.add_argument("--facilities-parquet", type=Path, help="release Dataset facilities.parquet; required with --reviews-parquet")
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--sample-size", type=int, default=6)
@@ -306,14 +372,27 @@ def main() -> int:
     args = parser.parse_args()
     seed = args.seed if args.seed is not None else secrets.randbits(64)
     try:
-        fmt = input_format(args.source, args.format)
-        candidates, counts = select_candidates(iter_records(args.source, fmt), seed, args.sample_size)
+        if args.reviews_parquet:
+            if args.facilities_parquet is None:
+                raise ValueError("--facilities-parquet is required with --reviews-parquet")
+            records = iter_release_parquet(args.facilities_parquet, args.reviews_parquet)
+            source_hashes = {
+                "facilities.parquet": file_sha256(args.facilities_parquet),
+                "reviews.parquet": file_sha256(args.reviews_parquet),
+            }
+        else:
+            if args.facilities_parquet is not None:
+                raise ValueError("--facilities-parquet may only be used with --reviews-parquet")
+            fmt = input_format(args.source, args.format)
+            records = iter_records(args.source, fmt)
+            source_hashes = {args.source.name: file_sha256(args.source)}
+        candidates, counts = select_candidates(records, seed, args.sample_size)
         write_outputs(
             candidates,
             args.output_dir,
             seed,
             args.source_revision,
-            file_sha256(args.source),
+            source_hashes,
             counts,
             coordinator_model=args.coordinator_model,
             application_model=args.application_model,

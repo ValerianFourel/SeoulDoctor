@@ -7,8 +7,10 @@ based on SeoulDoctor's output.
 
 ## Input contract
 
-The sampler consumes a UTF-8 JSON Lines or CSV file. Gzip-compressed variants
-are accepted. Each record must contain these string fields:
+The sampler directly consumes the pinned release Dataset's
+`facilities.parquet` and `reviews.parquet` files. It can also consume a
+normalized UTF-8 JSON Lines or CSV file; gzip-compressed variants are accepted.
+Normalized records contain these string fields:
 
 - `place_id`: stable facility identifier
 - `evidence_id`: stable comment/evidence identifier
@@ -59,12 +61,14 @@ reproducible for the same source bytes, sampler version, seed, and sample size.
 
 ## Generate a frozen casebook
 
-Use a new append-only output directory. JSONL, CSV, and their gzip-compressed
-variants are streamed rather than loaded into memory:
+Use a new append-only output directory. Review batches are streamed rather than
+loading the complete review Dataset into memory. Only the much smaller facility
+lookup and `O(sample_size)` complete review records are retained:
 
 ```bash
 python scripts/random_holdout_sampler.py \
-  --source /path/to/private-comments.jsonl.gz \
+  --facilities-parquet /path/to/sources/facilities.parquet \
+  --reviews-parquet /path/to/sources/reviews.parquet \
   --source-revision DATASET_REVISION \
   --output-dir .codex-handoff/results/UTC-TIMESTAMP-random-holdout-AGENT \
   --sample-size 6 \
