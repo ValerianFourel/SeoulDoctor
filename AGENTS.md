@@ -1,7 +1,15 @@
 # SeoulDoc Codex Cloud instructions
 
-Read `CODEX_CLOUD_HANDOFF.md` before changing code or running the live
-evaluation.
+Before you inspect code, change files, or run an evaluation, read these files
+in order:
+
+1. `docs/PROJECT_STATE.md`
+2. `docs/ENVIRONMENTS.md`
+3. `CODEX_CLOUD_HANDOFF.md`
+
+Treat `docs/PROJECT_STATE.md` as the current coordination record. Before you
+hand work to another session, update that file with verified results, open
+issues, task ownership, the branch, the code commit, and the next action.
 
 ## Safety boundaries
 
@@ -48,3 +56,31 @@ Every live run must use a new run ID, retain checkpoint files, and sync its
 redacted artifacts to the private results Dataset described in
 `CODEX_CLOUD_HANDOFF.md`. A non-zero command exit is a failed gate, not a
 successful experiment.
+
+## Coordination rules
+
+- Give each simultaneous code-changing task its own branch and worktree.
+- Assign one owner to each tracked file set. Do not edit files owned by another
+  active task.
+- Freeze scenario definitions before parallel API runs. One sampler owns the
+  scenario file. Patient agents only read that commit.
+- Give every patient agent a unique run ID and result directory. Never let two
+  agents write the same checkpoint file or Hugging Face path.
+- Keep analysis agents read-only. Create a new fix branch for each accepted RAG
+  change, then rerun the same frozen cases before drawing a comparison.
+- Rebase or merge the current integration branch before handing off a branch.
+  If the update creates an overlap, stop and let the integration owner resolve
+  it in one sequential step.
+
+Every handoff must state:
+
+- the branch and exact `git rev-parse HEAD` value;
+- the task owner and tracked files that the task owns;
+- tests and evaluations that actually ran;
+- unresolved failures or assumptions;
+- one concrete next action.
+
+A pushed branch is not proof that another session is synchronized. Say that a
+session is synchronized only after that session fetches or checks out the
+branch, verifies the expected commit, and confirms that it read
+`docs/PROJECT_STATE.md` and `docs/ENVIRONMENTS.md`.
