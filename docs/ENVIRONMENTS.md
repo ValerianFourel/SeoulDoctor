@@ -68,7 +68,24 @@ backend/venv/bin/python -m pip install pytest
 
 ## Codex Cloud environment
 
-Select the `universal` container image. Use this manual setup command:
+Select the `universal` container image.
+
+For the first coordination chat on this commit, use this bootstrap setup
+script:
+
+```bash
+python -m venv backend/venv
+backend/venv/bin/python -m pip install --upgrade pip
+backend/venv/bin/python -m pip install -r backend/requirements.txt
+npm --prefix frontend ci
+```
+
+This bootstrap installs dependencies and lets the Cloud agent repair the
+clean-checkout blocker below. It does not restore the private release, run the
+test gate, or authorize a live evaluation. Do not report full setup as passed.
+
+After the fixture contract is repaired, replace the environment setup script
+with:
 
 ```bash
 bash scripts/setup_codex_cloud.sh
@@ -80,8 +97,8 @@ lifetime, and caching behavior are documented in the
 [official Codex Cloud environment reference](https://developers.openai.com/codex/cloud/environments).
 
 Leave the maintenance script blank for the first uncached run. Reset the
-environment cache after changing the setup command or environment settings.
-Allow agent network access to:
+environment cache when switching from the bootstrap setup to the full setup,
+or after changing environment settings. Allow agent network access to:
 
 - `huggingface.co`;
 - `hf.co`;
