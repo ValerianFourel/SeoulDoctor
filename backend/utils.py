@@ -26,7 +26,7 @@ LOCAL_PARQUET_PATH = os.getenv(
 )
 
 load_dotenv()
-DEFAULT_MAX_DISTANCE = 25.0  # km - default search radius
+DEFAULT_MAX_DISTANCE = 5.0  # km - local search radius when the user omits distance
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

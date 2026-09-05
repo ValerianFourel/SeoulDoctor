@@ -29,6 +29,7 @@ from retrieval_tools import (
     assistant_message_payload,
     retrieval_tool_schemas,
 )
+from search.indexes.documents import render_facility_profile
 
 logger = logging.getLogger(__name__)
 
@@ -267,43 +268,7 @@ class RAGPipeline:
 
     def _build_facility_profile(self, row: pd.Series) -> str:
         """Build one top-level RAG document from every generated doctor description."""
-        parts = [
-            f"Name: {row.get('name', '')}",
-            f"Category: {row.get('category', '')}",
-        ]
-        for label, field in (
-            ("Address", "address"),
-            ("District", "file_district"),
-            ("Neighborhood", "file_dong"),
-        ):
-            value = row.get(field)
-            if value is not None and str(value).strip() and str(value).casefold() != "nan":
-                parts.append(f"{label}: {value}")
-
-        summary_en = self._extract_array_field(row, "Summaries", default="")
-        summary_kr = self._extract_array_field(row, "Summaries_Korean", default="")
-        if summary_en:
-            parts.append(f"All generated English review summaries: {summary_en}")
-        if summary_kr:
-            parts.append(f"All generated Korean review summaries: {summary_kr}")
-
-        highlights = row.get("Key_Highlights")
-        if isinstance(highlights, (list, np.ndarray)):
-            topics = [
-                str(item.get("topic", "")).strip()
-                for item in highlights
-                if isinstance(item, dict) and item.get("topic")
-            ]
-            if topics:
-                parts.append(f"Review highlights: {', '.join(topics)}")
-
-        for label, field in (("Amenities", "amenities"), ("Medical information", "medical_info_parsed")):
-            value = row.get(field)
-            if isinstance(value, dict) and value:
-                parts.append(f"{label}: {json.dumps(value, ensure_ascii=False, default=str)}")
-        if bool(row.get("has_english", False)):
-            parts.append("English speaking support: yes")
-        return "\n".join(parts)
+        return render_facility_profile(row)
     
     @staticmethod
     def _extract_array_field(row: pd.Series, field_name: str, default: str = "") -> str:
@@ -1838,8 +1803,14 @@ Target translation language: {target_language}.
                         if len(evidence_text) > 500:
                             short_quote += "…"
                         visit_date = evidence.get('visit_date') or 'date unavailable'
+                        role = str(evidence.get('evidence_role') or 'support')
+                        evidence_label = (
+                            'Warning and supporting'
+                            if role == 'mixed'
+                            else 'Warning' if role == 'risk' else 'Supporting'
+                        )
                         facility_info.append(
-                            f'Original {evidence.get("language", "source-language")} '
+                            f'{evidence_label} original {evidence.get("language", "source-language")} '
                             f'comment (verbatim; {visit_date}): "{short_quote}"'
                         )
                         translated = str(evidence.get('translated_text') or '').strip()

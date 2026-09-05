@@ -306,6 +306,35 @@ class GroundedJourneyGraderTests(unittest.TestCase):
             orchestration["facts"]["unsuccessful_required_actions"],
         )
 
+    def test_staged_distance_checks_the_implicit_five_km_turn(self):
+        case = scenario()
+        case["oracle"]["turn_radius_expectations_km"] = [5.0]
+        case["oracle"]["implicit_default_radius_turns"] = [1]
+        journey = artifact()
+        journey["turns"][0]["response"]["body"]["state"]["max_distance_km"] = 5.0
+
+        report = grade_scenario(case, journey)
+
+        staged = next(gate for gate in report["gates"] if gate["id"] == "staged_distance")
+        self.assertTrue(staged["passed"])
+        self.assertEqual(staged["facts"]["implicit_default_turns"], [1])
+
+    def test_each_review_turn_must_finish_the_declared_tool_sequence(self):
+        case = scenario()
+        case["oracle"]["required_trace_actions_each_turn"] = True
+        journey = artifact()
+        journey["turns"][0]["response"]["body"]["state"]["last_retrieval_trace"].pop()
+
+        report = grade_scenario(case, journey)
+
+        staged = next(
+            gate
+            for gate in report["gates"]
+            if gate["id"] == "retrieval_orchestration_each_turn"
+        )
+        self.assertFalse(staged["passed"])
+        self.assertEqual(staged["facts"]["failures"][0]["turn"], 1)
+
     def test_pair_requires_overlap_and_both_hard_passes(self):
         left = grade_scenario(scenario(), artifact())
         korean_artifact = artifact()

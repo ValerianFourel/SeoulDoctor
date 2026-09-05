@@ -56,6 +56,9 @@ class State(BaseModel):
     gender_terms: List[str] = Field(default_factory=list)
     disease_terms: List[str] = Field(default_factory=list)
     comment_terms: List[str] = Field(default_factory=list)
+    # Canonical availability constraints such as ``tuesday_evening``. Keep
+    # these separate from review preferences: hours are facility facts.
+    required_hours: List[str] = Field(default_factory=list)
     extraction_source: Optional[str] = None
     extraction_error: Optional[str] = None
     # ⭐ NEW: Track if this is a general/random search
@@ -151,10 +154,16 @@ PUBLIC_RESULT_FIELDS = frozenset({
     "phone",
     "place_id",
     "retrieval_evidence",
+    "retrieval_evidence_groups",
     "website",
 })
 PUBLIC_EVIDENCE_FIELDS = frozenset({
     "evidence_id",
+    "corroboration_count",
+    "distinctiveness_score",
+    "evidence_role",
+    "matched_constraint_ids",
+    "similar_review_count",
     "is_verbatim",
     "language",
     "place_id",
@@ -210,6 +219,29 @@ def serialize_results_for_chat(
                 for item in evidence
                 if isinstance(item, dict)
             ]
+        groups = result.get("retrieval_evidence_groups")
+        if isinstance(groups, dict):
+            public_result["retrieval_evidence_groups"] = {
+                role: [
+                    {
+                        field: value
+                        for field, value in item.items()
+                        if field in PUBLIC_EVIDENCE_FIELDS
+                    }
+                    for item in values
+                    if isinstance(item, dict)
+                ]
+                for role, values in groups.items()
+                if role in {"supporting", "warnings"}
+                and isinstance(values, list)
+            }
+            unverified = groups.get("unverified")
+            if isinstance(unverified, list):
+                public_result["retrieval_evidence_groups"]["unverified"] = [
+                    str(value)
+                    for value in unverified
+                    if isinstance(value, str)
+                ]
         serialized_results.append(public_result)
     return serialized_results
 

@@ -40,13 +40,40 @@ GENERIC_FACILITY_NOUNS = {
 
 PLACE_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
     ("강남구", ("gangnam", "gangnam-gu", "강남", "강남구")),
+    ("강동구", ("gangdong", "gangdong-gu", "강동", "강동구")),
+    ("강북구", ("gangbuk", "gangbuk-gu", "강북", "강북구")),
+    ("강서구", ("gangseo", "gangseo-gu", "강서", "강서구")),
+    ("관악구", ("gwanak", "gwanak-gu", "관악", "관악구")),
+    ("광진구", ("gwangjin", "gwangjin-gu", "광진", "광진구")),
+    ("구로구", ("guro", "guro-gu", "구로", "구로구")),
+    ("금천구", ("geumcheon", "geumcheon-gu", "금천", "금천구")),
+    ("노원구", ("nowon", "nowon-gu", "노원", "노원구")),
+    ("도봉구", ("dobong", "dobong-gu", "도봉", "도봉구")),
+    ("동대문구", ("dongdaemun", "dongdaemun-gu", "동대문", "동대문구")),
+    ("동작구", ("dongjak", "dongjak-gu", "동작", "동작구")),
     ("마포구", ("mapo", "mapo-gu", "마포", "마포구", "hongdae", "홍대")),
-    ("종로구", ("jongno", "jongno-gu", "종로", "종로구")),
+    ("서대문구", ("seodaemun", "seodaemun-gu", "서대문", "서대문구")),
     ("서초구", ("seocho", "seocho-gu", "서초", "서초구")),
+    ("성동구", ("seongdong", "seongdong-gu", "성동", "성동구")),
+    ("성북구", ("seongbuk", "seongbuk-gu", "성북", "성북구")),
     ("송파구", ("songpa", "songpa-gu", "송파", "송파구")),
+    ("양천구", ("yangcheon", "yangcheon-gu", "양천", "양천구")),
     ("용산구", ("yongsan", "yongsan-gu", "용산", "용산구", "itaewon", "이태원")),
-    ("영등포구", ("yeongdeungpo", "yeouido", "영등포", "영등포구", "여의도")),
+    (
+        "영등포구",
+        (
+            "yeongdeungpo",
+            "yeongdeungpo-gu",
+            "yeouido",
+            "영등포",
+            "영등포구",
+            "여의도",
+        ),
+    ),
+    ("은평구", ("eunpyeong", "eunpyeong-gu", "은평", "은평구")),
+    ("종로구", ("jongno", "jongno-gu", "종로", "종로구")),
     ("중구", ("jung-gu", "myeongdong", "city hall", "중구", "명동", "시청")),
+    ("중랑구", ("jungnang", "jungnang-gu", "중랑", "중랑구")),
 )
 
 GENDER_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
@@ -105,7 +132,20 @@ COMMENT_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
     ("clear explanations", ("clear explanation", "clear explanations", "explains well", "explained well", "설명을 잘", "설명 잘", "자세한 설명")),
     ("friendly", ("friendly", "kind", "친절", "상냥")),
     ("thorough", ("thorough", "careful", "detailed", "꼼꼼", "세심")),
-    ("short wait", ("short wait", "no long wait", "빠른 대기", "대기 시간이 짧", "대기시간 짧")),
+    (
+        "short wait",
+        (
+            "short wait",
+            "no wait",
+            "no waiting",
+            "no long wait",
+            "빠른 대기",
+            "대기 없음",
+            "대기가 없",
+            "대기 시간이 짧",
+            "대기시간 짧",
+        ),
+    ),
 )
 
 MULTILINGUAL_RETRIEVAL_GROUPS: Sequence[Sequence[str]] = (
@@ -121,12 +161,64 @@ MULTILINGUAL_RETRIEVAL_GROUPS: Sequence[Sequence[str]] = (
         "자세한 설명",
         "상세한 설명",
         "설명 잘",
+        "설명도 잘",
     ),
     ("fast treatment", "quick treatment", "fast care", "빠른 진료", "빠른 치료", "신속한 진료"),
     ("friendly", "kind", "친절"),
     ("thorough", "careful", "꼼꼼", "세심"),
+    (
+        "short wait",
+        "no wait",
+        "no waiting",
+        "대기 없음",
+        "대기가 없",
+        "대기 시간이 짧",
+        "대기시간 짧",
+    ),
+    (
+        "no overprescribing",
+        "avoids overprescribing",
+        "does not overprescribe",
+        "과잉 처방 안",
+        "과잉처방 안",
+        "과하게 약처방",
+    ),
+    (
+        "kind pediatric care",
+        "kind with children",
+        "gentle with children",
+        "아이에게 친절",
+        "아이한테 친절",
+        "아이에게 다정",
+        "아이한테 다정",
+    ),
+    (
+        "unfriendly nurses",
+        "rude nurses",
+        "간호사 불친절",
+        "불친절한 간호사",
+        "간호사 무뚝뚝",
+        "간호사분들은 좀 무뚝뚝",
+    ),
+    (
+        "aggressive upselling",
+        "pressure sales",
+        "pushed unnecessary treatment",
+        "과도한 시술 권유",
+        "과잉 치료 권유",
+        "강매",
+    ),
 )
 
+
+HOUR_RETRIEVAL_TERMS: Mapping[str, Sequence[str]] = {
+    "tuesday_evening": (
+        "Tuesday evening",
+        "Tuesday night",
+        "화요일 저녁",
+        "화요일 야간",
+    ),
+}
 
 def _contains(text: str, alias: str) -> bool:
     if re.fullmatch(r"[a-z0-9][a-z0-9 /-]*", alias):
@@ -284,4 +376,6 @@ def retrieval_terms_from_state(state: Any) -> List[str]:
     for field in ("gender_terms", "disease_terms", "comment_terms"):
         for term in getattr(state, field, []):
             terms.append(term)
+    for hour in getattr(state, "required_hours", []):
+        terms.extend(HOUR_RETRIEVAL_TERMS.get(hour, (hour,)))
     return expand_multilingual_retrieval_terms(terms)

@@ -22,6 +22,7 @@ from qwen_likert_judge import (  # noqa: E402
     _evaluation_policy,
     parse_rating,
     project_journey_for_review,
+    request_rating,
     scenario_passes,
     weighted_mean,
 )
@@ -48,6 +49,57 @@ POLICY = {
 class QwenLikertJudgeTests(unittest.TestCase):
     def test_judge_uses_qwen_27b(self):
         self.assertEqual(MODEL, "qwen/qwen3.8-27b")
+
+    def test_request_rating_retries_invalid_json_with_strict_provider_routing(self):
+        citation = "path:turns[0].response.body.response"
+        rating = {
+            "scores": {dimension: 4 for dimension in POLICY["weights"]},
+            "citations": {
+                dimension: [citation] for dimension in POLICY["weights"]
+            },
+            "rationale": "Grounded.",
+            "recommended_fixes": [],
+        }
+        contents = iter(["{\"scores\":", json.dumps(rating)])
+        calls = []
+
+        class Response:
+            def __init__(self, content):
+                self.choices = [
+                    types.SimpleNamespace(
+                        message=types.SimpleNamespace(content=content)
+                    )
+                ]
+
+            def model_dump(self, mode="json"):
+                return {"mode": mode, "response": "recorded"}
+
+        class Completions:
+            def create(self, **kwargs):
+                calls.append(kwargs)
+                return Response(next(contents))
+
+        client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(completions=Completions())
+        )
+        result = request_rating(
+            client,
+            [{"role": "user", "content": "Rate this journey."}],
+            POLICY,
+            {"paths": [citation], "evidence_ids": {}},
+        )
+
+        self.assertEqual(len(calls[1]["messages"]), 3)
+        correction = calls[1]["messages"][-1]["content"]
+        self.assertIn("failed strict validation", correction)
+        self.assertIn("citation_catalog", correction)
+        self.assertEqual(
+            result["request_messages"], calls[1]["messages"]
+        )
+        self.assertEqual(result["rating"]["scores"]["intent_state"], 4)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(calls[0]["extra_body"]["provider"]["require_parameters"])
+        self.assertEqual(calls[0]["extra_body"]["reasoning"]["effort"], "none")
 
     def test_review_projection_keeps_target_and_bounded_audit_evidence(self):
         candidates = [
@@ -89,6 +141,7 @@ class QwenLikertJudgeTests(unittest.TestCase):
                         "results": [{
                             "place_id": "25",
                             "name": "Clinic",
+                            "distance_km": 1.25,
                             "retrieval_evidence": [{
                                 "evidence_id": "review:25",
                                 "text": "The doctor explains clearly.",
@@ -133,6 +186,14 @@ class QwenLikertJudgeTests(unittest.TestCase):
         self.assertNotIn("Summaries", body["results"][0])
         self.assertIn(
             "path:turns[0].response.body.state.last_retrieval_observations[0]",
+            projected["citation_catalog"]["paths"],
+        )
+        self.assertIn(
+            "path:turns[0].response.body.results",
+            projected["citation_catalog"]["paths"],
+        )
+        self.assertIn(
+            "path:turns[0].response.body.results[0].distance_km",
             projected["citation_catalog"]["paths"],
         )
         self.assertEqual(

@@ -36,6 +36,23 @@ def _bounded_positive_int_env(
     return value
 
 
+def _bounded_positive_float_env(
+    name: str,
+    default: float,
+    maximum: float,
+) -> float:
+    """Parse a positive floating-point setting at the config boundary."""
+    raw_value = os.getenv(name, str(default)).strip()
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+    if not 0.0 < value <= maximum:
+        raise ValueError(f"{name} must be greater than 0 and at most {maximum}")
+    return value
+
+
+
 CHAT_RATE_LIMIT_REQUESTS = _bounded_positive_int_env(
     "CHAT_RATE_LIMIT_REQUESTS", 12, 1_000
 )
@@ -48,6 +65,34 @@ ENABLE_RETRIEVAL_DEBUG = os.getenv(
 RETRIEVAL_DEBUG_LIMIT = _bounded_positive_int_env(
     "RETRIEVAL_DEBUG_LIMIT", 50, 200
 )
+
+HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
+RERANKER_URL = os.getenv("RERANKER_URL", "").strip().rstrip("/")
+RERANKER_API_TOKEN = os.getenv("RERANKER_API_TOKEN", HF_TOKEN).strip()
+RERANKER_TIMEOUT_SECONDS = _bounded_positive_float_env(
+    "RERANKER_TIMEOUT_SECONDS", 20.0, 120.0
+)
+RERANKER_MAX_CANDIDATES = _bounded_positive_int_env(
+    "RERANKER_MAX_CANDIDATES", 64, 512
+)
+
+BGE_M3_RETRIEVER_URL = os.getenv(
+    "BGE_M3_RETRIEVER_URL", ""
+).strip().rstrip("/")
+BGE_M3_RETRIEVER_API_TOKEN = os.getenv(
+    "BGE_M3_RETRIEVER_API_TOKEN", HF_TOKEN
+).strip()
+BGE_M3_RETRIEVER_RELEASE_ID = os.getenv(
+    "BGE_M3_RETRIEVER_RELEASE_ID", ""
+).strip()
+BGE_M3_RETRIEVER_TIMEOUT_SECONDS = _bounded_positive_float_env(
+    "BGE_M3_RETRIEVER_TIMEOUT_SECONDS", 8.0, 60.0
+)
+if bool(BGE_M3_RETRIEVER_URL) != bool(BGE_M3_RETRIEVER_RELEASE_ID):
+    raise ValueError(
+        "BGE_M3_RETRIEVER_URL and BGE_M3_RETRIEVER_RELEASE_ID must be set together"
+    )
+
 
 OPENROUTER_CHAT_MODEL = os.getenv(
     "OPENROUTER_CHAT_MODEL", "openai/gpt-oss-120b"
@@ -81,6 +126,7 @@ GROQ_REASONING_EFFORT = REASONING_EFFORT
 
 SUPPORTED_TOOL_MODELS = {
     "qwen/qwen3.8-max",
+    "qwen/qwen3.8-27b",
     "openai/gpt-5.6-sol",
     "openai/gpt-5.5",
     "openai/gpt-oss-120b",

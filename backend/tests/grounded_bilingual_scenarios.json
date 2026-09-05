@@ -66,9 +66,10 @@
       "source_language": "English",
       "driver": "natural_actor_with_staged_card",
       "user_persona": "An English-speaking patient starting at Jamsil Station who changes both travel range and appointment constraints.",
-      "opening_query": "I am at Jamsil Station and need a dentist within 500 metres. On-site parking is mandatory.",
+      "opening_query": "I am at Jamsil Station and need a dentist. On-site parking is mandatory.",
       "hidden_constraints": [
-        "The second turn replaces the 500 metre radius with 5 km.",
+        "The first turn omits a distance, so the local-search default must be 5 km.",
+        "The second turn narrows to 500 metres and the third turn expands back to 5 km.",
         "Parking must be removed rather than retained.",
         "Tuesday evening hours become mandatory; careful care and detailed explanations are review preferences; long waits are negative."
       ],
@@ -83,9 +84,10 @@
       ],
       "public_patient_card": {
         "persona": "You are at Jamsil Station and need dental care.",
-        "opening_message": "I am at Jamsil Station and need a dentist within 500 metres. On-site parking is mandatory.",
+        "opening_message": "I am at Jamsil Station and need a dentist. On-site parking is mandatory.",
         "staged_requests": [
-          "After the first reply, say: Expand the radius to 5 km. Parking is no longer required; Tuesday evening hours are now mandatory. Prefer actual patient comments saying the care is careful and the explanation is detailed. Avoid long waits."
+          "Narrow the radius to 500 metres and keep parking mandatory.",
+          "Expand the radius to 5 km. Parking is no longer required; Tuesday evening hours are now mandatory. Prefer actual patient comments saying the care is careful and the explanation is detailed. Avoid long waits."
         ],
         "stop_condition": "Stop when the changed constraints are reflected in a grounded shortlist or the app clearly explains which evidence is missing."
       },
@@ -97,6 +99,14 @@
           "longitude": 127.10023101886318
         },
         "maximum_distance_km": 5.0,
+        "turn_radius_expectations_km": [
+          5.0,
+          0.5,
+          5.0
+        ],
+        "implicit_default_radius_turns": [
+          1
+        ],
         "strict_radius": true,
         "expected_specialty": "치과",
         "required_trace_actions": [
@@ -110,7 +120,9 @@
         "required_methods": [
           "facility_semantic",
           "facility_bm25",
-          "bm25_specific",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
           "multilingual_comment_search"
         ],
         "removed_terms": [
@@ -143,8 +155,9 @@
           "source": "Seoul official shortest-path API",
           "observed_on": "2026-09-02"
         },
-        "expected_turn_count": 2,
+        "expected_turn_count": 3,
         "expected_response_languages": [
+          "English",
           "English",
           "English"
         ],
@@ -166,9 +179,10 @@
       "source_language": "Korean",
       "driver": "natural_actor_with_staged_card",
       "user_persona": "잠실역에서 시작해 이동 반경과 예약 조건을 바꾸는 한국어 사용자.",
-      "opening_query": "잠실역에서 500미터 이내 치과를 찾고 있어요. 건물 내 주차는 필수예요.",
+      "opening_query": "잠실역에서 치과를 찾고 있어요. 건물 내 주차는 필수예요.",
       "hidden_constraints": [
-        "두 번째 요청에서 반경을 5km로 교체한다.",
+        "첫 요청은 거리를 생략하므로 지역 검색 기본값 5km를 적용해야 한다.",
+        "두 번째 요청은 500미터로 좁히고 세 번째 요청은 다시 5km로 넓힌다.",
         "주차 조건은 유지하지 않고 제거한다.",
         "화요일 야간 진료는 필수, 꼼꼼한 진료와 자세한 설명은 후기 선호, 긴 대기는 회피 조건이다."
       ],
@@ -183,9 +197,10 @@
       ],
       "public_patient_card": {
         "persona": "잠실역에서 치과 진료가 필요한 환자입니다.",
-        "opening_message": "잠실역에서 500미터 이내 치과를 찾고 있어요. 건물 내 주차는 필수예요.",
+        "opening_message": "잠실역에서 치과를 찾고 있어요. 건물 내 주차는 필수예요.",
         "staged_requests": [
-          "첫 답변 뒤 다음과 같이 말하세요: 반경을 5km로 넓혀 주세요. 주차는 더 이상 필요 없고 화요일 야간 진료는 필수예요. 실제 환자 후기에서 진료가 꼼꼼하고 설명이 자세하다고 한 곳을 선호해요. 대기가 길다는 곳은 피하고 싶어요."
+          "반경을 500미터로 좁히고 주차 필수 조건은 유지해 주세요.",
+          "반경을 5km로 넓혀 주세요. 주차는 더 이상 필요 없고 화요일 야간 진료는 필수예요. 실제 환자 후기에서 진료가 꼼꼼하고 설명이 자세하다고 한 곳을 선호해요. 대기가 길다는 곳은 피하고 싶어요."
         ],
         "stop_condition": "바뀐 조건이 근거 있는 후보 목록에 반영되거나, 찾지 못한 근거를 앱이 정확히 밝히면 종료합니다."
       },
@@ -197,6 +212,14 @@
           "longitude": 127.10023101886318
         },
         "maximum_distance_km": 5.0,
+        "turn_radius_expectations_km": [
+          5.0,
+          0.5,
+          5.0
+        ],
+        "implicit_default_radius_turns": [
+          1
+        ],
         "strict_radius": true,
         "expected_specialty": "치과",
         "required_trace_actions": [
@@ -210,7 +233,9 @@
         "required_methods": [
           "facility_semantic",
           "facility_bm25",
-          "bm25_specific",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
           "multilingual_comment_search"
         ],
         "removed_terms": [
@@ -243,8 +268,9 @@
           "source": "Seoul official shortest-path API",
           "observed_on": "2026-09-02"
         },
-        "expected_turn_count": 2,
+        "expected_turn_count": 3,
         "expected_response_languages": [
+          "Korean",
           "Korean",
           "Korean"
         ],
@@ -285,7 +311,7 @@
         "persona": "You are near Daeheung Station and need a dermatologist for cheilitis.",
         "opening_message": "I am at Daeheung Station. Find a dermatologist within 2 km for cheilitis, using actual patient comments.",
         "staged_requests": [
-          "After the first reply, say: Require comments that literally support detailed explanations and fast treatment. A long wait is acceptable, so do not treat it as an exclusion. Avoid aggressive upselling."
+          "Require comments that literally support detailed explanations and fast treatment. A long wait is acceptable, so do not treat it as an exclusion. Avoid aggressive upselling."
         ],
         "stop_condition": "Stop after a grounded shortlist reflects every refinement, or after the app states exactly what it could not verify."
       },
@@ -310,9 +336,12 @@
         "required_methods": [
           "facility_semantic",
           "facility_bm25",
-          "bm25_specific",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
           "multilingual_comment_search"
         ],
+        "required_trace_actions_each_turn": true,
         "positive_terms": [
           "cheilitis",
           "구순염",
@@ -415,7 +444,7 @@
         "persona": "대흥역 근처에서 구순염 진료가 필요한 환자입니다.",
         "opening_message": "대흥역에서 2km 이내에 구순염을 진료하는 피부과를 실제 환자 후기를 근거로 찾아 주세요.",
         "staged_requests": [
-          "첫 답변 뒤 다음과 같이 말하세요: 자세한 설명과 빠른 진료를 실제로 뒷받침하는 후기여야 해요. 대기가 긴 것은 괜찮으니 제외 조건으로 두지 말고, 과도한 시술 권유는 피하고 싶어요."
+          "자세한 설명과 빠른 진료를 실제로 뒷받침하는 후기여야 해요. 대기가 긴 것은 괜찮으니 제외 조건으로 두지 말고, 과도한 시술 권유는 피하고 싶어요."
         ],
         "stop_condition": "모든 변경 조건이 근거 있는 후보에 반영되거나 앱이 확인하지 못한 근거를 정확히 말하면 종료합니다."
       },
@@ -440,9 +469,12 @@
         "required_methods": [
           "facility_semantic",
           "facility_bm25",
-          "bm25_specific",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
           "multilingual_comment_search"
         ],
+        "required_trace_actions_each_turn": true,
         "positive_terms": [
           "cheilitis",
           "구순염",
@@ -543,8 +575,8 @@
         "persona": "You are a parent looking for a pediatric clinic.",
         "opening_message": "Across Seoul, find a pediatric clinic with actual comments supporting no overprescribing and clear explanations.",
         "staged_requests": [
-          "Then say: Use Ichon Station as my location and narrow this to 1 km. Prefer comments saying there was no wait, and do not claim parking is convenient.",
-          "Then say: Keep the specialty and location, but no-wait is no longer important. Instead require comments about kind treatment of children, and avoid comments about unfriendly nurses."
+          "Use Ichon Station as my location and narrow this to 1 km. Prefer comments saying there was no wait, and do not claim parking is convenient.",
+          "Keep the specialty and location, but no-wait is no longer important. Instead require comments about kind treatment of children, and avoid comments about unfriendly nurses."
         ],
         "stop_condition": "Stop after the final replacement is reflected in a grounded shortlist."
       },
@@ -569,8 +601,16 @@
         "required_methods": [
           "facility_semantic",
           "facility_bm25",
-          "bm25_specific",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
           "multilingual_comment_search"
+        ],
+        "required_trace_actions_each_turn": true,
+        "positive_terms": [
+          "no overprescribing",
+          "clear explanations",
+          "kind pediatric care"
         ],
         "removed_terms": [
           "no wait",
@@ -665,8 +705,8 @@
         "persona": "소아청소년과를 찾는 보호자입니다.",
         "opening_message": "서울 전역에서 과잉 처방을 하지 않고 설명이 명확하다는 실제 후기가 있는 소아청소년과를 찾아 주세요.",
         "staged_requests": [
-          "다음에는 이렇게 말하세요: 이촌역을 제 위치로 사용해 1km 이내로 좁혀 주세요. 대기가 없었다는 후기를 선호하고 주차가 편리하다고 주장하지 마세요.",
-          "그다음 이렇게 말하세요: 진료과와 위치는 유지하되 대기 없음은 더 이상 중요하지 않아요. 대신 아이에게 친절하게 진료한다는 후기는 필수이고, 간호사가 불친절하다는 곳은 피하고 싶어요."
+          "이촌역을 제 위치로 사용해 1km 이내로 좁혀 주세요. 대기가 없었다는 후기를 선호하고 주차가 편리하다고 주장하지 마세요.",
+          "진료과와 위치는 유지하되 대기 없음은 더 이상 중요하지 않아요. 대신 아이에게 친절하게 진료한다는 후기는 필수이고, 간호사가 불친절하다는 곳은 피하고 싶어요."
         ],
         "stop_condition": "최종 교체 조건이 근거 있는 후보 목록에 반영되면 종료합니다."
       },
@@ -691,8 +731,16 @@
         "required_methods": [
           "facility_semantic",
           "facility_bm25",
-          "bm25_specific",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
           "multilingual_comment_search"
+        ],
+        "required_trace_actions_each_turn": true,
+        "positive_terms": [
+          "no overprescribing",
+          "clear explanations",
+          "kind pediatric care"
         ],
         "removed_terms": [
           "no wait",
@@ -787,7 +835,7 @@
         "persona": "You are bilingual and will correct the request in Korean.",
         "opening_message": "From City Hall Station, find a dentist within 1 km with mandatory parking and friendly patient comments.",
         "staged_requests": [
-          "Then say in Korean: 요청을 바꿀게요. 대흥역에서 2km 이내 피부과를 찾아 주세요. 주차 조건은 빼고 구순염 진료와 자세한 설명을 뒷받침하는 실제 후기는 필수예요."
+          "요청을 바꿀게요. 대흥역에서 2km 이내 피부과를 찾아 주세요. 주차 조건은 빼고 구순염 진료와 자세한 설명을 뒷받침하는 실제 후기는 필수예요."
         ],
         "stop_condition": "Stop when the corrected Korean request fully replaces the old request."
       },
@@ -822,8 +870,15 @@
         "required_methods": [
           "facility_semantic",
           "facility_bm25",
-          "bm25_specific",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
           "multilingual_comment_search"
+        ],
+        "required_trace_actions_each_turn": true,
+        "positive_terms": [
+          "cheilitis",
+          "clear explanations"
         ],
         "reverse_target": {
           "place_id": "19521641",
@@ -909,7 +964,7 @@
         "persona": "요청을 영어로 바꿀 이중 언어 환자입니다.",
         "opening_message": "시청역에서 1km 이내이고 주차가 필수이며 친절하다는 실제 후기가 있는 치과를 찾아 주세요.",
         "staged_requests": [
-          "Then say in English: I need to change that. Find a dermatologist within 2 km of Daeheung Station. Remove parking, and require cheilitis care plus actual comments supporting detailed explanations."
+          "I need to change that. Find a dermatologist within 2 km of Daeheung Station. Remove parking, and require cheilitis care plus actual comments supporting detailed explanations."
         ],
         "stop_condition": "Stop when the corrected English request fully replaces the old request."
       },
@@ -944,8 +999,15 @@
         "required_methods": [
           "facility_semantic",
           "facility_bm25",
-          "bm25_specific",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
           "multilingual_comment_search"
+        ],
+        "required_trace_actions_each_turn": true,
+        "positive_terms": [
+          "cheilitis",
+          "clear explanations"
         ],
         "reverse_target": {
           "place_id": "19521641",

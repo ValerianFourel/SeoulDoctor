@@ -21,6 +21,7 @@ from models import State
 
 
 EXPECTED_MODEL = "openai/gpt-oss-120b"
+AUTH_TOKEN_ENV = "SEOULDOC_EVAL_AUTH_TOKEN"
 SAFE_HEADERS = {
     "content-type",
     "date",
@@ -116,6 +117,17 @@ def _safe_headers(headers: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _authorization_header(auth_token: Optional[str]) -> dict[str, str]:
+    if auth_token is None:
+        return {}
+    token = auth_token.strip()
+    if not token:
+        return {}
+    if "\r" in token or "\n" in token:
+        raise ValueError("auth token must not contain line breaks")
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _health_failures(payload: Mapping[str, Any], expected_model: str) -> list[str]:
     expected = {
         "status": "ok",
@@ -147,13 +159,17 @@ def create_journey(
     language: str,
     expected_model: str = EXPECTED_MODEL,
     timeout: float = 180.0,
+    auth_token: Optional[str] = None,
     session: Optional[Any] = None,
 ) -> dict[str, Any]:
     http = session or requests.Session()
     endpoint = _chat_endpoint(endpoint)
     response = http.get(
         _health_endpoint(endpoint),
-        headers={"Accept": "application/json"},
+        headers={
+            "Accept": "application/json",
+            **_authorization_header(auth_token),
+        },
         timeout=timeout,
     )
     try:
@@ -200,6 +216,7 @@ def say(
     message: str,
     *,
     timeout: float = 180.0,
+    auth_token: Optional[str] = None,
     session: Optional[Any] = None,
 ) -> dict[str, Any]:
     message = message.strip()
@@ -226,6 +243,7 @@ def say(
                     "analytics": False,
                     "advertising": False,
                 }),
+                **_authorization_header(auth_token),
             },
             timeout=timeout,
         )
@@ -309,6 +327,7 @@ def run_journey(
     language: str,
     messages: Sequence[str],
     timeout: float = 180.0,
+    auth_token: Optional[str] = None,
     session: Optional[Any] = None,
 ) -> dict[str, Any]:
     """Run one visit serially so every turn observes the prior saved state."""
@@ -320,10 +339,17 @@ def run_journey(
         endpoint,
         language=language,
         timeout=timeout,
+        auth_token=auth_token,
         session=http,
     )
     for message in messages:
-        say(path, message, timeout=timeout, session=http)
+        say(
+            path,
+            message,
+            timeout=timeout,
+            auth_token=auth_token,
+            session=http,
+        )
     return finish_journey(path, "All supplied patient messages completed.")
 
 
@@ -336,11 +362,21 @@ def _parser() -> argparse.ArgumentParser:
     start.add_argument("--endpoint", required=True)
     start.add_argument("--language", choices=("English", "Korean"), required=True)
     start.add_argument("--timeout", type=float, default=180.0)
+    start.add_argument(
+        "--auth-token",
+        default=os.getenv(AUTH_TOKEN_ENV),
+        help=f"Bearer token for a private endpoint; defaults to {AUTH_TOKEN_ENV}.",
+    )
 
     speak = commands.add_parser("say")
     speak.add_argument("--file", type=Path, required=True)
     speak.add_argument("--message", required=True)
     speak.add_argument("--timeout", type=float, default=180.0)
+    speak.add_argument(
+        "--auth-token",
+        default=os.getenv(AUTH_TOKEN_ENV),
+        help=f"Bearer token for a private endpoint; defaults to {AUTH_TOKEN_ENV}.",
+    )
 
     run = commands.add_parser("run")
     run.add_argument("--file", type=Path, required=True)
@@ -348,6 +384,11 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--language", choices=("English", "Korean"), required=True)
     run.add_argument("--message", action="append", required=True)
     run.add_argument("--timeout", type=float, default=180.0)
+    run.add_argument(
+        "--auth-token",
+        default=os.getenv(AUTH_TOKEN_ENV),
+        help=f"Bearer token for a private endpoint; defaults to {AUTH_TOKEN_ENV}.",
+    )
 
     finish = commands.add_parser("finish")
     finish.add_argument("--file", type=Path, required=True)
@@ -363,6 +404,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             args.endpoint,
             language=args.language,
             timeout=args.timeout,
+            auth_token=args.auth_token,
         )
         print(json.dumps({
             "journey_id": artifact["journey_id"],
@@ -371,7 +413,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         }, ensure_ascii=False, indent=2))
     elif args.command == "say":
         print(json.dumps(
-            say(args.file, args.message, timeout=args.timeout),
+            say(
+                args.file,
+                args.message,
+                timeout=args.timeout,
+                auth_token=args.auth_token,
+            ),
             ensure_ascii=False,
             indent=2,
         ))
@@ -382,6 +429,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             language=args.language,
             messages=args.message,
             timeout=args.timeout,
+            auth_token=args.auth_token,
         )
         print(json.dumps({
             "journey_id": artifact["journey_id"],

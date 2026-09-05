@@ -135,6 +135,33 @@ Probe the seeded reverse-target case without calling an LLM:
 ```bash
 backend/venv/bin/python backend/tests/probe_reverse_target.py
 ```
+
+Build the immutable Phase 3 indexes without an embedding API call:
+
+```bash
+PYTHONPATH=backend backend/venv/bin/python -m search.indexes.cli publish \
+  --root backend/search_indexes \
+  --version 2026-09-02-v1
+
+PYTHONPATH=backend backend/venv/bin/python -m search.indexes.cli activate \
+  --root backend/search_indexes \
+  --version 2026-09-02-v1
+```
+
+The current release contains 8,484 facility vectors and 2,060,433 evidence
+records. It is immutable, source-hash bound, and loaded read-only. Startup
+reports it in `/health`. Phase 4 now uses it for scoped facility BM25, dense,
+and evidence retrieval with weighted RRF and one bounded retry.
+
+Exercise the live adapter against the local production release without a
+network embedding call:
+
+```bash
+backend/venv/bin/python scripts/smoke_phase4_retrieval.py
+```
+
+See [`backend/search/PHASE4_ARCHITECTURE.md`](backend/search/PHASE4_ARCHITECTURE.md)
+for fusion, retry, fallback, and distance behavior.
 - **Key Highlights**: Top 5 notable features extracted from reviews
 - **Amenities**: Parking, wheelchair access, elevator, etc.
 - **English Support**: Confidence score for English-speaking staff

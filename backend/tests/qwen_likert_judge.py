@@ -331,6 +331,8 @@ def project_journey_for_review(
             f"path:{prefix}.request.message",
             f"path:{prefix}.response.status_code",
             f"path:{prefix}.response.body.response",
+            f"path:{prefix}.response.body.state",
+            f"path:{prefix}.response.body.results",
         ])
         state = turn["response"]["body"]["state"]
         for field in state:
@@ -342,6 +344,9 @@ def project_journey_for_review(
         for result_index, result in enumerate(turn["response"]["body"]["results"]):
             result_path = f"{prefix}.response.body.results[{result_index}]"
             paths.append(f"path:{result_path}")
+            for field in result:
+                if field != "retrieval_evidence":
+                    paths.append(f"path:{result_path}.{field}")
             for evidence_index, evidence in enumerate(result.get("retrieval_evidence", [])):
                 evidence_path = f"{result_path}.retrieval_evidence[{evidence_index}]"
                 paths.append(f"path:{evidence_path}")
@@ -495,34 +500,71 @@ def request_rating(
     policy: Mapping[str, Any],
     citation_catalog: Mapping[str, Any],
 ) -> dict[str, Any]:
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=list(messages),
-        temperature=0,
-        max_tokens=4096,
-        reasoning_effort="low",
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "seouldoc_likert_rating",
-                "strict": True,
-                "schema": rating_schema(policy),
+    failures: list[dict[str, Any]] = []
+    request_messages = list(messages)
+    for attempt in range(1, 3):
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=request_messages,
+            temperature=0,
+            max_tokens=8192,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "seouldoc_likert_rating",
+                    "strict": True,
+                    "schema": rating_schema(policy),
+                },
             },
-        },
-    )
-    content = response.choices[0].message.content
-    rating = parse_rating(content, policy, citation_catalog)
-    raw = (
-        response.model_dump(mode="json")
-        if hasattr(response, "model_dump")
-        else str(response)
-    )
-    return {
-        "model": MODEL,
-        "request_messages": list(messages),
-        "raw_completion": scrub_sensitive(raw),
-        "rating": rating,
-    }
+            extra_body={
+                "provider": {"require_parameters": True},
+                "reasoning": {"effort": "none", "exclude": True},
+            },
+        )
+        content = response.choices[0].message.content
+        try:
+            rating = parse_rating(content, policy, citation_catalog)
+        except ValueError as error:
+            failures.append({
+                "attempt": attempt,
+                "type": type(error).__name__,
+                "message": str(error)[:400],
+            })
+            if attempt == 2:
+                raise ValueError(
+                    "Qwen judge returned invalid structured output twice: "
+                    + "; ".join(item["message"] for item in failures)
+                ) from error
+            request_messages = [
+                *messages,
+                {"role": "assistant", "content": content},
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous JSON failed strict validation: "
+                        f"{error}. Return a fresh JSON object. Every citation "
+                        "must copy an exact token already listed in "
+                        "journey.citation_catalog; do not cite a parent field "
+                        "or invent a path."
+                    ),
+                },
+            ]
+            continue
+        raw = (
+            response.model_dump(mode="json")
+            if hasattr(response, "model_dump")
+            else str(response)
+        )
+        return {
+            "model": MODEL,
+            "request_messages": request_messages,
+            "attempt_count": attempt,
+            "failed_attempts": failures,
+            "raw_completion": scrub_sensitive(raw),
+            "rating": rating,
+        }
+
+    raise AssertionError("unreachable Qwen judge retry state")
 
 
 def _load_scenario(casebook: Mapping[str, Any], scenario_id: str) -> Mapping[str, Any]:

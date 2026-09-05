@@ -135,7 +135,8 @@ from utils import (
     standardize_and_fill_state,detect_search_mode,detect_language, fuzzy_keyword_match,
     smart_cleanse_state,detect_field_changes,print_separator, normalize_seoul_to_null,
     has_vague_medical_term,user_wants_any_specialty, ensure_city_wide_defaults,
-    validate_distance_criteria,download_and_cache_parquet, DEFAULT_MAX_DISTANCE
+    validate_distance_criteria,download_and_cache_parquet, DEFAULT_MAX_DISTANCE,
+    LOCAL_PARQUET_PATH,
 )
 from prompt import (
     ROUTER_PROMPT, 
@@ -162,6 +163,10 @@ from cookies import (
 from rag_pipeline import RAGPipeline
 from raw_review_store import ensure_raw_review_parquet
 from config import (
+    BGE_M3_RETRIEVER_API_TOKEN,
+    BGE_M3_RETRIEVER_RELEASE_ID,
+    BGE_M3_RETRIEVER_TIMEOUT_SECONDS,
+    BGE_M3_RETRIEVER_URL,
     CHAT_RATE_LIMIT_REQUESTS,
     CHAT_RATE_LIMIT_WINDOW_SECONDS,
     ENABLE_RETRIEVAL_DEBUG,
@@ -170,6 +175,10 @@ from config import (
     GROQ_REASONING_EFFORT,
     LLM_PROVIDER,
     RETRIEVAL_DEBUG_LIMIT,
+    RERANKER_API_TOKEN,
+    RERANKER_MAX_CANDIDATES,
+    RERANKER_TIMEOUT_SECONDS,
+    RERANKER_URL,
 )
 from llm_client import (
     build_llm_client,
@@ -178,10 +187,22 @@ from llm_client import (
 )
 from query_facets import (
     augment_extracted_facets,
-    may_relax_distance_constraint,
     retrieval_terms_from_state,
 )
 from rate_limit import SlidingWindowRateLimiter
+from search.contracts import DistanceRule
+from search.indexes import IndexLoadError, IndexRepository
+from search.indexes.manifest import sha256_file
+from search.live_retrieval import (
+    CandidateRetrievalAdapter,
+    LEGACY_INDEX_VERSION,
+    RetrievalQuery,
+)
+from search.rules import compile_legacy_state_rules, compile_shadow_rules
+from search.reranker import RemoteEvidenceReranker
+from search.scope import ScopeBuilder
+from search.semantic_retriever import RemoteBgeM3ReviewRetriever
+from search.turn_delta import compile_turn_delta, reduce_search_state
 
 # ==========================================
 # LOGGING SETUP
@@ -195,6 +216,26 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+class RequiredSearchIndexError(RuntimeError):
+    """The configured mandatory Phase 3 release is absent or stale."""
+
+
+def record_shadow_rule_compilation(
+    user_message: str,
+    extracted: Dict[str, Any],
+) -> None:
+    """Observe the new rule compiler without changing live search behavior."""
+    try:
+        compilation = compile_shadow_rules(user_message, extracted)
+        logger.info(
+            "Search-rule shadow compile status=%s issue_codes=%s",
+            "compiled" if compilation.rules else "clarification",
+            [issue.code for issue in compilation.issues],
+        )
+    except Exception:
+        logger.exception("Search-rule shadow compiler failed")
 
 # Set third-party loggers to WARNING to reduce noise
 logging.getLogger("chromadb").setLevel(logging.WARNING)
@@ -217,6 +258,10 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 CHROMA_PATH = os.getenv(
     "CHROMA_PATH", str(Path(__file__).resolve().parent / "chroma_db")
 )
+SEARCH_INDEX_ROOT = os.getenv("SEARCH_INDEX_ROOT", "").strip()
+SEARCH_INDEX_REQUIRED = os.getenv("SEARCH_INDEX_REQUIRED", "false").strip().casefold() in {
+    "1", "true", "yes", "on",
+}
 
 # Defaults
 DEFAULT_LAT = 37.5219  # Yeouido
@@ -224,9 +269,30 @@ DEFAULT_LON = 126.9243
 
 # Global data structures
 rag_pipeline = None  # RAG Pipeline instance
+search_index_release = None  # Validated Phase 3 release; Phase 4 will query it
 df_facilities = None  # Full dataset
 df_filtered = None    # Filtered subset (Summaries not null)
 available_specialties = []  # Unique specialties from parquet data
+evidence_reranker = (
+    RemoteEvidenceReranker(
+        base_url=RERANKER_URL,
+        token=RERANKER_API_TOKEN,
+        timeout_seconds=RERANKER_TIMEOUT_SECONDS,
+        max_candidates=RERANKER_MAX_CANDIDATES,
+    )
+    if RERANKER_URL
+    else None
+)
+semantic_evidence_source = (
+    RemoteBgeM3ReviewRetriever(
+        base_url=BGE_M3_RETRIEVER_URL,
+        token=BGE_M3_RETRIEVER_API_TOKEN,
+        release_id=BGE_M3_RETRIEVER_RELEASE_ID,
+        timeout_seconds=BGE_M3_RETRIEVER_TIMEOUT_SECONDS,
+    )
+    if BGE_M3_RETRIEVER_URL
+    else None
+)
 
 
 # ==========================================
@@ -331,7 +397,8 @@ def calculate_field_boost(value, keyword_lower: str) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global rag_pipeline, df_facilities, df_filtered, available_specialties, client
+    global rag_pipeline, search_index_release, df_facilities, df_filtered
+    global available_specialties, client
     logger.info(
         "🚀 Booting Seoul Med Match Backend (provider=%s, model=%s)",
         LLM_PROVIDER, GROQ_CHAT_MODEL,
@@ -349,6 +416,46 @@ async def lifespan(app: FastAPI):
             df_filtered = df_facilities[df_facilities['Summaries'].notna()].copy()
             logger.info(f"✅ Filtered to {len(df_filtered)} facilities with summaries")
         
+        df_filtered['place_id'] = df_filtered['place_id'].fillna('').astype(str)
+
+        if SEARCH_INDEX_ROOT:
+            try:
+                candidate_release = IndexRepository(
+                    Path(SEARCH_INDEX_ROOT)
+                ).open_active()
+                catalog_ids = set(df_filtered['place_id'])
+                indexed_ids = set(candidate_release.facility_ids)
+                if catalog_ids != indexed_ids:
+                    raise IndexLoadError(
+                        "active Phase 3 release does not match the facility catalog"
+                    )
+                if (
+                    sha256_file(Path(LOCAL_PARQUET_PATH))
+                    != candidate_release.manifest.facility_source_sha256
+                    or not raw_reviews_path
+                    or sha256_file(Path(raw_reviews_path))
+                    != candidate_release.manifest.review_source_sha256
+                ):
+                    raise IndexLoadError(
+                        "active Phase 3 release does not match mounted source snapshots"
+                    )
+                search_index_release = candidate_release
+                logger.info(
+                    "Phase 3 index validated: version=%s facilities=%s evidence=%s",
+                    candidate_release.version,
+                    candidate_release.manifest.facility_count,
+                    candidate_release.manifest.evidence_count,
+                )
+            except (IndexLoadError, OSError) as exc:
+                if 'candidate_release' in locals():
+                    candidate_release.close()
+                search_index_release = None
+                if SEARCH_INDEX_REQUIRED:
+                    raise RequiredSearchIndexError(
+                        "required Phase 3 search index failed validation"
+                    ) from exc
+                logger.warning("Phase 3 index unavailable: %s", exc)
+
         if 'category' in df_filtered.columns:
             available_specialties = sorted(df_filtered['category'].dropna().unique().tolist())
             logger.info(f"📋 Extracted {len(available_specialties)} unique specialties from data")
@@ -381,8 +488,6 @@ async def lifespan(app: FastAPI):
         if not GOOGLE_MAPS_API_KEY and not KAKAO_REST_API_KEY:
             logger.error("❌ NO GEOCODING SERVICE CONFIGURED - Location features will be limited!")
         
-        df_filtered['place_id'] = df_filtered['place_id'].fillna('').astype(str)
-        
         logger.info("🤖 Initializing agentic RAG (dense general + BM25 specific)...")
         rag_pipeline = RAGPipeline(
             chroma_path=CHROMA_PATH,
@@ -403,12 +508,18 @@ async def lifespan(app: FastAPI):
         logger.info(f"   Raw review comments: {'ENABLED' if rag_stats['raw_reviews_enabled'] else 'DISABLED'}")
         logger.info(f"   Hybrid search: {'ENABLED ✓' if rag_stats['hybrid_search_enabled'] else 'DISABLED'}")
         
+    except RequiredSearchIndexError:
+        logger.exception("Required Phase 3 search index failed startup validation")
+        raise
     except Exception as e:
         logger.error(f"STARTUP ERROR: {e}", exc_info=True)
         df_facilities = pd.DataFrame()
         df_filtered = pd.DataFrame()
 
     yield
+    if search_index_release is not None:
+        search_index_release.close()
+        search_index_release = None
     logger.info("🛑 Shutting down.")
 
 
@@ -432,6 +543,9 @@ def root_status() -> Dict[str, Any]:
         "model_provider": LLM_PROVIDER,
         "model": GROQ_CHAT_MODEL,
         "agent_model": GROQ_AGENT_MODEL,
+        "search_index_version": (
+            search_index_release.version if search_index_release is not None else None
+        ),
     }
 
 
@@ -459,6 +573,22 @@ def health_check() -> Dict[str, Any]:
         "model_provider": LLM_PROVIDER,
         "model": GROQ_CHAT_MODEL,
         "agent_model": GROQ_AGENT_MODEL,
+        "phase3_index": {
+            "active": search_index_release is not None,
+            "required": SEARCH_INDEX_REQUIRED,
+            "version": (
+                search_index_release.version
+                if search_index_release is not None else None
+            ),
+            "facilities": (
+                search_index_release.manifest.facility_count
+                if search_index_release is not None else 0
+            ),
+            "evidence": (
+                search_index_release.manifest.evidence_count
+                if search_index_release is not None else 0
+            ),
+        },
     }
 
 
@@ -496,6 +626,17 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
     # ============================================
     extraction_prompt = f"""Extract from: "{user_message}"
 
+Return a DELTA for this user turn, not a rewritten conversation state.
+
+**TURN OPERATION:**
+- "refine": add, set, or remove constraints in the current search.
+- "replace_context": the user explicitly starts over or changes the whole request.
+
+**DELTA SAFETY RULES:**
+- "X is no longer required" or "remove X" → remove_terms: [X]. Never negate X.
+- Opening times such as Tuesday evening go in required_hours, not review keywords.
+- Copy an explicit numeric distance exactly into distance_km; never round it.
+
 **KEYWORD INTENT RULES (READ CAREFULLY):**
 1. "I want X" / "I need X" / "find X" / "looking for X" / "X doctor" → soft_keywords: [X] ✓
 2. "avoid X" / "not X" / "without X" / "don't want X" → negative_keywords: [X] ✓
@@ -517,9 +658,11 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
 **Travel labels:** {travel_labels_list}
 
 **Return JSON with:**
+- operation: "refine" or "replace_context"
 - specialty: matched Korean specialty or null (default: 병원,의원 if unclear)
 - specialty_confidence: 0.0-1.0
 - location: extracted location or null (null if not mentioned)
+- distance_km: exact numeric distance or null
 - travel_label: one from travel labels list, or null when travel is not mentioned
 - hard_keywords: factual must-haves (parking, MRI, insurance, weekend hours, English-speaking)
 - soft_keywords: subjective qualities user WANTS (can include unfriendly, rude, cold, expensive, etc.)
@@ -529,14 +672,18 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
 - gender_terms: requested doctor gender, preserving the user's wording
 - disease_terms: diseases, conditions, or symptoms to treat
 - comment_terms: qualities that should be supported by patient comments/reviews
+- required_hours: canonical availability constraints
+- remove_terms: concepts to delete from every positive and negative collection
 
 **Format:**
 {{
+  "operation": "refine",
   "specialty": "string or null",
   "specialty_confidence": 0.7,
   "location": "string or null",
   "latitude": null,
   "longitude": null,
+  "distance_km": null,
   "travel_label": null,
   "language_pref": "English Preferred",
   "hard_keywords": [],
@@ -546,7 +693,9 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
   "place_terms": [],
   "gender_terms": [],
   "disease_terms": [],
-  "comment_terms": []
+  "comment_terms": [],
+  "required_hours": [],
+  "remove_terms": []
 }}
 """
     
@@ -734,6 +883,7 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
                 logger.warning("Could not verify an extracted location")
         
         privacy_safe_log(consent, "=" * 60 + "\n")
+        record_shadow_rule_compilation(user_message, extracted)
         
         return extracted
         
@@ -748,6 +898,7 @@ def extract_entities(user_message: str, consent: Optional[CookieConsent] = None)
         })
         fallback["extraction_source"] = "deterministic_fallback"
         fallback["extraction_error"] = type(e).__name__
+        record_shadow_rule_compilation(user_message, fallback)
         return fallback
 
 def quick_extract_location_change(user_message: str, consent: Optional[CookieConsent] = None) -> Dict[str, Any]:
@@ -843,139 +994,21 @@ Return JSON: {{
         return {}
 
 
-def merge_extraction_into_state(state: State, extracted: Dict[str, Any], replace_keywords: bool = True) -> State:
-    """
-    Merge extracted entities into state (with keyword replacement option).
-    
-    Args:
-        state: Current state
-        extracted: Extracted entities from LLM
-        replace_keywords: If True, replace keywords entirely. If False, add to existing.
-    """
-    
-    # ===== SPECIALTY =====
-    if extracted.get('specialty'):
-        state.specialty = extracted['specialty']
-        state.specialty_confidence = extracted.get('specialty_confidence', 0.7)
-    
-    # ===== LOCATION =====
-    if extracted.get('location'):
-        # ⭐ Normalize "Seoul" to None before setting
-        normalized_location = normalize_seoul_to_null(extracted['location'])
-        
-        if normalized_location:
-            # Specific location (e.g., "Gangnam", "Hongdae")
-            state.location = normalized_location
-            state.is_citywide_search = False  # User specified a specific location
-            logger.info("Specific location set")
-        else:
-            # User said "Seoul" (or variant) → treat as city-wide
-            state.location = None
-            state.is_citywide_search = True
-            logger.info("🌆 Generic 'Seoul' detected → city-wide search mode")
-    
-    # GPS coordinates (only set if location is specific)
-    if extracted.get('latitude') is not None and not state.is_citywide_search:
-        state.latitude = extracted['latitude']
-    
-    if extracted.get('longitude') is not None and not state.is_citywide_search:
-        state.longitude = extracted['longitude']
-    
-    # Other location fields (only if specific location)
-    if extracted.get('address_korean') and not state.is_citywide_search:
-        state.address_korean = extracted['address_korean']
-    
-    if extracted.get('district') and not state.is_citywide_search:
-        state.district = extracted['district']
-    
-    if extracted.get('dong') and not state.is_citywide_search:
-        state.dong = extracted['dong']
-
-    # ===== TRAVEL LABEL & CONFIDENCE =====
-    if extracted.get('travel_label'):
-        state.travel_label = extracted['travel_label']
-        
-        # ⭐ NEW: Set confidence based on how it was provided
-        if extracted.get('travel_confidence'):
-            # Explicitly set (from widget = 1.0)
-            state.travel_confidence = extracted['travel_confidence']
-        else:
-            # From text extraction = 0.6
-            state.travel_confidence = 0.6
-        
-        if state.travel_label in DISTANCE_MAPPING:
-            state.max_distance_km = DISTANCE_MAPPING[state.travel_label]
-            logger.info("Travel preference updated")
-        else:
-            logger.warning("Unknown travel preference; using default distance")
-            state.travel_label = "Moderate"
-            state.max_distance_km = 5.0
-            state.travel_confidence = 0.5
-    
-    # ===== KEYWORDS (POSITIVE) =====
-    if replace_keywords:
-        # REPLACEMENT MODE (default)
-        if extracted.get('hard_keywords') is not None:
-            state.hard_keywords = extracted['hard_keywords']
-            logger.info("Replaced required search terms")
-        
-        if extracted.get('soft_keywords') is not None:
-            state.keywords = extracted['soft_keywords']
-            logger.info("Replaced preferred search terms")
-    else:
-        # ADDITIVE MODE (only when explicitly refining)
-        if extracted.get('hard_keywords'):
-            existing_hard = set(state.hard_keywords)
-            new_hard = set(extracted['hard_keywords'])
-            state.hard_keywords = list(existing_hard.union(new_hard))
-            logger.info("Added required search terms")
-        
-        if extracted.get('soft_keywords'):
-            existing_soft = set(state.keywords)
-            new_soft = set(extracted['soft_keywords'])
-            state.keywords = list(existing_soft.union(new_soft))
-            logger.info("Added preferred search terms")
-    
-    # ===== NEGATIVE KEYWORDS =====
-    if replace_keywords:
-        if extracted.get('negative_hard_keywords') is not None:
-            state.negative_hard_keywords = extracted['negative_hard_keywords']
-            logger.info("Replaced excluded search terms")
-        
-        if extracted.get('negative_keywords') is not None:
-            state.negative_keywords = extracted['negative_keywords']
-            logger.info("Replaced avoided search terms")
-    else:
-        if extracted.get('negative_hard_keywords'):
-            existing_neg_hard = set(state.negative_hard_keywords)
-            new_neg_hard = set(extracted['negative_hard_keywords'])
-            state.negative_hard_keywords = list(existing_neg_hard.union(new_neg_hard))
-            logger.info("Added excluded search terms")
-        
-        if extracted.get('negative_keywords'):
-            existing_neg = set(state.negative_keywords)
-            new_neg = set(extracted['negative_keywords'])
-            state.negative_keywords = list(existing_neg.union(new_neg))
-            logger.info("Added avoided search terms")
-
-    # ===== STRUCTURED RETRIEVAL FACETS =====
-    for field in ("place_terms", "gender_terms", "disease_terms", "comment_terms"):
-        incoming = extracted.get(field)
-        if incoming is None:
-            continue
-        if replace_keywords:
-            setattr(state, field, list(dict.fromkeys(incoming)))
-        elif incoming:
-            existing = getattr(state, field, [])
-            setattr(state, field, list(dict.fromkeys([*existing, *incoming])))
-    state.extraction_source = extracted.get("extraction_source", state.extraction_source)
-    state.extraction_error = extracted.get("extraction_error")
-
-    # ===== SEARCH MODE =====
-    if state.location:
-        state.search_mode = detect_search_mode(state.location, state)
-    
-    return state
+def merge_extraction_into_state(
+    state: State,
+    extracted: Dict[str, Any],
+    replace_keywords: bool = True,
+    user_message: str = "",
+) -> State:
+    """Apply one model proposal through the server-owned state reducer."""
+    delta = compile_turn_delta(user_message, extracted)
+    next_state = reduce_search_state(
+        state,
+        delta,
+        replace_keywords=replace_keywords,
+    )
+    logger.info("Applied validated search-state delta")
+    return next_state
 
 
 # ==========================================
@@ -1404,33 +1437,6 @@ def execute_search(
         
         privacy_safe_log(consent, f"   Specialty filter: {before_count} → {len(specialty_filtered_df)}")
         
-        # ⭐ Expand search radius if too few results (only if we have GPS data)
-        if len(specialty_filtered_df) < 3 and user_lat and user_lon and has_distance_data:
-            privacy_safe_log(consent, f"   ⚠️ Only {len(specialty_filtered_df)} results, expanding radius...")
-            
-            expanded_df = df_filtered[
-                df_filtered['category'].str.contains(state.specialty, na=False, case=False)
-            ].copy()
-            
-            if len(expanded_df) > 0:
-                def calc_distance_expanded(row):
-                    if pd.notna(row['lat']) and pd.notna(row['lon']):
-                        return haversine(user_lat, user_lon, row['lat'], row['lon'])
-                    return 999.0
-                
-                expanded_df['distance_km'] = expanded_df.apply(calc_distance_expanded, axis=1)
-                expanded_df = expanded_df.sort_values('distance_km')
-                
-                for radius in [max_distance * 1.5, max_distance * 2, max_distance * 3, max_distance * 5, 50]:
-                    expanded_working = expanded_df[expanded_df['distance_km'] < radius].copy()
-                    
-                    if len(expanded_working) >= 3:
-                        specialty_filtered_df = expanded_working
-                        location_context = f"within {radius:.1f}km"
-                        relaxed_filters.append(f"expanded to {radius:.1f}km for more {state.specialty}")
-                        privacy_safe_log(consent, f"   ✓ Expanded to {radius:.1f}km: {len(specialty_filtered_df)} found")
-                        break
-        
         working_df = specialty_filtered_df
     
     elif search_precision == "MEDIUM" and has_specialty and 'category' in working_df.columns:
@@ -1694,6 +1700,77 @@ def execute_search(
     else:
         final_df = working_df.copy()
         privacy_safe_log(consent, f"⚠️ Both paths failed, using {len(final_df)} base results")
+
+    # ScopeBuilder is authoritative during the legacy ranking migration. The
+    # heuristic work above may rank candidates, but it cannot add an ID here.
+    scope_compilation = compile_legacy_state_rules(
+        user_message,
+        state,
+        turn_id=state.last_retrieval_run_id,
+        allowed_specialties=available_specialties,
+    )
+    scope_selection = None
+    scope_metadata = {}
+    authoritative_max_distance = 5.0
+    if scope_compilation.rules is None:
+        logger.warning(
+            "Authoritative scope needs clarification: %s",
+            [issue.code for issue in scope_compilation.issues],
+        )
+        working_df = df_filtered.iloc[0:0].copy()
+        final_df = working_df.copy()
+        has_distance_data = False
+    else:
+        authoritative_rules = scope_compilation.rules
+        scope_selection = ScopeBuilder().build(
+            df_filtered,
+            authoritative_rules,
+            index_version=(
+                search_index_release.version
+                if search_index_release is not None
+                else LEGACY_INDEX_VERSION
+            ),
+        )
+        working_df = scope_selection.restrict_dataframe(df_filtered)
+        geography = authoritative_rules.hard.geography
+        if isinstance(geography, DistanceRule):
+            authoritative_max_distance = geography.max_km
+            state.max_distance_km = geography.max_km
+            has_distance_data = True
+            working_df = working_df.sort_values("distance_km")
+            location_context = "near your location"
+            is_citywide = False
+        else:
+            authoritative_max_distance = 5.0
+            has_distance_data = False
+            is_citywide = geography.area_kind == "city"
+            location_context = (
+                "across Seoul"
+                if is_citywide
+                else f"in {geography.display_name}"
+            )
+        final_df = working_df.copy()
+        scope_metadata = {
+            "scope_digest": scope_selection.descriptor.scope_digest,
+            "rules_hash": scope_selection.descriptor.rules_hash,
+            "candidate_scope_count": scope_selection.descriptor.facility_count,
+        }
+        state.last_retrieval_metadata = {
+            "run_id": state.last_retrieval_run_id,
+            **scope_metadata,
+            "retrieval_status": "scope_built",
+        }
+        privacy_safe_log(
+            consent,
+            "Authoritative eligible scope: "
+            f"{scope_selection.descriptor.facility_count} facilities",
+        )
+
+    path_a_results_df = final_df.copy()
+    path_b_results_df = final_df.iloc[0:0].copy()
+    specialty_filtered_df = final_df.copy()
+    general_fallback_df = final_df.iloc[0:0].copy()
+    relaxed_filters = []
     
     # ===== AGENTIC RAG: LLM → SEARCH → OBSERVATION LOOP =====
 
@@ -1735,25 +1812,32 @@ def execute_search(
                 state.suggested_alpha = None
                 state.hybrid_alpha = None
                 
-                final_df = rag_pipeline.apply_combined_ranking(
-                    df=final_df,
-                    query_text=query_text,
-                    max_distance=max_distance,
-                    search_mode=state.search_mode or 'distance',
-                    n_results=200,
-                    use_hybrid=True,
-                    manual_mode=state.manual_search_mode,
-                    is_general_search=False,
-                    specialty_confidence=specialty_conf,
-                    exact_terms=exact_retrieval_terms,
-                    use_agentic=True,
-                    target_language=language,
+                retrieval = CandidateRetrievalAdapter(
+                    active_index=search_index_release,
+                    legacy_pipeline=rag_pipeline,
+                    evidence_reranker=evidence_reranker,
+                    semantic_evidence_source=semantic_evidence_source,
+                ).rank(
+                    scope=scope_selection,
+                    eligible=final_df,
+                    rules=authoritative_rules,
+                    query=RetrievalQuery(
+                        text=query_text,
+                        max_distance_km=authoritative_max_distance,
+                        search_mode=state.search_mode or "distance",
+                        specialty_confidence=specialty_conf,
+                        exact_terms=tuple(exact_retrieval_terms),
+                        target_language=language,
+                        manual_mode=state.manual_search_mode,
+                    ),
                 )
+                final_df = retrieval.dataframe
                 state.last_retrieval_trace = final_df.attrs.get("rag_trace", [])
                 state.last_retrieval_observations = final_df.attrs.get("rag_observations", [])
                 state.last_retrieval_metadata = {
                     **final_df.attrs.get("rag_metadata", {}),
                     "run_id": state.last_retrieval_run_id,
+                    **scope_metadata,
                 }
                 if ENABLE_RETRIEVAL_DEBUG:
                     retrieval_by_id = {
@@ -1775,12 +1859,17 @@ def execute_search(
                         )
                     ]
                 
-                privacy_safe_log(consent, "✓ Agentic dense/BM25 ranking applied")
+                privacy_safe_log(
+                    consent,
+                    "Indexed scoped hybrid ranking applied "
+                    f"({retrieval.telemetry.status})",
+                )
                 
             except Exception as e:
                 logger.error(f"Agentic RAG ranking error: {e}", exc_info=True)
                 state.last_retrieval_metadata = {
                     "run_id": state.last_retrieval_run_id,
+                    **scope_metadata,
                     "retrieval_status": "error",
                     "termination_reason": type(e).__name__,
                 }
@@ -1807,6 +1896,7 @@ def execute_search(
         state.hybrid_alpha = None
         state.last_retrieval_metadata = {
             "run_id": state.last_retrieval_run_id,
+            **scope_metadata,
             "retrieval_status": "not_run",
             "termination_reason": "general_distance_only",
             "candidate_scope_count": int(len(final_df)),
@@ -1825,20 +1915,11 @@ def execute_search(
             final_df = pre_english_df
             relaxed_filters.append("included facilities with limited English")
     
-    # ===== FINAL DISTANCE VALIDATION =====
-    
-    # Only validate distance if we have distance data
-    if has_distance_data and state.search_mode != 'zone':
-        pre_validation_df = final_df.copy()
-        final_df = final_df[final_df['distance_km'] < max_distance]
-        
-        if (
-            len(final_df) < 3
-            and len(pre_validation_df) >= 3
-            and may_relax_distance_constraint(state.travel_confidence)
-        ):
-            final_df = pre_validation_df.head(5)
-            relaxed_filters.append("included slightly farther facilities")
+    # ===== FINAL SCOPE VALIDATION =====
+
+    if scope_selection is not None:
+        scope_selection.assert_contains_only(final_df)
+        final_df = scope_selection.restrict_dataframe(final_df)
     
     # ===== RESULT SELECTION =====
     
@@ -1890,8 +1971,8 @@ def execute_search(
                 model=GROQ_CHAT_MODEL,
                 messages=gen_messages,
                 temperature=0.4,
-                max_completion_tokens=1536,
-                reasoning_effort=GROQ_REASONING_EFFORT,
+                max_completion_tokens=768,
+                reasoning_effort="low",
             )
             response_text = re.sub(r'[\u0400-\u04FF]+', 'Seoul', response_text)
             response_text = re.sub(r'대한민국 서울특별시 중구 세종대로 110', 'Seoul', response_text)
@@ -1988,6 +2069,14 @@ def execute_search(
 
             if 'retrieval_evidence' in row.index and isinstance(row['retrieval_evidence'], list):
                 result['retrieval_evidence'] = safe_convert_to_python(row['retrieval_evidence'])
+            if (
+                'retrieval_evidence_groups' in row.index
+                and isinstance(row['retrieval_evidence_groups'], dict)
+            ):
+                result['retrieval_evidence_groups'] = safe_convert_to_python(
+                    row['retrieval_evidence_groups']
+                )
+
 
             if 'retrieval_methods' in row.index and isinstance(row['retrieval_methods'], list):
                 result['retrieval_methods'] = safe_convert_to_python(row['retrieval_methods'])
@@ -2437,7 +2526,9 @@ def chat_endpoint(
             extracted = extract_entities(req.message, consent)
             
             if extracted.get('location') or extracted.get('latitude'):
-                new_state = merge_extraction_into_state(new_state, extracted)
+                new_state = merge_extraction_into_state(
+                    new_state, extracted, user_message=req.message
+                )
                 new_state = standardize_and_fill_state(new_state, consent)
         
         response_text, results = execute_emergency_search(
@@ -2745,7 +2836,9 @@ def chat_endpoint(
                 privacy_safe_log(consent, f"✓ Corrected specialty: {new_state.specialty}")
             
             if extracted.get('location'):
-                new_state = merge_extraction_into_state(new_state, extracted)
+                new_state = merge_extraction_into_state(
+                    new_state, extracted, user_message=req.message
+                )
                 new_state = standardize_and_fill_state(new_state, consent)
                 privacy_safe_log(consent, f"✓ Updated location: {new_state.district or new_state.location}")
             
@@ -2891,7 +2984,9 @@ def chat_endpoint(
             privacy_safe_log(consent, "🔍 Full extraction")
             extracted = extract_entities(req.message, consent)
         
-        new_state = merge_extraction_into_state(cleansed_state, extracted)
+        new_state = merge_extraction_into_state(
+            cleansed_state, extracted, user_message=req.message
+        )
         
         if change_detection.get('specialty') == 'keep' and enriched_state.specialty:
             new_state.specialty = enriched_state.specialty
@@ -3175,7 +3270,8 @@ def chat_endpoint(
         new_state = merge_extraction_into_state(
             new_state, 
             extracted, 
-            replace_keywords=(not is_refinement)
+            replace_keywords=(not is_refinement),
+            user_message=req.message,
         )
         new_state = standardize_and_fill_state(new_state, consent)
         new_state.language_pref = language

@@ -30,10 +30,11 @@ class Response:
 
 class Session:
     def __init__(self):
+        self.gets = []
         self.posts = []
 
     def get(self, *args, **kwargs):
-        del args, kwargs
+        self.gets.append((args, kwargs))
         return Response({
             "status": "ok",
             "facilities": 8_484,
@@ -93,8 +94,35 @@ class PatientJourneyTests(unittest.TestCase):
             "Clinic",
         )
         self.assertNotIn("set-cookie", artifact["turns"][0]["response"]["headers"])
+        self.assertNotIn("Authorization", session.gets[0][1]["headers"])
+        self.assertNotIn("Authorization", session.posts[0][1]["headers"])
         self.assertEqual(artifact["status"], "finished")
         self.assertEqual(mode, 0o600)
+
+    def test_private_endpoint_bearer_token_is_sent_but_never_saved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private-visit.json"
+            session = Session()
+            run_journey(
+                path,
+                "https://private-space.example/chat",
+                language="English",
+                messages=("I need a dentist.",),
+                auth_token="hf_private_token",
+                session=session,
+            )
+            raw_artifact = path.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            session.gets[0][1]["headers"]["Authorization"],
+            "Bearer hf_private_token",
+        )
+        self.assertEqual(
+            session.posts[0][1]["headers"]["Authorization"],
+            "Bearer hf_private_token",
+        )
+        self.assertNotIn("hf_private_token", raw_artifact)
+        self.assertNotIn("Authorization", raw_artifact)
 
     def test_run_journey_serializes_turns_in_one_process(self):
         with tempfile.TemporaryDirectory() as directory:

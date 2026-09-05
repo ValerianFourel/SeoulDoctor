@@ -8,6 +8,7 @@ container_name="seouldoc-hf-smoke-$$"
 facilities="$repo_root/backend/local_facilities_cache.parquet"
 reviews="$repo_root/backend/local_reviews_cache.parquet"
 vectors="$repo_root/backend/chroma_db"
+indexes="$repo_root/backend/search_indexes"
 for path in "$facilities" "$reviews" "$vectors"; do
     if [ ! -e "$path" ]; then
         echo "Missing local smoke-test data: $path" >&2
@@ -19,6 +20,15 @@ cleanup() {
     docker rm --force "$container_name" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT HUP INT TERM
+
+set --
+expects_phase3=false
+if [ -f "$indexes/active.json" ]; then
+    set -- \
+        --volume "$indexes:/data/seouldoc/search_indexes:ro" \
+        --env SEARCH_INDEX_REQUIRED=true
+    expects_phase3=true
+fi
 
 if [ "$(docker image inspect "$image_name" --format '{{.Config.User}}')" != "user" ]; then
     echo "Image must run as the non-root user named user" >&2
@@ -39,6 +49,7 @@ docker run --detach \
     --volume "$facilities:/data/seouldoc/facilities.parquet:ro" \
     --volume "$vectors:/smoke-input/chroma_db:ro" \
     --env CHROMA_PATH=/tmp/seouldoc-chroma \
+    "$@" \
     "$image_name" \
     sh -c 'cp -R /smoke-input/chroma_db /tmp/seouldoc-chroma && exec uvicorn space_app:app --host 0.0.0.0 --port 7860 --proxy-headers --forwarded-allow-ips "*"' \
     >/dev/null
@@ -48,6 +59,10 @@ while [ "$attempt" -le 60 ]; do
     if health=$(docker exec "$container_name" python -c \
         "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:7860/health', timeout=5).read().decode())" \
         2>/dev/null); then
+        if [ "$expects_phase3" = true ] && ! printf '%s' "$health" | grep -q '"active":true'; then
+            echo "Container did not validate the mounted Phase 3 release" >&2
+            exit 1
+        fi
         docker exec "$container_name" python -c \
             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/', timeout=5).read(1)"
         printf '%s\n' "$health"

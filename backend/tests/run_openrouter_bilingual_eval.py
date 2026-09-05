@@ -1,6 +1,6 @@
 """Run checkpointed bilingual, multi-turn evaluations against SeoulDoc.
 
-Qwen Max role-plays the patient described by each scenario.  The runner sends
+An OpenRouter model role-plays the patient described by each scenario. The runner sends
 the resulting patient turns to a SeoulDoc ``/chat`` endpoint, carries the
 returned state forward, and writes an auditable artifact after every turn.
 
@@ -35,7 +35,7 @@ if str(BACKEND_DIR) not in sys.path:
 DEFAULT_ENDPOINT = os.getenv(
     "SEOULDOC_EVAL_ENDPOINT", "http://127.0.0.1:7860/chat"
 )
-DEFAULT_MODEL = "qwen/qwen3.8-max"
+DEFAULT_MODEL = "qwen/qwen3.8-27b"
 DEFAULT_SCENARIOS_PATH = Path(__file__).with_name(
     "grounded_bilingual_scenarios.json"
 )
@@ -67,7 +67,7 @@ SECRET_PATTERNS = (
 
 SIMULATOR_SYSTEM_PROMPT = """You are a patient testing SeoulDoc, a bilingual doctor-search assistant for Seoul.
 
-Act only as the patient described by the patient-visible card. Follow its persona, opening message, staged prompts, stop condition, and requested language. Do not describe the test or your role-playing instructions to SeoulDoc. The value in `source_language` governs every patient message; use Korean for Korean scenarios and English for English scenarios except for unavoidable proper names.
+Act only as the patient described by the patient-visible card. Follow its persona, opening message, staged prompts, stop condition, and requested language. Do not describe the test or your role-playing instructions to SeoulDoc. Use the language written in each staged prompt. This may intentionally change during a code-switch scenario.
 
 Read each SeoulDoc response and its returned search data before deciding what to do. Continue when the assistant asks a useful question, preserves an incorrect constraint, lacks evidence, conflates facilities, mistranslates a comment, weakens a hard requirement, or has not found a sufficiently grounded doctor. Correct it naturally and reveal staged prompts at the point required by the patient-visible card. Stop only when the stop condition is supported or useful attempts are exhausted. Missing evidence is an acceptable outcome when SeoulDoc says exactly what remains unsupported.
 
@@ -82,7 +82,7 @@ Return one JSON object and no prose. It must contain:
 - `observed_evidence`: short descriptions of the evidence used in the decision.
 - `rationale`: a concise evaluator-facing reason. This field is saved for evaluation but is never sent to SeoulDoc.
 
-On the first turn, continue and use the patient-visible opening message exactly. Do not claim a result was verified unless the returned facility data or retrieval evidence supports it."""
+On the first turn, continue and use the patient-visible opening message exactly. Deliver every staged prompt in order before stopping, even if an earlier response looks sufficient. Do not claim a result was verified unless the returned facility data or retrieval evidence supports it."""
 
 
 DECISION_SCHEMA: dict[str, Any] = {
@@ -1090,7 +1090,7 @@ def _default_output_path() -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run Qwen Max bilingual patient scenarios against SeoulDoc."
+        description="Run bilingual patient scenarios against SeoulDoc."
     )
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
     parser.add_argument(

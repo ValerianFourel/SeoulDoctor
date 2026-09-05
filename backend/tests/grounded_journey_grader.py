@@ -383,6 +383,59 @@ def grade_scenario(
         duplicate_run_ids=duplicate_run_ids,
     ))
 
+    turn_radius_expectations = oracle.get("turn_radius_expectations_km")
+    if turn_radius_expectations is not None:
+        if (
+            not isinstance(turn_radius_expectations, list)
+            or len(turn_radius_expectations) != expected_turn_count
+            or any(
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or value <= 0
+                for value in turn_radius_expectations
+            )
+        ):
+            raise ValueError(
+                "oracle.turn_radius_expectations_km must define every staged turn"
+            )
+        radius_failures = []
+        for index, expected in enumerate(turn_radius_expectations, start=1):
+            turn_body = _turn_body(turns[index - 1]) if index <= len(turns) else {}
+            turn_state = turn_body.get("state")
+            turn_state = turn_state if isinstance(turn_state, Mapping) else {}
+            observed = turn_state.get("max_distance_km")
+            if (
+                not isinstance(observed, (int, float))
+                or isinstance(observed, bool)
+                or abs(float(observed) - float(expected)) > 0.01
+            ):
+                radius_failures.append({
+                    "turn": index,
+                    "expected_km": expected,
+                    "observed_km": observed,
+                })
+        implicit_turns = oracle.get("implicit_default_radius_turns", [])
+        if (
+            not isinstance(implicit_turns, list)
+            or any(
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 1
+                or value > expected_turn_count
+                for value in implicit_turns
+            )
+        ):
+            raise ValueError(
+                "oracle.implicit_default_radius_turns must contain valid turn numbers"
+            )
+        gates.append(_gate(
+            "staged_distance",
+            len(turns) == expected_turn_count and not radius_failures,
+            expectations_km=turn_radius_expectations,
+            implicit_default_turns=implicit_turns,
+            failures=radius_failures,
+        ))
+
     health_ok = (
         health.get("status") == "ok"
         and health.get("model_provider") == "openrouter"
@@ -615,6 +668,93 @@ def grade_scenario(
         finish_is_last=finish_is_last,
         missing_comment_query_scripts=sorted(required_scripts - observed_scripts),
     ))
+
+    if oracle.get("required_trace_actions_each_turn") is True:
+        per_turn_failures = []
+        for index, turn in enumerate(turns, start=1):
+            turn_body = _turn_body(turn)
+            turn_state = turn_body.get("state")
+            turn_state = turn_state if isinstance(turn_state, Mapping) else {}
+            turn_results = turn_body.get("results")
+            turn_results = turn_results if isinstance(turn_results, list) else []
+            turn_trace = turn_state.get("last_retrieval_trace")
+            turn_trace = turn_trace if isinstance(turn_trace, list) else []
+            turn_records = [
+                item for item in turn_trace if isinstance(item, Mapping)
+            ]
+            turn_actions = [
+                str(item.get("action"))
+                for item in turn_records
+                if item.get("action")
+            ]
+            selected = _required_action_records(turn_records, required_actions)
+            unsuccessful = []
+            if selected is not None:
+                unsuccessful = [
+                    str(record.get("action"))
+                    for record in selected
+                    if record.get("action") in RESULT_BEARING_ACTIONS
+                    and (
+                        not isinstance(record.get("result_count"), int)
+                        or record.get("result_count", 0) <= 0
+                    )
+                ]
+            turn_methods = {
+                str(method)
+                for result in turn_results
+                if isinstance(result, Mapping)
+                for method in (
+                    result.get("retrieval_methods", [])
+                    if isinstance(result.get("retrieval_methods"), list)
+                    else []
+                )
+            }
+            turn_comment_terms = [
+                str(term)
+                for record in turn_records
+                if record.get("action") == "search_multilingual_comments"
+                for term in (
+                    record.get("arguments", {}).get("query_terms", [])
+                    if isinstance(record.get("arguments"), Mapping)
+                    and isinstance(
+                        record.get("arguments", {}).get("query_terms"), list
+                    )
+                    else []
+                )
+            ]
+            turn_scripts = set()
+            if any(
+                any("가" <= character <= "힣" for character in term)
+                for term in turn_comment_terms
+            ):
+                turn_scripts.add("Hangul")
+            if any(
+                any(character.isascii() and character.isalpha() for character in term)
+                for term in turn_comment_terms
+            ):
+                turn_scripts.add("Latin")
+            if (
+                selected is None
+                or unsuccessful
+                or not turn_actions
+                or turn_actions[-1] != "finish_search"
+                or not required_methods.issubset(turn_methods)
+                or not required_scripts.issubset(turn_scripts)
+            ):
+                per_turn_failures.append({
+                    "turn": index,
+                    "actions": turn_actions,
+                    "unsuccessful_required_actions": unsuccessful,
+                    "missing_methods": sorted(required_methods - turn_methods),
+                    "missing_comment_query_scripts": sorted(
+                        required_scripts - turn_scripts
+                    ),
+                })
+        gates.append(_gate(
+            "retrieval_orchestration_each_turn",
+            len(turns) == expected_turn_count and not per_turn_failures,
+            failures=per_turn_failures,
+        ))
 
     target_oracle = oracle.get("reverse_target")
     target_report: dict[str, Any] = {"required": False}
