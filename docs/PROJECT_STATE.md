@@ -61,9 +61,10 @@ scenario wording to make a run pass.
   was still awaiting a health gate.
 - During this coordination inspection, the local main worktree remained on
   `codex-cloud` at `d77ffac10639ef6c4c6f7d796b0a84ae1f84811a` with uncommitted
-  changes to `backend/search/evidence_retrieval.py` and
-  `backend/tests/test_evidence_retrieval.py`. Those changes are not part of
-  this coordination branch.
+  changes under `backend/search/` and its retrieval tests. The observed files
+  include `evidence_retrieval.py`, `live_retrieval.py`,
+  `test_evidence_retrieval.py`, and `test_live_retrieval.py`. Those changes are
+  not part of this coordination branch.
 - The two temporary T4 Small jobs were still available at the timeout. Their
   status after `2026-09-05T10:44:37Z` is not known from Git.
 - No completed targeted or full end-to-end result appears after the timeout
@@ -176,8 +177,8 @@ a facility review.
 
 | Task | Owner | Branch and write scope | Next action |
 |---|---|---|---|
-| Current deployed-app evaluation and selector fix | Local Codex main thread | `codex-cloud`; `backend/search/evidence_retrieval.py`, `backend/tests/test_evidence_retrieval.py`, existing Hugging Face jobs, Space state, and local `.audit/20260905-hf-release-eval-resume1/` | Health-check Space commit `8de2068ab9487bc72c91b3a897ab765b6ee20d76`, rerun the unchanged targeted pair, then commit or checkpoint the selector fix. |
-| Coordination record | This local coordination session | `coordination/codex-cloud-eval-20260905`; `AGENTS.md`, `docs/PROJECT_STATE.md`, and `docs/ENVIRONMENTS.md` only | Push the branch and report its exact commit. |
+| Current deployed-app evaluation and selector fix | Local Codex main thread | `codex-cloud`; `backend/search/`, related retrieval tests, existing Hugging Face jobs, Space state, and local `.audit/20260905-hf-release-eval-resume1/` | Health-check Space commit `8de2068ab9487bc72c91b3a897ab765b6ee20d76`, rerun the unchanged targeted pair, then commit or checkpoint the selector fix. |
+| Coordination record | This local coordination session | `coordination/codex-cloud-eval-20260905`; `AGENTS.md`, `docs/PROJECT_STATE.md`, and `docs/ENVIRONMENTS.md` only | Verify the remote tip, report its exact commit, then release this file ownership. |
 | Random holdout generation | Codex Cloud after checkout | Create `cloud/random-holdout-<seed>`; own the new generator, its tests, and a new casebook file | Implement deterministic sampling and freeze the first sampled casebook before API calls. |
 | Parallel patient runs | Luna Cloud agents after the casebook freezes | No tracked code edits. Each agent owns one `.codex-handoff/results/<batch>/<scenario-id>/` path | Run one card per agent and upload redacted checkpoints under distinct Dataset paths. |
 | RAG fixes from measured failures | One Cloud or local implementer per failure | Create `cloud/rag-<issue>` or `local/rag-<issue>`; declare source-file ownership before editing | Reproduce one failure, change the owning module, run tests, then rerun the unchanged case. |
@@ -195,7 +196,8 @@ a facility review.
   The latest attempt timed out on turn one.
 - The full eight-scenario suite has not run against the new deployed topology.
 - The selector fix is not committed to the GitHub code branch. Cloud must not
-  edit its two owned files while the local main thread is working on them.
+  edit the owned search or retrieval-test files while the local main thread is
+  working on them.
 - A clean checkout cannot finish `scripts/setup_codex_cloud.sh`: its final
   focused test expects the ignored file
   `backend/tests/evaluation_runs/20260902-mapoderm-transit.json`, and the setup
