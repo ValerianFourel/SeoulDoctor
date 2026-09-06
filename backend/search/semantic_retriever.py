@@ -11,6 +11,7 @@ from uuid import uuid4
 import requests
 
 from search.contracts import EvidenceRole
+from search.service_lease import lease_allows_request, parse_service_expiry
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ SemanticStatus = Literal[
     "request_failed",
     "invalid_response",
     "release_mismatch",
+    "service_expired",
 ]
 
 
@@ -84,6 +86,8 @@ class RemoteBgeM3ReviewRetriever:
         release_id: str,
         timeout_seconds: float = 8.0,
         session: _PostSession | None = None,
+        expires_at: str = "",
+        model_revision: str = "",
     ) -> None:
         normalized_url = base_url.strip().rstrip("/")
         if not normalized_url:
@@ -97,6 +101,8 @@ class RemoteBgeM3ReviewRetriever:
         self._release_id = release_id.strip()
         self._timeout_seconds = timeout_seconds
         self._session = session or requests.Session()
+        self._expires_at = parse_service_expiry(expires_at)
+        self._model_revision = model_revision.strip()
 
     def retrieve(
         self,
@@ -106,6 +112,8 @@ class RemoteBgeM3ReviewRetriever:
         queries: Sequence[SemanticCellQuery],
         limit_per_facility: int,
     ) -> SemanticReviewOutcome:
+        if not lease_allows_request(self._expires_at, self._timeout_seconds):
+            return SemanticReviewOutcome("service_expired")
         facilities = tuple(dict.fromkeys(str(value).strip() for value in facility_ids))
         query_batch = tuple(queries)
         if not facilities or not query_batch:
@@ -186,9 +194,10 @@ class RemoteBgeM3ReviewRetriever:
         if (
             release_id != self._release_id
             or source_digest != review_source_sha256
+            or (self._model_revision and release.get("model_revision") != self._model_revision)
         ):
             return SemanticReviewOutcome("release_mismatch")
-        if not isinstance(model_id, str) or not model_id.startswith("BAAI/bge-m3"):
+        if model_id != "BAAI/bge-m3":
             return SemanticReviewOutcome("invalid_response")
 
         references: list[SemanticEvidenceReference] = []

@@ -392,3 +392,37 @@ prohibited. The upload restriction conflicts with this runbook's explicit
 redacted-checkpoint upload requirement. Resolve that execution-policy conflict
 before spending the newly approved GPU budget. The prior checkpoint remains
 local and no new live evaluation has started.
+
+### Endpoint lease checks, 2026-09-06
+
+Root retains sequential ownership on `local/rag-visible-evidence-20260906`.
+Parent commit: `0b9ebffd07c23bcb39895a248e5eb2c3876c0fdb`.
+This unit owns `backend/search/service_lease.py`, the two remote clients,
+their configuration and main wiring, `test_service_lease.py`, and the handoff.
+Both clients now refuse network calls when a configured temporary lease has
+insufficient remaining time for the request plus a 30-second margin. Production
+BGE responses must match the audited model revision, not only the model name.
+No endpoint configuration or paid resource was changed. Expiry fields must be
+set during deployment; these checks are not automatic job cancellation.
+
+Verified: 210 backend tests passed in 4.035 seconds, 36 focused evaluator tests
+passed, and the frontend production build passed. The focused client command
+initially failed because `search` was absent from its Python import path;
+rerunning with `PYTHONPATH=backend` passed all 16 tests. The standard full
+discovery command passed without that override. Five new lease/revision tests
+exercise expiry, margin, unchanged candidates, zero network calls after expiry,
+and mismatched revisions. Sealed cases remain unchanged.
+
+The latest user authorization permits broad diagnostic coverage after a failed
+targeted gate, without weakening release requirements. The handoff now records
+that override and the existing USD 0.80 compute cap.
+
+Current blocker: credential-presence checks in both sandbox and approved host
+processes found `HF_TOKEN`, `OPENROUTER_API_KEY`, and `SEOULDOC_EVAL_AUTH_TOKEN`
+absent. No .env file was read in this unit. The current process-only credential
+rule requires these variables to be injected before authenticated inspection,
+deployment, model selection, uploads, or evaluation can proceed. No live calls,
+new charges, deployment, or remote checkpoint upload occurred. The pipeline and
+the 42-case evaluation remain unfinished. Next action: inject the three
+credentials into the agent process environment, then inspect existing resources
+and complete service integration before using the bounded GPU window.

@@ -68,6 +68,11 @@ RETRIEVAL_DEBUG_LIMIT = _bounded_positive_int_env(
 
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
 RERANKER_URL = os.getenv("RERANKER_URL", "").strip().rstrip("/")
+RERANKER_EXPIRES_AT = os.getenv("RERANKER_EXPIRES_AT", "").strip()
+BGE_M3_RETRIEVER_EXPIRES_AT = os.getenv("BGE_M3_RETRIEVER_EXPIRES_AT", "").strip()
+BGE_M3_MODEL_REVISION = os.getenv(
+    "BGE_M3_MODEL_REVISION", "5617a9f61b028005a4858fdac845db406aefb181"
+).strip()
 RERANKER_API_TOKEN = os.getenv("RERANKER_API_TOKEN", HF_TOKEN).strip()
 RERANKER_TIMEOUT_SECONDS = _bounded_positive_float_env(
     "RERANKER_TIMEOUT_SECONDS", 20.0, 120.0

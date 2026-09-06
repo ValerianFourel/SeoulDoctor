@@ -10,6 +10,7 @@ from typing import Protocol, Sequence
 import requests
 
 from search.indexes.repository import EvidenceHit
+from search.service_lease import lease_allows_request, parse_service_expiry
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class RemoteEvidenceReranker:
         timeout_seconds: float = 20.0,
         max_candidates: int = 256,
         session: _PostSession | None = None,
+        expires_at: str = "",
     ) -> None:
         normalized_url = base_url.strip().rstrip("/")
         if not normalized_url:
@@ -53,6 +55,7 @@ class RemoteEvidenceReranker:
         self._timeout_seconds = timeout_seconds
         self._max_candidates = max_candidates
         self._session = session or requests.Session()
+        self._expires_at = parse_service_expiry(expires_at)
 
     def rerank(
         self,
@@ -62,6 +65,8 @@ class RemoteEvidenceReranker:
         original = tuple(hits)
         if not original:
             return RerankOutcome(original, False, "no_candidates")
+        if not lease_allows_request(self._expires_at, self._timeout_seconds):
+            return RerankOutcome(original, False, "service_expired")
         if not query.strip():
             return RerankOutcome(original, False, "empty_query")
 

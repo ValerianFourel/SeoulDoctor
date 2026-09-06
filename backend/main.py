@@ -166,6 +166,8 @@ from evidence_response import finalize_evidence_response
 from raw_review_store import ensure_raw_review_parquet
 from config import (
     BGE_M3_RETRIEVER_API_TOKEN,
+    BGE_M3_RETRIEVER_EXPIRES_AT,
+    BGE_M3_MODEL_REVISION,
     BGE_M3_RETRIEVER_RELEASE_ID,
     BGE_M3_RETRIEVER_TIMEOUT_SECONDS,
     BGE_M3_RETRIEVER_URL,
@@ -178,6 +180,7 @@ from config import (
     LLM_PROVIDER,
     RETRIEVAL_DEBUG_LIMIT,
     RERANKER_API_TOKEN,
+    RERANKER_EXPIRES_AT,
     RERANKER_MAX_CANDIDATES,
     RERANKER_TIMEOUT_SECONDS,
     RERANKER_URL,
@@ -283,6 +286,7 @@ evidence_reranker = (
         token=RERANKER_API_TOKEN,
         timeout_seconds=RERANKER_TIMEOUT_SECONDS,
         max_candidates=RERANKER_MAX_CANDIDATES,
+        expires_at=RERANKER_EXPIRES_AT,
     )
     if RERANKER_URL
     else None
@@ -293,6 +297,8 @@ semantic_evidence_source = (
         token=BGE_M3_RETRIEVER_API_TOKEN,
         release_id=BGE_M3_RETRIEVER_RELEASE_ID,
         timeout_seconds=BGE_M3_RETRIEVER_TIMEOUT_SECONDS,
+        expires_at=BGE_M3_RETRIEVER_EXPIRES_AT,
+        model_revision=BGE_M3_MODEL_REVISION,
     )
     if BGE_M3_RETRIEVER_URL
     else None

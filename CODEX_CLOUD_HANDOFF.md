@@ -100,6 +100,33 @@ The setup script restores the latest private checkpoint Dataset into
 
 ## Run protocol
 
+### Current diagnostic authorization, 2026-09-06
+
+The user explicitly permits continuing through a failed targeted check to
+collect diagnostic coverage of all 20 core, 10 stress, and 12 frozen holdout
+cases. This overrides the stop-on-targeted-failure launch rule below for
+diagnostic runs only. Record the failed gate, preserve sealed messages and
+thresholds, and never label an incomplete or failed run as passed. Adaptive
+patient conversations remain a separate mode. Use new run IDs, separate
+checkpoint ownership, and identify the deployment revision for every result.
+
+The two replacement temporary GPU jobs retain the USD 0.80 combined cap.
+Inspect existing resources first. Use at most 55 minutes per job to leave
+headroom for exposed-port charges. This is not authorization for persistent
+hardware or storage.
+
+Configure `BGE_M3_RETRIEVER_EXPIRES_AT` and `RERANKER_EXPIRES_AT` on the backend
+with timezone-aware ISO-8601 deadlines no later than the respective job
+deadlines. The clients reject requests when their timeout plus 30 seconds
+would reach expiry. Empty values are reserved for endpoints without temporary
+leases; omitting them on temporary endpoints does not provide lifecycle
+protection. These checks do not cancel jobs or stop billing: job-level
+timeouts remain mandatory. `BGE_M3_MODEL_REVISION` defaults to the audited
+`5617a9f61b028005a4858fdac845db406aefb181` and must match remote results.
+
+Credentials must be present in the agent's approved process environment.
+Do not print their values or include them in checkpoints.
+
 From the repository root, verify the checkout and app health first:
 
 ```bash
