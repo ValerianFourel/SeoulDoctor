@@ -118,4 +118,3 @@ they remain unchanged and are not reported as passing live evaluations.
 Next action: inspect a bounded live Qwen translation of selected comments for
 faithfulness, then verify the actual API and cards on the assessment deployment
 through a separately authorized deployment workflow.
-

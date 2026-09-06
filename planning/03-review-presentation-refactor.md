@@ -85,4 +85,3 @@ The existing uncommitted feature changes remain uncommitted. No PR, merge,
 push, deployment, or hardware change occurred in this pass. No live Qwen or
 BGE-M3 result is implied. The remaining next action is the bounded live
 translation-faithfulness check described in Note 2.
-

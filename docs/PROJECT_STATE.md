@@ -767,3 +767,13 @@ Remaining limits: bounded first-100 source sampling, preference-dependent recall
 live translation faithfulness, and deployment of the combined uncommitted draft.
 Next action: review/commit that draft and sync its exact revision to the ncs Space,
 then verify a specialty/location request. See planning/05-original-comment-visibility.md.
+
+## Seven-case mini retrieval evaluation, 2026-09-07
+
+Owner: root, branch ncs, source commit ea515261e6e415797ca18c1426e97e2b3e1ab48a.
+User authorizes a seven-case retrieval-only evaluation with a 60-second measured
+deadline and at most four simultaneous requests. Owns scripts/mini_retrieval_eval.py,
+backend/mini_retrieval.py, the protected Space entrypoint wiring, related tests,
+and planning/06-mini-retrieval-eval.md. Expected IDs and source quotations stay
+in ignored private fixtures, never in endpoint inputs. No generation, translation,
+judge, browser automation, corpus rebuild, or new paid hardware in this task.

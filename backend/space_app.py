@@ -14,6 +14,9 @@ from fastapi.staticfiles import StaticFiles
 import requests
 
 from main import app, root_status
+from mini_retrieval import router as mini_retrieval_router
+
+app.include_router(mini_retrieval_router)
 
 
 frontend_directory = Path(
