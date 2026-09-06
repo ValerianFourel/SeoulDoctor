@@ -39,13 +39,14 @@ export default function ReviewEvidence({ reviews, language }: {
   const [expanded, setExpanded] = useState(true);
   const [page, setPage] = useState(0);
   const contentId = useId();
-  const visible = reviews.filter(review => {
-    if (!review.is_verbatim || !LETTER.test(review.text.replace(/[\u1100-\u11ff\u3130-\u318f]/g, ""))) return false;
+  const visible = reviews.flatMap(review => {
+    if (!review.is_verbatim || !LETTER.test(review.text.replace(/[\u1100-\u11ff\u3130-\u318f]/g, ""))) return [];
     const presentation = review.presentation;
-    if (presentation?.status === "translated" && presentation.language === language && presentation.text.trim()) {
-      return !isShortEnglish(presentation.text, presentation.language);
-    }
-    return !isShortEnglish(review.text, review.language);
+    const translatedText = presentation?.status === "translated"
+      && presentation.language === language && presentation.text.trim().length > 0
+      ? presentation.text : undefined;
+    if (isShortEnglish(translatedText ?? review.text, translatedText ? language : review.language)) return [];
+    return [{ review, translatedText }];
   });
 
   const lastPage = Math.max(0, Math.ceil((visible.length - FIRST_PAGE_SIZE) / NEXT_PAGE_SIZE));
@@ -76,15 +77,12 @@ export default function ReviewEvidence({ reviews, language }: {
           </p>
         ) : (
           <div className="space-y-3">
-            {pageReviews.map((review, index) => {
-              const presentation = review.presentation;
-              const translated = presentation?.status === "translated"
-                && presentation.language === language && presentation.text.trim().length > 0;
-              const unavailable = presentation?.status === "unavailable";
+            {pageReviews.map(({ review, translatedText }, index) => {
+              const unavailable = review.presentation?.status === "unavailable";
               return (
                 <article key={review.evidence_id ?? index} className="rounded-md bg-white p-3 text-sm text-slate-700">
                   <p className="mb-1 text-xs text-slate-500">
-                    {translated
+                    {translatedText
                       ? (korean ? "자동 번역 · 원문 확인 가능" : "Automatic translation · original available")
                       : unavailable
                         ? (korean ? "번역을 제공할 수 없어 원문을 표시합니다." : "Translation unavailable. Showing the original.")
@@ -92,9 +90,9 @@ export default function ReviewEvidence({ reviews, language }: {
                     {review.visit_date ? ` · ${review.visit_date}` : ""}
                   </p>
                   <blockquote className="whitespace-pre-wrap break-words text-slate-900">
-                    {translated ? presentation.text : review.text}
+                    {translatedText ?? review.text}
                   </blockquote>
-                  {translated && (
+                  {translatedText && (
                     <details className="mt-2">
                       <summary className="cursor-pointer text-blue-700">
                         {korean ? "원문 보기" : "Show original"}
