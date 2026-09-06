@@ -1,8 +1,9 @@
-"""Run the progressive bilingual search ladder against a deployed Render API."""
+"""Run the progressive bilingual search ladder against a SeoulDoc API."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import json
 from pathlib import Path
 import sys
@@ -11,7 +12,9 @@ import time
 import requests
 
 
-DEFAULT_ENDPOINT = "https://seouldoctor.onrender.com/chat"
+DEFAULT_ENDPOINT = os.getenv(
+    "SEOULDOC_EVAL_ENDPOINT", "http://127.0.0.1:7860/chat"
+)
 CASES_PATH = Path(__file__).with_name("agentic_search_stress_cases.json")
 
 
@@ -97,6 +100,11 @@ def main() -> int:
     parser.add_argument("--minimum-level", type=int, default=1)
     parser.add_argument("--maximum-level", type=int, default=10)
     parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument(
+        "--auth-token",
+        default=os.getenv("SEOULDOC_EVAL_AUTH_TOKEN"),
+        help="Bearer token for the private application; defaults to SEOULDOC_EVAL_AUTH_TOKEN.",
+    )
     args = parser.parse_args()
 
     cases = json.loads(CASES_PATH.read_text())
@@ -105,10 +113,15 @@ def main() -> int:
 
     for case in selected:
         started = time.perf_counter()
+        headers = {"Origin": "https://www.seouldoc.io"}
+        if args.auth_token:
+            if "\r" in args.auth_token or "\n" in args.auth_token:
+                raise SystemExit("--auth-token must not contain line breaks")
+            headers["Authorization"] = f"Bearer {args.auth_token}"
         response = requests.post(
             args.endpoint,
             json={"message": case["query"], "current_state": initial_state()},
-            headers={"Origin": "https://www.seouldoc.io"},
+            headers=headers,
             timeout=args.timeout,
         )
         elapsed = time.perf_counter() - started

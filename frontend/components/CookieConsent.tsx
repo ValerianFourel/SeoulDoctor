@@ -115,7 +115,7 @@ export default function CookieConsent() {
                   personalized ads or content, and analyze our traffic. By
                   clicking &quot;Accept All&quot;, you consent to our use of cookies.{' '}
                   <Link
-                    href="/privacy-policy"
+                    href="/privacy"
                     className="text-blue-600 hover:underline"
                   >
                     Read our Privacy Policy

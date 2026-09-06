@@ -1,8 +1,22 @@
+---
+title: Seoul Doctor Matchmaker
+emoji: 🏥
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Seoul Doctor Matchmaker 🏥
 
 **AI-Powered Medical Facility Search for Seoul, South Korea**
 
+Public, launch-ready documentation is available at [`/docs`](http://localhost:3000/docs) when the frontend is running.
+
 A sophisticated conversational AI system that helps users find the right medical facilities in Seoul based on their specific needs, location, and preferences. The system uses hybrid search (BM25 + Vector embeddings), natural language processing, and intelligent routing to provide highly personalized medical facility recommendations.
+
+Deploy the complete frontend and API as one Docker Space by following [HUGGINGFACE_DEPLOYMENT.md](HUGGINGFACE_DEPLOYMENT.md).
 
 ---
 
@@ -24,7 +38,6 @@ A sophisticated conversational AI system that helps users find the right medical
 - [Development](#development)
 - [Project Structure](#project-structure)
 - [Contributing](#contributing)
-- [License](#license)
 
 ---
 
@@ -36,7 +49,7 @@ Seoul Doctor Matchmaker is an intelligent medical facility search system designe
 
 Foreign residents in Seoul face several challenges:
 - **Language Barrier**: Most medical facilities have limited English-language information
-- **Information Overload**: 40,000+ medical facilities in Seoul with varying specialties
+- **Information Overload**: Thousands of medical facilities in Seoul with varying specialties
 - **Preference Matching**: Hard to find facilities matching specific criteria (parking, insurance, English-speaking staff)
 - **Location Complexity**: Seoul's 25 districts and 424 neighborhoods create geographical challenges
 
@@ -96,21 +109,61 @@ An AI-powered conversational interface that:
 - **Address Verification**: Standardization and validation
 
 #### Distance Filtering
-- **Travel Preferences**: Walking (1km), Short (3km), Moderate (5km), Far (10km), Very Far (15km), Anywhere (25km)
+- **Travel Preferences**: Walking Distance (0.5 km), Nearby (1 km), Close (2 km), Moderate (5 km), Flexible (10 km), Willing to Travel (15 km), and Anywhere in Seoul (25 km)
 - **Adaptive Weighting**: Closer facilities prioritized unless keywords dominate
 - **Emergency Mode**: Distance-only ranking for urgent care
 
 ### 🏥 Medical Data
 
 #### Dataset Coverage
-- **40,000+** medical facilities across Seoul
+- **8,484** unique medical facilities across Seoul
 - **25** administrative districts (구)
-- **424** neighborhoods (동)
+- **320** represented neighborhoods (동)
 - **50+** specialty categories (치과, 피부과, 내과, etc.)
 
 #### Facility Information
 - **Basic**: Name, address, phone, category, business hours
 - **Review Summaries**: AI-generated from Naver reviews (English + Korean)
+- **Raw Reviews**: 1,791,749 searchable, nonempty verbatim comments in an on-demand Parquet snapshot. A script-based scan found 1,735,083 Hangul-without-Latin rows, 5,125 Latin-only English-like rows, 20,427 mixed Hangul-and-Latin rows, and 31,114 other rows. These are script groups, not claims about each review's language.
+
+Reproduce the review counts against the local snapshot:
+
+```bash
+backend/venv/bin/python backend/tests/profile_review_languages.py
+```
+
+Probe the seeded reverse-target case without calling an LLM:
+
+```bash
+backend/venv/bin/python backend/tests/probe_reverse_target.py
+```
+
+Build the immutable Phase 3 indexes without an embedding API call:
+
+```bash
+PYTHONPATH=backend backend/venv/bin/python -m search.indexes.cli publish \
+  --root backend/search_indexes \
+  --version 2026-09-02-v1
+
+PYTHONPATH=backend backend/venv/bin/python -m search.indexes.cli activate \
+  --root backend/search_indexes \
+  --version 2026-09-02-v1
+```
+
+The current release contains 8,484 facility vectors and 2,060,433 evidence
+records. It is immutable, source-hash bound, and loaded read-only. Startup
+reports it in `/health`. Phase 4 now uses it for scoped facility BM25, dense,
+and evidence retrieval with weighted RRF and one bounded retry.
+
+Exercise the live adapter against the local production release without a
+network embedding call:
+
+```bash
+backend/venv/bin/python scripts/smoke_phase4_retrieval.py
+```
+
+See [`backend/search/PHASE4_ARCHITECTURE.md`](backend/search/PHASE4_ARCHITECTURE.md)
+for fusion, retry, fallback, and distance behavior.
 - **Key Highlights**: Top 5 notable features extracted from reviews
 - **Amenities**: Parking, wheelchair access, elevator, etc.
 - **English Support**: Confidence score for English-speaking staff
@@ -162,7 +215,7 @@ An AI-powered conversational interface that:
                   │
 ┌─────────────────▼───────────────────────────────────────────────┐
 │                  EXTRACTION & VALIDATION                        │
-│  - Entity Extraction (LLM: openai/gpt-oss-20b)                 │
+│  - Entity Extraction (LLM: openai/gpt-oss-120b)                 │
 │  - Keyword Validation (fuzzy matching)                         │
 │  - Intent-based Classification (positive vs negative)          │
 │  - Location Verification (Google/Kakao APIs)                   │
@@ -198,7 +251,7 @@ An AI-powered conversational interface that:
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────┐     │
 │  │  BM25 Keyword Search                                 │     │
-│  │  - Tokenized corpus (40k docs)                       │     │
+│  │  - Tokenized corpus (8,484 facility documents)                       │     │
 │  │  - Okapi BM25 algorithm                              │     │
 │  └──────────────────────────────────────────────────────┘     │
 │                                                                 │
@@ -220,7 +273,7 @@ An AI-powered conversational interface that:
 ┌─────────────────▼───────────────────────────────────────────────┐
 │                 RESPONSE GENERATION                             │
 │  - Context Building (top N facilities)                         │
-│  - LLM Generation (openai/gpt-oss-20b)                         │
+│  - LLM Generation (openai/gpt-oss-120b)                         │
 │  - Keyword-First Formatting                                    │
 │  - English/Korean Response                                     │
 └─────────────────────────────────────────────────────────────────┘
@@ -248,7 +301,7 @@ An AI-powered conversational interface that:
 - **ASGI Server**: Uvicorn with uvloop
 
 ### AI/ML
-- **LLM Provider**: Groq (`openai/gpt-oss-20b`)
+- **LLM Provider**: OpenRouter (`openai/gpt-oss-120b`)
   - Entity extraction
   - Intent routing
   - Query classification
@@ -293,8 +346,8 @@ An AI-powered conversational interface that:
 ### Clone Repository
 
 ```bash
-git clone https://github.com/yourusername/seoul-doctor-matchmaker.git
-cd seoul-doctor-matchmaker/backend
+git clone https://github.com/ValerianFourel/SeoulDoctor.git
+cd SeoulDoctor/backend
 ```
 
 ### Create Virtual Environment
@@ -315,27 +368,22 @@ conda activate seoul-med
 pip install -r requirements.txt
 ```
 
-**requirements.txt:**
-```
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-python-dotenv==1.0.0
-groq==0.4.2
-pandas==2.1.3
-numpy==1.26.2
-chromadb==0.4.18
-openai==1.3.7
-huggingface-hub==0.19.4
-rank-bm25==0.2.2
-pydantic==2.5.0
-```
+The tested Python dependency versions are pinned in `backend/requirements.txt`.
 
 ### Environment Variables
 
 Create `.env` file:
 
 ```bash
-# Groq API (LLM)
+# OpenRouter API (LLM)
+OPENROUTER_API_KEY=your_openrouter_api_key
+LLM_PROVIDER=openrouter
+OPENROUTER_CHAT_MODEL=openai/gpt-oss-120b
+OPENROUTER_AGENT_MODEL=openai/gpt-oss-120b
+CHAT_RATE_LIMIT_REQUESTS=12
+CHAT_RATE_LIMIT_WINDOW_SECONDS=60
+
+# Optional Groq fallback
 GROQ_API_KEY=your_groq_api_key
 
 # OpenAI API (Embeddings)
@@ -1083,41 +1131,37 @@ Search:
 ### Active Architecture
 
 ```
-User query + extracted hard terms
+User query + bilingual facets
               │
               ▼
-┌───────────────────────────────────────────────┐
-│ Retrieval planner: openai/gpt-oss-20b         │
-│ Chooses one action per iteration (max 3):     │
-│ dense_general | bm25_specific | hybrid | stop │
-└───────────────┬───────────────────────────────┘
-                │
-       ┌────────┴─────────┐
-       ▼                  ▼
-Dense general index   Specific evidence BM25
-- facility-level      - one summary/highlight/fact
-- semantic meaning    - literal token/phrase matching
-- Chroma embeddings   - exact terms preserved
-       │                  │
-       └────────┬─────────┘
-                ▼
-        Search observations
-                │
-       refine query or finish
-                │
-                ▼
- Reciprocal-rank fusion + distance ranking
-                │
-                ▼
- Answer with evidence; optional short quote from
- an indexed review summary (never labeled verbatim)
+┌──────────────────────────────────────────────────┐
+│ Function-calling agent: openai/gpt-oss-120b      │
+│ 10 tool iterations by default; hard cap of 12    │
+└──────────────┬───────────────────────────────────┘
+               │
+   ┌───────────┼──────────────────┐
+   ▼           ▼                  ▼
+Facility    Indexed evidence   Multilingual comments
+semantic    BM25               DuckDB + Parquet
+search      summaries/facts    1.8M verbatim rows
+   │           │                  │
+   └───────────┴─────────┬────────┘
+                         ▼
+        LLM reads original reviews, selects evidence,
+        and returns faithful translations + reasons
+                         │
+                         ▼
+       RRF/distance ranking + provenance-aware UI
 ```
 
-The loop is bounded to three retrieval iterations. Hard requirements always
-trigger `bm25_specific`, even if the planner initially chooses dense search.
-Retrieved text is treated as untrusted data. The current dataset contains
-generated review summaries and highlights rather than raw patient comments;
-therefore quoted evidence is explicitly labeled as an indexed review summary.
+The OpenRouter model uses real local function calls: `search_facilities`,
+`search_indexed_evidence`, `search_multilingual_comments`,
+`select_comment_evidence`, and `finish_search`. Raw review access is limited
+to facility IDs in the active specialty and location candidate scope. Reviewer names are never sent
+to the model, and every translation remains attached to its original-language
+text, evidence ID, facility, and visit date. Retrieved text is always treated as
+untrusted evidence. Set `ENABLE_RAW_REVIEWS=false` to run in meta-review-only
+mode.
 
 ### Document Indexing
 
@@ -1326,7 +1370,7 @@ def build_context_for_llm(df_subset, n_results=10, language="English"):
 ### Source Data
 
 **Naver Maps Web Scraping:**
-- 40,000+ medical facilities across Seoul
+- 8,484 medical facilities in the current Seoul snapshot
 - Categories: 50+ specialties (치과, 피부과, 내과, etc.)
 - Reviews: Millions of user reviews
 - Metadata: Amenities, hours, contact info, GPS
@@ -1617,7 +1661,7 @@ logger.debug(f"PATH B RESULTS: {len(path_b_results_df)}")
 ### Performance Optimization
 
 **BM25 Index:**
-- Pre-tokenized corpus (40k docs in ~500ms)
+- Pre-tokenized corpus (8,484 facility documents)
 - Search time: ~50-100ms
 
 **Vector Search:**
@@ -1629,7 +1673,7 @@ logger.debug(f"PATH B RESULTS: {len(path_b_results_df)}")
 - Caching: Response memoization for common queries
 
 **LLM Calls:**
-- Groq latency: ~500-1000ms
+- OpenRouter latency depends on the selected model and provider
 - Batching: Process multiple extractions in parallel (future)
 
 ---
@@ -1697,15 +1741,9 @@ Contributions welcome! Please follow these guidelines:
 
 ---
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
 ## 🙏 Acknowledgments
 
-- **Groq**: Fast LLM inference (`openai/gpt-oss-20b`)
+- **OpenRouter**: LLM routing for `openai/gpt-oss-120b`
 - **OpenAI**: High-quality embeddings (text-embedding-3-small)
 - **ChromaDB**: Vector database
 - **Google Maps**: Geocoding services
@@ -1716,9 +1754,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📧 Contact
 
-**Project Maintainer**: [Your Name]
-- Email: your.email@example.com
-- GitHub: [@yourusername](https://github.com/yourusername)
+**Project Maintainer**: [@ValerianFourel](https://github.com/ValerianFourel)
+- Email: seouldoc.io@gmail.com
+- GitHub: [@ValerianFourel](https://github.com/ValerianFourel)
 - Website: https://seouldoc.io
 
 ---
