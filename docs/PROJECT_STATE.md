@@ -810,3 +810,13 @@ translation, browser automation or LLM judging was used in the evaluation.
 Root owns the runner, protected API and planning records. Next action for the
 latest startup brief: measure separate cold-start stages before optimizing;
 retrieval follow-up remains English semantic failures and missing reranking.
+
+## Current-changes planning note, 2026-09-07
+
+Root added planning/08-current-changes.md as the consolidated handoff for branch
+ncs at code/runner checkpoint ce7102fee1f722625a758945313760a5285b1680. This
+update owns that note and this entry only. It distinguishes deployed app source
+b76d29fa from later runner/documentation commits, records the verified incomplete
+seven-case results and private checkpoint, and preserves startup optimization as
+pending work. No new application change, evaluation or deployment ran for this
+note. Next action: measure cold-start stages before implementing note 07.
