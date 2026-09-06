@@ -777,3 +777,15 @@ backend/mini_retrieval.py, the protected Space entrypoint wiring, related tests,
 and planning/06-mini-retrieval-eval.md. Expected IDs and source quotations stay
 in ignored private fixtures, never in endpoint inputs. No generation, translation,
 judge, browser automation, corpus rebuild, or new paid hardware in this task.
+
+## Startup optimization brief, 2026-09-07
+
+Root recorded the user's single-Space startup request in
+planning/07-startup-optimization.md. Current ncs source is
+b76d29fa238a6b62fd90588158e317d7e76940b8; uploaded Space source is
+67a3cf8ab75c6cd45a49dfd4fcf5a342cc49e3c8. The earlier deployment did not become
+active within the bounded wait; this is not a measured application-startup
+bottleneck. Preserve committed comment/translation/header work and private
+seven-case fixtures. Startup changes remain a plan, with no measured improvement.
+Next action: verify the pending evaluator deployment and run its frozen cases,
+then measure separate cold-start stages before implementing the startup brief.
