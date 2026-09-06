@@ -220,15 +220,12 @@ a facility review.
 
 ## Handoff record
 
-- Branch: `coordination/codex-cloud-eval-20260905`
-- Code baseline:
-  `d77ffac10639ef6c4c6f7d796b0a84ae1f84811a`
-- Coordination commit: the exact branch tip reported after push
-- Current owner: local coordination session
-- Next owner: Codex Cloud after it checks out the reported commit and reads the
-  two coordination files
-- Next action: run the synchronization handshake, then inspect live resource
-  status before resuming the targeted gate
+- Branch: `codex/modify-code-and-launch-evaluation`
+- Integration commit: the commit containing this handoff update
+- Current owner: evaluation launch coordinator
+- Next owner: the Codex Cloud session that runs the gated evaluation
+- Next action: run the local gate and the offline preflight, then run only the
+  targeted Yongsan pair
 
 ## Launch preparation update — 2026-09-06
 
