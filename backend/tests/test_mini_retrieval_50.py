@@ -81,3 +81,11 @@ class ReplacementSuiteTests(unittest.TestCase):
         self.assertEqual(row['seconds'],3)
         self.assertIsNone(row['ownership_errors'])
         self.assertIsNone(suite.result_row(case)['seconds'])
+
+    def test_target_selected_under_wrong_clinic_is_ownership_error(self):
+        case=suite.sample_cases([self.pair()],1,['en'])[0]
+        response={'facilities':[{'place_id':'wrong', 'selected':[
+            {'place_id':'wrong','evidence_id':'review-secret'}]}], 'retrieved':[], 'status':'complete'}
+        row=suite.result_row(case,('result',(response,1)))
+        self.assertEqual(row['ownership_errors'],1)
+        self.assertFalse(row['selected_hit'])

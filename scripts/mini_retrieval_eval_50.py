@@ -63,6 +63,10 @@ def result_row(case, outcome=None, started=None, now=None, blocked=None, pending
         if kind == 'result':
             try:
                 rank, review, selected, errors = score(case, response)
+                errors += sum(item['evidence_id'] == case['expected_evidence_id']
+                              and item['place_id'] != case['expected_facility_id']
+                              and item['place_id'] == card['place_id']
+                              for card in response['facilities'] for item in card['selected'])
                 complete = response['status'] == 'complete'
                 row.update(rank=rank, review_hit=review, selected_hit=selected, ownership_errors=errors,
                            complete=complete, service_status={key: response.get(key) for key in
