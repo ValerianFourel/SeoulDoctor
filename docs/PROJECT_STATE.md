@@ -662,3 +662,108 @@ five retriever tests passed, and frontend build passed. The root routing test
 proves HTML, existing API routes, and GPU readiness can coexist. User authorized
 additional app keys; they were privately configured on the existing L4 Space.
 The ncs sync target is now that combined Space only. Live verification pending.
+
+## NCS review presentation ownership
+
+Owner: side-conversation presentation session, on `ncs` at
+`75a2c83bec70982f48cecdb4029823832794d1bf`.
+Owns `backend/evidence_response.py`, new `backend/review_presentation.py`,
+response-language/presentation wiring in `backend/main.py` and `backend/models.py`,
+`frontend/components/ChatInterface.tsx`, new review display component, related
+presentation tests, and `planning/02-review-presentation.md`. Current checkout
+was clean at inspection. Retrieval/ranking and deployment files are outside scope.
+No subagents, live model calls, deployment, or hardware changes are planned.
+
+The user additionally assigns the translation-policy subsection in `AGENTS.md`
+to this session and requires selected-review translation through Qwen-27B
+(`qwen/qwen3.8-27b`), independently of the application response model.
+
+Presentation implementation is locally verified: 233 backend tests passed,
+frontend production build passed, and four synthetic browser cases passed.
+Qwen translation uses `qwen/qwen3.8-27b` through a separate OpenRouter client.
+Original evidence remains in the API; patient cards hide IDs and low-information
+comments and show labeled translations with original toggles. No live Qwen or
+BGE-M3 call ran. Details and limitations are in `planning/02-review-presentation.md`.
+Next action: a bounded live translation-faithfulness check before deployment.
+
+## Review-presentation simplification ownership
+
+The same side-conversation owner continues on ncs at committed HEAD
+`75a2c83bec70982f48cecdb4029823832794d1bf`, preserving the uncommitted formatting
+implementation. This unit owns a narrow cleanup in `backend/review_presentation.py`,
+the unused language import in `backend/main.py`, focused characterization tests,
+and `planning/03-review-presentation-refactor.md`. No signatures, retrieval,
+frontend behavior, model choice, or deployment changes are planned.
+
+The simplification passed 20 focused tests before and after each unit, exact
+before/after comparisons for 360 synthetic presentation cases and 11,172 Hangul
+syllables, full discovery of 235 tests, and the frontend build. Local deslop and
+comment reviews completed without subagents. No behavior change or live call
+was introduced. `planning/03-review-presentation-refactor.md` records the path,
+retained checks, deletions, and limits. The combined work remains uncommitted.
+Next action remains a bounded live Qwen translation-faithfulness check.
+
+## NCS session reentry handoff
+
+Owner: side-conversation handoff session, branch `ncs`, committed HEAD
+`75a2c83bec70982f48cecdb4029823832794d1bf`. This unit owns only
+`planning/resume-ncs.py`, `planning/04-session-reentry.md`, and this appended
+entry. Existing product edits remain uncommitted and untouched. The permanent
+worktree is `/home/valerian/Seoul/SeoulDoc/.worktrees/ncs`.
+
+The user now requests a simple translation API and local checker, superseding
+the Qwen next action above. The local draft uses optional Google NMT translation;
+its latest behavior still needs full verification. The missing-review report
+requires distinguishing empty API evidence from hidden frontend evidence.
+This handoff does not claim a fix or deployment. The latest credential check
+confirmed HF_TOKEN presence but remote metadata calls failed with ConnectionError.
+The user authorizes the terminal launcher to load the three named credentials
+privately into a resumed Codex process. It changes no network or hardware policy.
+Next action: reproduce the specialty/location-only request and inspect original
+review attachment in its API response. See `planning/04-session-reentry.md`.
+
+## Missing original comments investigation, 2026-09-07
+
+Owner: root continuation of the presentation handoff, branch `ncs`, HEAD
+`75a2c83bec70982f48cecdb4029823832794d1bf`, permanent `.worktrees/ncs` checkout.
+Read the state, environments, Cloud handoff, and planning reentry script/notes.
+Preserving all existing uncommitted presentation changes. This sequential fix
+owns `backend/search/live_retrieval.py`, `backend/search/indexes/repository.py`,
+their tests, and `planning/05-original-comment-visibility.md`. No parallel owner
+is running in this session. Scope is original-comment attachment without changing
+facility ranking, embedding artifacts, or preference evidence requirements.
+Live source inspection: ncs Space is RUNNING at
+`d765a828f621d5fb1b9273b960748e63100a8e26`. Its constraint collector matches local
+code, but both new presentation modules are absent remotely. Credentials used
+only from the process environment; Google translation key is absent.
+
+## NCS Donate button, 2026-09-07
+
+Owner: Donate-button side conversation. Branch `ncs`, code HEAD
+`75a2c83bec70982f48cecdb4029823832794d1bf`. Owns only
+`frontend/components/HeaderMenu.tsx` and this appended record. User requested
+a minimal local edit on ncs; preserve concurrent comment work and Git state.
+
+Removed the Donate link markup; menu and brand remain. TypeScript checking
+(`tsc --noEmit --incremental false`) passed in an isolated frontend copy under
+`/tmp`, and the source diff check passed. The isolated production build exited
+1 with a generic webpack error and no detailed diagnostic. No backend tests or
+live checks ran for this header-only edit. No commit, push, deployment, or branch
+switch occurred. Next action: include the header edit in the main thread's next
+verified ncs build and deployment. Main-thread build artifacts were untouched.
+
+Verified local fix: general originals are now attached for searches without
+review requirements, outside ranking and preference-coverage calculations.
+Scope-checked source sampling scans at most 100 records per shortlisted facility
+and displays at most three useful originals, retaining source identity. The
+presentation regex was also corrected for the existing TypeScript target;
+`frontend/components/ReviewEvidence.tsx` is included in this continuation's scope.
+Full backend discovery passed 240 tests; frontend build and six synthetic browser
+cases passed, including Korean originals without translation or presentation
+metadata. The initial attachment regression failed before the fix. No live chat
+or evaluation ran, and no deployment was performed. Prior uncommitted work is
+preserved, with HEAD still `75a2c83bec70982f48cecdb4029823832794d1bf`.
+Remaining limits: bounded first-100 source sampling, preference-dependent recall,
+live translation faithfulness, and deployment of the combined uncommitted draft.
+Next action: review/commit that draft and sync its exact revision to the ncs Space,
+then verify a specialty/location request. See planning/05-original-comment-visibility.md.

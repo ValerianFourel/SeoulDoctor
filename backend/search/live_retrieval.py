@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from query_facets import expand_multilingual_retrieval_terms
+from review_presentation import useful_review
 from search.availability import has_tuesday_evening
 from search.contracts import SearchRules
 from search.evidence_retrieval import (
@@ -233,6 +234,10 @@ class CandidateRetrievalAdapter:
                     attachment_facility_ids=shortlist,
                 )
                 review_source_sha256 = scoped.review_source_sha256
+                general_reviews = (
+                    scoped.list_original_reviews(facility_ids=shortlist, limit_per_facility=100)
+                    if evidence_result.reranker_reason == "no_constraints" else ()
+                )
 
             evidence_hits = tuple(item.hit for item in evidence_result.evidence)
             merged = _Attempt(
@@ -270,6 +275,13 @@ class CandidateRetrievalAdapter:
                 ]
                 for facility_id, groups in evidence_result.by_facility.items()
             }
+            if evidence_result.reranker_reason == "no_constraints":
+                evidence_by_facility.update(_evidence_by_facility([
+                    hit for hit in general_reviews if hit.is_verbatim and useful_review(hit.original_text)
+                ]))
+                for records in evidence_by_facility.values():
+                    for record in records:
+                        record["review_source_sha256"] = review_source_sha256
             evidence_groups_by_facility = {
                 facility_id: {
                     "supporting": [

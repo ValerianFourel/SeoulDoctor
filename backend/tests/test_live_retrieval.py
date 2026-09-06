@@ -135,6 +135,11 @@ class FakeScopedIndex:
     def __exit__(self, *_: object) -> None:
         return None
 
+    def list_original_reviews(self, *, facility_ids, limit_per_facility):
+        return [evidence_hit(facility_id, index + 1, text)
+                for facility_id in facility_ids if facility_id != "charlie"
+                for index, text in enumerate(("123", "😞", "ㅋㅋ", "친절해요", "접수 직원은 불친절했어요 😞"))]
+
     def search_facilities(self, query: str, limit: int = 200) -> list[FacilityHit]:
         self.facility_queries.append(query)
         if self.escape:
@@ -327,6 +332,32 @@ class LiveRetrievalTests(unittest.TestCase):
             exact_terms=("friendly", "친절"),
             target_language="Korean",
         )
+
+    def test_plain_facility_search_attaches_originals_without_ranking_evidence(self):
+        from evidence_response import finalize_evidence_response
+        from models import serialize_results_for_chat
+        scoped = FakeScopedIndex()
+        adapter = CandidateRetrievalAdapter(active_index=FakeIndex(scoped), legacy_pipeline=FakePipeline())
+        result = adapter.rank(scope=self.scope, eligible=self.frame, rules=make_rules(), query=self.query())
+        self.assertEqual(result.telemetry.status, "complete")
+        cards = result.dataframe.to_dict("records")
+        alpha = next(card for card in cards if card["place_id"] == "alpha")
+        self.assertEqual([item["text"] for item in alpha["retrieval_evidence"]],
+                         ["친절해요", "접수 직원은 불친절했어요 😞"])
+        self.assertFalse(alpha["retrieval_evidence_groups"]["supporting"])
+        self.assertTrue(all(item["place_id"] == "alpha" for item in alpha["retrieval_evidence"]))
+        before_order = result.dataframe["place_id"].tolist()
+        from unittest.mock import patch
+        with patch.object(scoped, "list_original_reviews", return_value=[]):
+            empty = adapter.rank(scope=self.scope, eligible=self.frame, rules=make_rules(), query=self.query())
+        self.assertEqual(before_order, empty.dataframe["place_id"].tolist())
+        _, presented = finalize_evidence_response("", cards, {"retrieval_status": "complete"}, "English")
+        public = serialize_results_for_chat(presented, include_debug=False)
+        original = next(card for card in public if card["place_id"] == "alpha")["retrieval_evidence"][0]
+        self.assertEqual(original["text"], "친절해요")
+        self.assertEqual(original["review_source_sha256"], "d" * 64)
+        self.assertEqual(original["presentation"]["status"], "unavailable")
+        self.assertEqual(next(card for card in public if card["place_id"] == "charlie")["retrieval_evidence"], [])
 
     def test_weighted_rrf_is_deterministic_and_keeps_channel_ranks(self) -> None:
         attempt = _Attempt(
