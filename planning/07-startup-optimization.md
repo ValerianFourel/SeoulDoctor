@@ -90,3 +90,12 @@ not part of this task.
 
 Next action: verify the current evaluator deployment and preserve its seven-case
 run; then establish a timestamped cold-start baseline before choosing changes.
+
+### Deployment subsequently verified
+
+The evaluator deployment reached RUNNING with source and runtime both
+67a3cf8ab75c6cd45a49dfd4fcf5a342cc49e3c8 on L4. Website and health passed;
+GPU readiness initially returned 503, then passed the real CUDA probe. This
+confirms website and GPU readiness are separate. No stage durations can be
+inferred from these observations. The seven-case run is preserved in note 06;
+startup baseline measurement can now proceed without interrupting that run.

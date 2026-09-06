@@ -59,11 +59,20 @@ def score(fixture, response):
 def main():
     preparation = time.monotonic()
     fixture_path = Path(os.getenv("MINI_RETRIEVAL_FIXTURES", ROOT / ".audit/mini-retrieval/fixtures.json"))
+    if not fixture_path.exists():
+        url = ("https://huggingface.co/datasets/ValerianFourel/seouldoc-eval-handoff/resolve/"
+               "ef41a2509efd9e58a620b364285ea887e88f6add/"
+               "runs/mini-retrieval-20260906T230140Z/fixtures.json")
+        restored = requests.get(url, headers={"Authorization": "Bearer " + os.environ["HF_TOKEN"]},
+                                timeout=(3, 30))
+        restored.raise_for_status()
+        fixture_path.parent.mkdir(parents=True, exist_ok=True)
+        fixture_path.write_text(json.dumps(restored.json(), ensure_ascii=False, indent=2)+"\n")
     fixtures = json.loads(fixture_path.read_text())
     if len(fixtures) != 7 or sorted(item["language"] for item in fixtures) != ["en"]*3 + ["ko"]*3 + ["mixed"]:
         raise ValueError("Exactly seven fixtures, with 3 English, 3 Korean and 1 mixed query, are required")
     endpoint = os.getenv("MINI_RETRIEVAL_ENDPOINT", "https://valerianfourel-seouldoctor-ncs-retriever.hf.space").rstrip("/")
-    print(f"Fixture preparation: {time.monotonic()-preparation:.3f}s; private fixtures: {fixture_path}", flush=True)
+    print(f"Fixture loading: {time.monotonic()-preparation:.3f}s; private fixtures: {fixture_path}", flush=True)
     warm_started = time.monotonic()
     warm_error = None
     try:
@@ -71,6 +80,11 @@ def main():
             response = client.get(endpoint + "/internal/retrieval/warmup", timeout=(3, 30))
             response.raise_for_status()
             warm = response.json()
+            gpu = client.get(endpoint + "/ready/gpu", timeout=(3, 30))
+            gpu.raise_for_status()
+            warm["gpu"] = gpu.json()
+            if warm["gpu"].get("ready") is not True:
+                raise ValueError("GPU readiness did not pass")
             print("Application limits and services: " + json.dumps(warm), flush=True)
     except (requests.RequestException, ValueError, KeyError) as error:
         warm_error = type(error).__name__
@@ -103,7 +117,7 @@ def main():
     seconds = time.monotonic()-started
     totals = [0, 0, 0, 0]
     rows=[]
-    print("case lang clinic@5 rank review selected ownership seconds status")
+    print("case lang clinic@5 rank review selected ownership_errors seconds status")
     for index, fixture in enumerate(fixtures):
         kind, data = output.get(index, ("error", ("BLOCKED:"+warm_error if warm_error else "TIMEOUT:overall_deadline", seconds)))
         response, elapsed = data
@@ -117,7 +131,7 @@ def main():
                      "service_status": {key:response.get(key) for key in ('semantic_status','reranker_reason','channel_hit_counts')} if kind=='result' else {}})
     print(f"TOTAL facility hits {totals[0]}/7; review hits {totals[1]}/7; selected-comment hits {totals[2]}/7; ownership errors {totals[3]}; total {seconds:.2f}s")
     report=fixture_path.parent / (time.strftime('run-%Y%m%dT%H%M%SZ', time.gmtime())+'.json')
-    report.write_text(json.dumps({"rows":rows,"totals":totals,"execution_seconds":seconds,"warmup_error":warm_error},indent=2)+'\n')
+    report.write_text(json.dumps({"rows":rows,"totals":totals,"execution_seconds":seconds,"warmup_error":warm_error,"warmup":warm if warm_error is None else None},indent=2)+'\n')
     return 0 if all(row['status']=='PASS' for row in rows) else 1
 
 

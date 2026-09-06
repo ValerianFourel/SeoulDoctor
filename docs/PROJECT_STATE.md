@@ -789,3 +789,24 @@ bottleneck. Preserve committed comment/translation/header work and private
 seven-case fixtures. Startup changes remain a plan, with no measured improvement.
 Next action: verify the pending evaluator deployment and run its frozen cases,
 then measure separate cold-start stages before implementing the startup brief.
+
+## Ncs deployment and mini-evaluation verification
+
+Root verified app source b76d29fa238a6b62fd90588158e317d7e76940b8 at live Space
+67a3cf8ab75c6cd45a49dfd4fcf5a342cc49e3c8, RUNNING on existing L4. Website/health
+returned 200, Donate markup is absent, and BGE CUDA readiness passed. No hardware,
+visibility, main or original-Space changes occurred. Startup note is committed
+at 22175d07; optimization itself is not implemented.
+
+Warm seven-case retrieval run: 3/7 clinic hits, 4/7 review hits, 2/7 selected hits,
+zero observed ownership errors, zero timeouts, 14.61 seconds measured execution
+and 1.203 seconds warmup. All cases are incomplete: reranker unconfigured, and
+English semantic requests fail. The earlier 16.93-second diagnostic lacked a GPU
+warmup gate; it is retained separately and the runner is corrected. Both runs and
+seven private labels are checkpointed at seouldoc-eval-handoff revision
+ ef41a2509efd9e58a620b364285ea887e88f6add, runs/mini-retrieval-20260906T230140Z/.
+Backend checks: 243 passed; frontend production build passed. No generation,
+translation, browser automation or LLM judging was used in the evaluation.
+Root owns the runner, protected API and planning records. Next action for the
+latest startup brief: measure separate cold-start stages before optimizing;
+retrieval follow-up remains English semantic failures and missing reranking.
