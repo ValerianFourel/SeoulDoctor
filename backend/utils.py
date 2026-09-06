@@ -9,20 +9,24 @@ from cookies import (
 from prompt import FIELD_CHANGE_DETECTION_PROMPT
 import sys
 import os
+from pathlib import Path
 import json
 from huggingface_hub import hf_hub_download
 from dotenv import load_dotenv
-from groq import Groq
 from location import (
     google_maps_geocode, google_maps_reverse_geocode, google_maps_place_search,
     google_maps_place_details, kakao_geocode, kakao_reverse_geocode,
     verify_and_standardize_address
 )
 from config import DISTANCE_MAPPING, GROQ_CHAT_MODEL
-LOCAL_PARQUET_PATH = "./local_facilities_cache.parquet"
+from llm_client import build_llm_client, request_json_completion
+LOCAL_PARQUET_PATH = os.getenv(
+    "FACILITIES_CACHE_PATH",
+    str(Path(__file__).resolve().parent / "local_facilities_cache.parquet"),
+)
 
 load_dotenv()
-DEFAULT_MAX_DISTANCE = 25.0  # km - default search radius
+DEFAULT_MAX_DISTANCE = 5.0  # km - local search radius when the user omits distance
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -35,7 +39,7 @@ HF_REPO_ID = "ValerianFourel/seoul-medical-facilities"
 HF_FILENAME = "facilities_metareviews_rag_ready.parquet"
 
 
-client = Groq(api_key=GROQ_API_KEY)
+client = build_llm_client()
 
 
 HF_TOKEN = os.getenv("HF_TOKEN") 
@@ -199,7 +203,7 @@ def normalize_seoul_to_null(location: Optional[str]) -> Optional[str]:
     }
     
     if location_normalized in GENERIC_SEOUL_REFS:
-        logger.debug(f"🌆 Normalized '{location}' → None (generic Seoul reference)")
+        logger.debug("Normalized generic Seoul reference to city-wide search")
         return None
     
     return location
@@ -316,15 +320,14 @@ def detect_field_changes(
     detection_messages = [{"role": "system", "content": detection_prompt}]
     
     try:
-        completion = client.chat.completions.create(
+        result, _ = request_json_completion(
+            client,
             model=GROQ_CHAT_MODEL,
             messages=detection_messages,
             temperature=0.0,
-            max_completion_tokens=256,
-            response_format={"type": "json_object"}
+            max_completion_tokens=768,
+            required_keys=("specialty", "location", "distance"),
         )
-        
-        result = json.loads(completion.choices[0].message.content)
         
         privacy_safe_log(consent, "🔍 Field change detection:")
         privacy_safe_log(consent, f"   Specialty: {result.get('specialty', 'keep')}")
@@ -593,7 +596,7 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
     if state.location and not (state.latitude and state.longitude):
         privacy_safe_log(consent, f"📍 Enrichment Case 1: Have location text '{state.location}', need GPS data")
         
-        verified = verify_and_standardize_address(state.location)
+        verified = verify_and_standardize_address(state.location, consent=consent)
         
         if verified:
             if not state.latitude:
@@ -625,7 +628,7 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
             
             privacy_safe_log(consent, f"✅ Filled from address: {', '.join(filled_fields)}")
         else:
-            logger.warning(f"⚠️ Could not geocode '{state.location}' - treating as city-wide")
+            logger.warning("Could not geocode location; treating search as city-wide")
             # Geocoding failed → treat as city-wide to avoid errors
             enriched_state.is_citywide_search = True
             enriched_state.location = None
@@ -645,10 +648,10 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
         
         reverse_result = None
         if GOOGLE_MAPS_API_KEY:
-            reverse_result = google_maps_reverse_geocode(state.latitude, state.longitude)
+            reverse_result = google_maps_reverse_geocode(state.latitude, state.longitude, consent=consent)
         
         if not reverse_result and KAKAO_REST_API_KEY:
-            reverse_result = kakao_reverse_geocode(state.latitude, state.longitude)
+            reverse_result = kakao_reverse_geocode(state.latitude, state.longitude, consent=consent)
         
         if reverse_result:
             if not state.address_korean:
@@ -688,7 +691,7 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
         if state.dong:
             location_query = f"서울 {state.district} {state.dong}"
         
-        verified = verify_and_standardize_address(location_query)
+        verified = verify_and_standardize_address(location_query, consent=consent)
         
         if verified:
             if not state.latitude:
@@ -716,7 +719,7 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
             
             privacy_safe_log(consent, f"✅ Filled from district: {', '.join(filled_fields)}")
         else:
-            logger.warning(f"⚠️ Could not geocode district '{state.district}'")
+            logger.warning("Could not geocode district")
     
     # -------------------------------------------------------------------
     # NO ENRICHMENT NEEDED

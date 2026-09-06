@@ -1,0 +1,1076 @@
+{
+  "schema_version": 3,
+  "manifest": {
+    "repository_commit": "851503c3670230e85cbae302493a9e16aa51eafe",
+    "facility_rows": 8484,
+    "facility_sha256": "fe5c6005019403031e4b7116a28af23df47a424ce020562625dec705b12bc3b4",
+    "review_rows": 1805211,
+    "review_sha256": "0e8c6f4ff09b75becf7821ba08bf8b19b6533b824a26ca4e7c6451277dfbfafa",
+    "facility_snapshot_through": "2026-01-03",
+    "review_snapshot_through": "2026-01-09",
+    "map_verified_on": "2026-09-02",
+    "target_entity": "facility"
+  },
+  "likert_policy": {
+    "weights": {
+      "intent_state": 0.25,
+      "refinement": 0.2,
+      "tool_orchestration": 0.2,
+      "evidence_ranking": 0.2,
+      "geography_transport": 0.1,
+      "language_medical_safety": 0.05
+    },
+    "anchors": {
+      "1": "Contradicts the request, invents support, or is unsafe or unusable.",
+      "2": "Recognizes part of the request but misses a required constraint or offers poorly supported results.",
+      "3": "Produces a usable partial answer with a material omission, weak refinement, or uneven language handling.",
+      "4": "Handles the request and grounds the recommendation with only a minor omission or imprecision.",
+      "5": "Preserves every staged constraint, uses the complete retrieval path, and explains evidence and travel limits precisely in the requested language."
+    },
+    "scenario_pass": {
+      "all_hard_gates": true,
+      "minimum_weighted_mean": 4.0,
+      "minimum_dimension": 3
+    },
+    "pair_pass": {
+      "both_scenarios_pass": true,
+      "maximum_target_rank_difference": 2,
+      "target_hit_at_5": true,
+      "minimum_top_five_jaccard": 0.6
+    },
+    "suite_pass": {
+      "hard_gate_rate": 1.0,
+      "minimum_scenario_pass_rate": 0.9,
+      "minimum_weighted_mean": 4.2,
+      "maximum_language_gap": 0.3,
+      "reverse_target_hit_at_5": 1.0,
+      "minimum_mrr": 0.5
+    },
+    "hard_gates": [
+      "The health preflight proves OpenRouter and GPT OSS 120B for chat and retrieval with matching nonempty indexes.",
+      "Every search turn has a fresh server-owned run ID and an explicit complete termination with sufficient final coverage.",
+      "State updates preserve current constraints and remove superseded constraints and polarity.",
+      "Returned distances match an independent Haversine calculation and strict-radius cases stay inside the requested radius.",
+      "Review-dependent searches use facility semantic, facility BM25, exact indexed evidence, multilingual raw comments, evidence selection, coverage assessment, and finish in valid order.",
+      "Patient-experience claims retain same-facility verbatim evidence IDs and never merge evidence across facilities.",
+      "The response uses the requested language and does not invent facts, diagnose, or prescribe treatment.",
+      "A declared reverse target reaches the required retrieval and presented rank."
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "radius-expand-line8-01-en",
+      "schema_version": 3,
+      "pair_id": "radius-expand-line8-01",
+      "counterpart_id": "radius-expand-line8-01-ko",
+      "source_language": "English",
+      "driver": "natural_actor_with_staged_card",
+      "user_persona": "An English-speaking patient starting at Jamsil Station who changes both travel range and appointment constraints.",
+      "opening_query": "I am at Jamsil Station and need a dentist. On-site parking is mandatory.",
+      "hidden_constraints": [
+        "The first turn omits a distance, so the local-search default must be 5 km.",
+        "The second turn narrows to 500 metres and the third turn expands back to 5 km.",
+        "Parking must be removed rather than retained.",
+        "Tuesday evening hours become mandatory; careful care and detailed explanations are review preferences; long waits are negative."
+      ],
+      "expected_retrieval_behaviors": [
+        "Use semantic and facility BM25 retrieval, indexed evidence for literal hours, and bilingual raw-review search.",
+        "Invalidate prior coverage after the refinement and reassess before finishing."
+      ],
+      "success_criteria": [
+        "The final state has 치과 and a 5 km radius, without parking as an active constraint.",
+        "All returned facilities are within 5.01 km unless relaxation is explicitly disclosed.",
+        "The retrieval trace covers exact hours and positive and negative review concepts."
+      ],
+      "public_patient_card": {
+        "persona": "You are at Jamsil Station and need dental care.",
+        "opening_message": "I am at Jamsil Station and need a dentist. On-site parking is mandatory.",
+        "staged_requests": [
+          "Narrow the radius to 500 metres and keep parking mandatory.",
+          "Expand the radius to 5 km. Parking is no longer required; Tuesday evening hours are now mandatory. Prefer actual patient comments saying the care is careful and the explanation is detailed. Avoid long waits."
+        ],
+        "stop_condition": "Stop when the changed constraints are reflected in a grounded shortlist or the app clearly explains which evidence is missing."
+      },
+      "oracle": {
+        "visibility": "grader_only",
+        "origin": {
+          "label": "Jamsil Station",
+          "latitude": 37.51331105877401,
+          "longitude": 127.10023101886318
+        },
+        "maximum_distance_km": 5.0,
+        "turn_radius_expectations_km": [
+          5.0,
+          0.5,
+          5.0
+        ],
+        "implicit_default_radius_turns": [
+          1
+        ],
+        "strict_radius": true,
+        "expected_specialty": "치과",
+        "required_trace_actions": [
+          "search_facilities",
+          "search_indexed_evidence",
+          "search_multilingual_comments",
+          "select_comment_evidence",
+          "assess_search_coverage",
+          "finish_search"
+        ],
+        "required_methods": [
+          "facility_semantic",
+          "facility_bm25",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
+          "multilingual_comment_search"
+        ],
+        "removed_terms": [
+          "parking",
+          "주차"
+        ],
+        "positive_terms": [
+          "Tuesday evening",
+          "화요일 야간",
+          "careful",
+          "꼼꼼",
+          "detailed explanation",
+          "자세한 설명"
+        ],
+        "negative_terms": [
+          "long wait",
+          "대기"
+        ],
+        "reference_facility": {
+          "place_id": "1329902415",
+          "latitude": 37.486359566,
+          "longitude": 127.1230872895
+        },
+        "transit_annotation": {
+          "from": "Jamsil Station",
+          "to": "Munjeong Station",
+          "rail_distance_m": 3800,
+          "duration_s": 430,
+          "transfers": 0,
+          "source": "Seoul official shortest-path API",
+          "observed_on": "2026-09-02"
+        },
+        "expected_turn_count": 3,
+        "expected_response_languages": [
+          "English",
+          "English",
+          "English"
+        ],
+        "required_comment_query_scripts": [
+          "Hangul",
+          "Latin"
+        ]
+      },
+      "privacy": {
+        "synthetic_location": true,
+        "allow_reviewer_identity": false
+      }
+    },
+    {
+      "id": "radius-expand-line8-01-ko",
+      "schema_version": 3,
+      "pair_id": "radius-expand-line8-01",
+      "counterpart_id": "radius-expand-line8-01-en",
+      "source_language": "Korean",
+      "driver": "natural_actor_with_staged_card",
+      "user_persona": "잠실역에서 시작해 이동 반경과 예약 조건을 바꾸는 한국어 사용자.",
+      "opening_query": "잠실역에서 치과를 찾고 있어요. 건물 내 주차는 필수예요.",
+      "hidden_constraints": [
+        "첫 요청은 거리를 생략하므로 지역 검색 기본값 5km를 적용해야 한다.",
+        "두 번째 요청은 500미터로 좁히고 세 번째 요청은 다시 5km로 넓힌다.",
+        "주차 조건은 유지하지 않고 제거한다.",
+        "화요일 야간 진료는 필수, 꼼꼼한 진료와 자세한 설명은 후기 선호, 긴 대기는 회피 조건이다."
+      ],
+      "expected_retrieval_behaviors": [
+        "의미 검색과 시설 BM25, 진료 시간 리터럴 근거, 한영 원문 후기 검색을 모두 사용한다.",
+        "조건 변경 뒤 이전 충족도 판단을 무효화하고 다시 평가한 후 종료한다."
+      ],
+      "success_criteria": [
+        "최종 상태는 치과와 5km 반경을 유지하고 주차는 활성 조건에서 제거한다.",
+        "명시적 완화 고지가 없으면 모든 결과가 5.01km 이내다.",
+        "검색 추적은 진료 시간과 긍정 및 부정 후기 조건을 모두 다룬다."
+      ],
+      "public_patient_card": {
+        "persona": "잠실역에서 치과 진료가 필요한 환자입니다.",
+        "opening_message": "잠실역에서 치과를 찾고 있어요. 건물 내 주차는 필수예요.",
+        "staged_requests": [
+          "반경을 500미터로 좁히고 주차 필수 조건은 유지해 주세요.",
+          "반경을 5km로 넓혀 주세요. 주차는 더 이상 필요 없고 화요일 야간 진료는 필수예요. 실제 환자 후기에서 진료가 꼼꼼하고 설명이 자세하다고 한 곳을 선호해요. 대기가 길다는 곳은 피하고 싶어요."
+        ],
+        "stop_condition": "바뀐 조건이 근거 있는 후보 목록에 반영되거나, 찾지 못한 근거를 앱이 정확히 밝히면 종료합니다."
+      },
+      "oracle": {
+        "visibility": "grader_only",
+        "origin": {
+          "label": "잠실역",
+          "latitude": 37.51331105877401,
+          "longitude": 127.10023101886318
+        },
+        "maximum_distance_km": 5.0,
+        "turn_radius_expectations_km": [
+          5.0,
+          0.5,
+          5.0
+        ],
+        "implicit_default_radius_turns": [
+          1
+        ],
+        "strict_radius": true,
+        "expected_specialty": "치과",
+        "required_trace_actions": [
+          "search_facilities",
+          "search_indexed_evidence",
+          "search_multilingual_comments",
+          "select_comment_evidence",
+          "assess_search_coverage",
+          "finish_search"
+        ],
+        "required_methods": [
+          "facility_semantic",
+          "facility_bm25",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
+          "multilingual_comment_search"
+        ],
+        "removed_terms": [
+          "parking",
+          "주차"
+        ],
+        "positive_terms": [
+          "Tuesday evening",
+          "화요일 야간",
+          "careful",
+          "꼼꼼",
+          "detailed explanation",
+          "자세한 설명"
+        ],
+        "negative_terms": [
+          "long wait",
+          "대기"
+        ],
+        "reference_facility": {
+          "place_id": "1329902415",
+          "latitude": 37.486359566,
+          "longitude": 127.1230872895
+        },
+        "transit_annotation": {
+          "from": "잠실역",
+          "to": "문정역",
+          "rail_distance_m": 3800,
+          "duration_s": 430,
+          "transfers": 0,
+          "source": "Seoul official shortest-path API",
+          "observed_on": "2026-09-02"
+        },
+        "expected_turn_count": 3,
+        "expected_response_languages": [
+          "Korean",
+          "Korean",
+          "Korean"
+        ],
+        "required_comment_query_scripts": [
+          "Hangul",
+          "Latin"
+        ]
+      },
+      "privacy": {
+        "synthetic_location": true,
+        "allow_reviewer_identity": false
+      }
+    },
+    {
+      "id": "reverse-mapoderm-02-en",
+      "schema_version": 3,
+      "pair_id": "reverse-mapoderm-02",
+      "counterpart_id": "reverse-mapoderm-02-ko",
+      "source_language": "English",
+      "driver": "natural_actor_with_staged_card",
+      "user_persona": "An English-speaking patient near Daeheung Station looking for dermatology care using actual patient experience.",
+      "opening_query": "I am at Daeheung Station. Find a dermatologist within 2 km for cheilitis, using actual patient comments.",
+      "hidden_constraints": [
+        "Detailed explanations and fast treatment require verbatim-review evidence.",
+        "Long waits are acceptable and must not become a negative constraint.",
+        "Aggressive upselling is a negative constraint."
+      ],
+      "expected_retrieval_behaviors": [
+        "Run semantic, facility BM25, exact indexed-evidence, and multilingual comment retrieval.",
+        "Select same-facility verbatim evidence, assess every constraint, and finish only after sufficient coverage."
+      ],
+      "success_criteria": [
+        "The hidden target is in both retrieval and presented top five.",
+        "The first sealed evidence ID is attached to the target.",
+        "The state preserves cheilitis and upselling polarity while excluding long wait from negative terms."
+      ],
+      "public_patient_card": {
+        "persona": "You are near Daeheung Station and need a dermatologist for cheilitis.",
+        "opening_message": "I am at Daeheung Station. Find a dermatologist within 2 km for cheilitis, using actual patient comments.",
+        "staged_requests": [
+          "Require comments that literally support detailed explanations and fast treatment. A long wait is acceptable, so do not treat it as an exclusion. Avoid aggressive upselling."
+        ],
+        "stop_condition": "Stop after a grounded shortlist reflects every refinement, or after the app states exactly what it could not verify."
+      },
+      "oracle": {
+        "visibility": "grader_only",
+        "origin": {
+          "label": "Daeheung Station",
+          "latitude": 37.5476479056751,
+          "longitude": 126.942473188734
+        },
+        "maximum_distance_km": 2.0,
+        "strict_radius": true,
+        "expected_specialty": "피부과",
+        "required_trace_actions": [
+          "search_facilities",
+          "search_indexed_evidence",
+          "search_multilingual_comments",
+          "select_comment_evidence",
+          "assess_search_coverage",
+          "finish_search"
+        ],
+        "required_methods": [
+          "facility_semantic",
+          "facility_bm25",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
+          "multilingual_comment_search"
+        ],
+        "required_trace_actions_each_turn": true,
+        "positive_terms": [
+          "cheilitis",
+          "구순염",
+          "detailed explanation",
+          "자세한 설명",
+          "fast treatment",
+          "빠른 진료"
+        ],
+        "negative_terms": [
+          "aggressive upselling",
+          "과도한 시술 권유"
+        ],
+        "excluded_negative_terms": [
+          "long wait",
+          "긴 대기"
+        ],
+        "reverse_target": {
+          "seed": "reverse-target-v1|mapo-derm",
+          "place_id": "19521641",
+          "name": "이지함피부과의원",
+          "latitude": 37.5563578579,
+          "longitude": 126.9443618308,
+          "retrieval_rank_lte": 5,
+          "presented_rank_lte": 5,
+          "evidence_requirements": {
+            "decisive": [
+              {
+                "evidence_id": "review:325180cb5153b903bfa2",
+                "supports": [
+                  "cheilitis care",
+                  "detailed explanation",
+                  "fast treatment"
+                ]
+              }
+            ],
+            "contextual": [
+              {
+                "evidence_id": "review:f489ced242bd47e5a12d",
+                "supports": [
+                  "detailed explanation",
+                  "long-wait context"
+                ]
+              },
+              {
+                "evidence_id": "review:01a30b8affcce494ccd4",
+                "supports": [
+                  "long-wait context",
+                  "friendliness context"
+                ]
+              }
+            ]
+          }
+        },
+        "expected_turn_count": 2,
+        "expected_response_languages": [
+          "English",
+          "English"
+        ],
+        "required_comment_query_scripts": [
+          "Hangul",
+          "Latin"
+        ],
+        "transit_observation": {
+          "artifact": "fixtures/20260902-mapoderm-transit.json",
+          "provider": "kakao",
+          "observed_on": "2026-09-02",
+          "request_sha256": "87075dda11501a845a092f716cd71c903c76eec4acbd3857972d4bebb5d24d59",
+          "response_sha256": "74faeb601382778dc3d91396946daef5eb9c570e32f06936070b3a583565152d"
+        }
+      },
+      "privacy": {
+        "synthetic_location": true,
+        "allow_reviewer_identity": false
+      }
+    },
+    {
+      "id": "reverse-mapoderm-02-ko",
+      "schema_version": 3,
+      "pair_id": "reverse-mapoderm-02",
+      "counterpart_id": "reverse-mapoderm-02-en",
+      "source_language": "Korean",
+      "driver": "natural_actor_with_staged_card",
+      "user_persona": "대흥역 근처에서 실제 환자 경험을 근거로 피부과를 찾는 한국어 환자.",
+      "opening_query": "대흥역에서 2km 이내에 구순염을 진료하는 피부과를 실제 환자 후기를 근거로 찾아 주세요.",
+      "hidden_constraints": [
+        "자세한 설명과 빠른 진료는 원문 후기 근거가 필요하다.",
+        "긴 대기는 허용하므로 부정 조건이 되면 안 된다.",
+        "과도한 시술 권유는 회피 조건이다."
+      ],
+      "expected_retrieval_behaviors": [
+        "의미 검색, 시설 BM25, 리터럴 색인 근거, 한영 원문 후기 검색을 실행한다.",
+        "같은 시설의 원문 근거를 선택하고 모든 조건을 평가한 뒤 충분할 때만 종료한다."
+      ],
+      "success_criteria": [
+        "숨겨진 대상이 검색 및 제시 순위 모두 5위 이내다.",
+        "첫 번째 봉인 근거 ID가 대상 시설에 연결된다.",
+        "구순염과 과도한 권유의 극성을 유지하고 긴 대기는 부정 조건에서 제외한다."
+      ],
+      "public_patient_card": {
+        "persona": "대흥역 근처에서 구순염 진료가 필요한 환자입니다.",
+        "opening_message": "대흥역에서 2km 이내에 구순염을 진료하는 피부과를 실제 환자 후기를 근거로 찾아 주세요.",
+        "staged_requests": [
+          "자세한 설명과 빠른 진료를 실제로 뒷받침하는 후기여야 해요. 대기가 긴 것은 괜찮으니 제외 조건으로 두지 말고, 과도한 시술 권유는 피하고 싶어요."
+        ],
+        "stop_condition": "모든 변경 조건이 근거 있는 후보에 반영되거나 앱이 확인하지 못한 근거를 정확히 말하면 종료합니다."
+      },
+      "oracle": {
+        "visibility": "grader_only",
+        "origin": {
+          "label": "대흥역",
+          "latitude": 37.5476479056751,
+          "longitude": 126.942473188734
+        },
+        "maximum_distance_km": 2.0,
+        "strict_radius": true,
+        "expected_specialty": "피부과",
+        "required_trace_actions": [
+          "search_facilities",
+          "search_indexed_evidence",
+          "search_multilingual_comments",
+          "select_comment_evidence",
+          "assess_search_coverage",
+          "finish_search"
+        ],
+        "required_methods": [
+          "facility_semantic",
+          "facility_bm25",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
+          "multilingual_comment_search"
+        ],
+        "required_trace_actions_each_turn": true,
+        "positive_terms": [
+          "cheilitis",
+          "구순염",
+          "detailed explanation",
+          "자세한 설명",
+          "fast treatment",
+          "빠른 진료"
+        ],
+        "negative_terms": [
+          "aggressive upselling",
+          "과도한 시술 권유"
+        ],
+        "excluded_negative_terms": [
+          "long wait",
+          "긴 대기"
+        ],
+        "reverse_target": {
+          "seed": "reverse-target-v1|mapo-derm",
+          "place_id": "19521641",
+          "name": "이지함피부과의원",
+          "latitude": 37.5563578579,
+          "longitude": 126.9443618308,
+          "retrieval_rank_lte": 5,
+          "presented_rank_lte": 5,
+          "evidence_requirements": {
+            "decisive": [
+              {
+                "evidence_id": "review:325180cb5153b903bfa2",
+                "supports": [
+                  "cheilitis care",
+                  "detailed explanation",
+                  "fast treatment"
+                ]
+              }
+            ],
+            "contextual": [
+              {
+                "evidence_id": "review:f489ced242bd47e5a12d",
+                "supports": [
+                  "detailed explanation",
+                  "long-wait context"
+                ]
+              },
+              {
+                "evidence_id": "review:01a30b8affcce494ccd4",
+                "supports": [
+                  "long-wait context",
+                  "friendliness context"
+                ]
+              }
+            ]
+          }
+        },
+        "expected_turn_count": 2,
+        "expected_response_languages": [
+          "Korean",
+          "Korean"
+        ],
+        "required_comment_query_scripts": [
+          "Hangul",
+          "Latin"
+        ],
+        "transit_observation": {
+          "artifact": "fixtures/20260902-mapoderm-transit.json",
+          "provider": "kakao",
+          "observed_on": "2026-09-02",
+          "request_sha256": "87075dda11501a845a092f716cd71c903c76eec4acbd3857972d4bebb5d24d59",
+          "response_sha256": "74faeb601382778dc3d91396946daef5eb9c570e32f06936070b3a583565152d"
+        }
+      },
+      "privacy": {
+        "synthetic_location": true,
+        "allow_reviewer_identity": false
+      }
+    },
+    {
+      "id": "reverse-yongsan-peds-03-en",
+      "schema_version": 3,
+      "pair_id": "reverse-yongsan-peds-03",
+      "counterpart_id": "reverse-yongsan-peds-03-ko",
+      "source_language": "English",
+      "driver": "natural_actor_with_staged_card",
+      "user_persona": "A parent who progressively narrows a citywide pediatric search to Ichon.",
+      "opening_query": "Across Seoul, find a pediatric clinic with actual comments supporting no overprescribing and clear explanations.",
+      "hidden_constraints": [
+        "Turn two narrows to 1 km from Ichon Station, prefers no wait, and prohibits parking claims.",
+        "Turn three removes no wait, adds kind treatment of children, and adds unfriendly nurses as a negative."
+      ],
+      "expected_retrieval_behaviors": [
+        "Preserve citywide distance omission on turn one, then calculate distances after the Ichon refinement.",
+        "Re-run multilingual evidence retrieval after each changed review preference."
+      ],
+      "success_criteria": [
+        "The hidden target reaches top five after location narrowing.",
+        "No-wait evidence is removed on the final turn while child-kindness and the nurse negative remain."
+      ],
+      "public_patient_card": {
+        "persona": "You are a parent looking for a pediatric clinic.",
+        "opening_message": "Across Seoul, find a pediatric clinic with actual comments supporting no overprescribing and clear explanations.",
+        "staged_requests": [
+          "Use Ichon Station as my location and narrow this to 1 km. Prefer comments saying there was no wait, and do not claim parking is convenient.",
+          "Keep the specialty and location, but no-wait is no longer important. Instead require comments about kind treatment of children, and avoid comments about unfriendly nurses."
+        ],
+        "stop_condition": "Stop after the final replacement is reflected in a grounded shortlist."
+      },
+      "oracle": {
+        "visibility": "grader_only",
+        "origin": {
+          "label": "Ichon Station",
+          "latitude": 37.52241291408466,
+          "longitude": 126.97354382085399
+        },
+        "maximum_distance_km": 1.0,
+        "strict_radius": true,
+        "expected_specialty": "소아청소년과",
+        "required_trace_actions": [
+          "search_facilities",
+          "search_indexed_evidence",
+          "search_multilingual_comments",
+          "select_comment_evidence",
+          "assess_search_coverage",
+          "finish_search"
+        ],
+        "required_methods": [
+          "facility_semantic",
+          "facility_bm25",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
+          "multilingual_comment_search"
+        ],
+        "required_trace_actions_each_turn": true,
+        "positive_terms": [
+          "no overprescribing",
+          "clear explanations",
+          "kind pediatric care"
+        ],
+        "removed_terms": [
+          "no wait",
+          "대기 없음"
+        ],
+        "negative_terms": [
+          "unfriendly nurses",
+          "불친절한 간호사"
+        ],
+        "reverse_target": {
+          "seed": "reverse-target-v1|yongsan-peds",
+          "place_id": "35475921",
+          "name": "우리동네소아청소년과의원",
+          "latitude": 37.520145786,
+          "longitude": 126.9718771192,
+          "retrieval_rank_lte": 5,
+          "presented_rank_lte": 5,
+          "evidence_requirements": {
+            "decisive": [
+              {
+                "evidence_id": "review:0fca6e1982b0a016e01c",
+                "supports": [
+                  "no overprescribing",
+                  "clear explanation",
+                  "kind pediatric care",
+                  "unfriendly nurses"
+                ]
+              }
+            ],
+            "contextual": [
+              {
+                "evidence_id": "review:4a6eb658e301a6dd56b4",
+                "supports": [
+                  "no-wait context"
+                ]
+              },
+              {
+                "evidence_id": "review:59da9c4c8dc5bfda4c78",
+                "supports": [
+                  "kind and careful care",
+                  "parking context"
+                ]
+              },
+              {
+                "evidence_id": "review:0e8aab707ed89e4b0169",
+                "supports": [
+                  "no overprescribing",
+                  "friendly care"
+                ]
+              }
+            ]
+          }
+        },
+        "expected_turn_count": 3,
+        "expected_response_languages": [
+          "English",
+          "English",
+          "English"
+        ],
+        "required_comment_query_scripts": [
+          "Hangul",
+          "Latin"
+        ]
+      },
+      "privacy": {
+        "synthetic_location": true,
+        "allow_reviewer_identity": false
+      }
+    },
+    {
+      "id": "reverse-yongsan-peds-03-ko",
+      "schema_version": 3,
+      "pair_id": "reverse-yongsan-peds-03",
+      "counterpart_id": "reverse-yongsan-peds-03-en",
+      "source_language": "Korean",
+      "driver": "natural_actor_with_staged_card",
+      "user_persona": "서울 전역 소아과 검색을 이촌역 주변으로 단계적으로 좁히는 보호자.",
+      "opening_query": "서울 전역에서 과잉 처방을 하지 않고 설명이 명확하다는 실제 후기가 있는 소아청소년과를 찾아 주세요.",
+      "hidden_constraints": [
+        "두 번째 요청은 이촌역 1km로 좁히고 대기 없음은 선호하며 주차 편의 주장은 금지한다.",
+        "세 번째 요청은 대기 없음 조건을 제거하고 아이에게 친절한 진료를 추가하며 불친절한 간호사를 회피한다."
+      ],
+      "expected_retrieval_behaviors": [
+        "첫 요청은 거리 없이 서울 전역으로 검색하고 이촌 조건 뒤 거리를 계산한다.",
+        "후기 선호가 바뀔 때마다 다국어 근거 검색을 다시 수행한다."
+      ],
+      "success_criteria": [
+        "위치 축소 뒤 숨겨진 대상이 5위 이내다.",
+        "최종 요청에서 대기 없음은 제거되고 아이 친절 및 간호사 회피 조건은 유지된다."
+      ],
+      "public_patient_card": {
+        "persona": "소아청소년과를 찾는 보호자입니다.",
+        "opening_message": "서울 전역에서 과잉 처방을 하지 않고 설명이 명확하다는 실제 후기가 있는 소아청소년과를 찾아 주세요.",
+        "staged_requests": [
+          "이촌역을 제 위치로 사용해 1km 이내로 좁혀 주세요. 대기가 없었다는 후기를 선호하고 주차가 편리하다고 주장하지 마세요.",
+          "진료과와 위치는 유지하되 대기 없음은 더 이상 중요하지 않아요. 대신 아이에게 친절하게 진료한다는 후기는 필수이고, 간호사가 불친절하다는 곳은 피하고 싶어요."
+        ],
+        "stop_condition": "최종 교체 조건이 근거 있는 후보 목록에 반영되면 종료합니다."
+      },
+      "oracle": {
+        "visibility": "grader_only",
+        "origin": {
+          "label": "이촌역",
+          "latitude": 37.52241291408466,
+          "longitude": 126.97354382085399
+        },
+        "maximum_distance_km": 1.0,
+        "strict_radius": true,
+        "expected_specialty": "소아청소년과",
+        "required_trace_actions": [
+          "search_facilities",
+          "search_indexed_evidence",
+          "search_multilingual_comments",
+          "select_comment_evidence",
+          "assess_search_coverage",
+          "finish_search"
+        ],
+        "required_methods": [
+          "facility_semantic",
+          "facility_bm25",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
+          "multilingual_comment_search"
+        ],
+        "required_trace_actions_each_turn": true,
+        "positive_terms": [
+          "no overprescribing",
+          "clear explanations",
+          "kind pediatric care"
+        ],
+        "removed_terms": [
+          "no wait",
+          "대기 없음"
+        ],
+        "negative_terms": [
+          "unfriendly nurses",
+          "불친절한 간호사"
+        ],
+        "reverse_target": {
+          "seed": "reverse-target-v1|yongsan-peds",
+          "place_id": "35475921",
+          "name": "우리동네소아청소년과의원",
+          "latitude": 37.520145786,
+          "longitude": 126.9718771192,
+          "retrieval_rank_lte": 5,
+          "presented_rank_lte": 5,
+          "evidence_requirements": {
+            "decisive": [
+              {
+                "evidence_id": "review:0fca6e1982b0a016e01c",
+                "supports": [
+                  "no overprescribing",
+                  "clear explanation",
+                  "kind pediatric care",
+                  "unfriendly nurses"
+                ]
+              }
+            ],
+            "contextual": [
+              {
+                "evidence_id": "review:4a6eb658e301a6dd56b4",
+                "supports": [
+                  "no-wait context"
+                ]
+              },
+              {
+                "evidence_id": "review:59da9c4c8dc5bfda4c78",
+                "supports": [
+                  "kind and careful care",
+                  "parking context"
+                ]
+              },
+              {
+                "evidence_id": "review:0e8aab707ed89e4b0169",
+                "supports": [
+                  "no overprescribing",
+                  "friendly care"
+                ]
+              }
+            ]
+          }
+        },
+        "expected_turn_count": 3,
+        "expected_response_languages": [
+          "Korean",
+          "Korean",
+          "Korean"
+        ],
+        "required_comment_query_scripts": [
+          "Hangul",
+          "Latin"
+        ]
+      },
+      "privacy": {
+        "synthetic_location": true,
+        "allow_reviewer_identity": false
+      }
+    },
+    {
+      "id": "code-switch-reset-04-en-ko",
+      "schema_version": 3,
+      "pair_id": "code-switch-reset-04",
+      "counterpart_id": "code-switch-reset-04-ko-en",
+      "source_language": "English",
+      "driver": "natural_actor_with_staged_card",
+      "user_persona": "A bilingual patient who replaces an English City Hall dental request with a Korean Daeheung dermatology request.",
+      "opening_query": "From City Hall Station, find a dentist within 1 km with mandatory parking and friendly patient comments.",
+      "hidden_constraints": [
+        "The Korean correction replaces specialty, location, radius, parking, and review concepts.",
+        "The final response must be Korean."
+      ],
+      "expected_retrieval_behaviors": [
+        "Discard the old dental, City Hall, parking, and friendly facets before the corrected search.",
+        "Run complete bilingual retrieval for dermatology, cheilitis, and detailed explanations."
+      ],
+      "success_criteria": [
+        "The final state contains only the corrected Daeheung dermatology constraints.",
+        "The Mapo reverse target reaches top five and the response is Korean."
+      ],
+      "public_patient_card": {
+        "persona": "You are bilingual and will correct the request in Korean.",
+        "opening_message": "From City Hall Station, find a dentist within 1 km with mandatory parking and friendly patient comments.",
+        "staged_requests": [
+          "요청을 바꿀게요. 대흥역에서 2km 이내 피부과를 찾아 주세요. 주차 조건은 빼고 구순염 진료와 자세한 설명을 뒷받침하는 실제 후기는 필수예요."
+        ],
+        "stop_condition": "Stop when the corrected Korean request fully replaces the old request."
+      },
+      "oracle": {
+        "visibility": "grader_only",
+        "origin": {
+          "label": "Daeheung Station",
+          "latitude": 37.5476479056751,
+          "longitude": 126.942473188734
+        },
+        "maximum_distance_km": 2.0,
+        "strict_radius": true,
+        "expected_specialty": "피부과",
+        "final_language": "Korean",
+        "removed_terms": [
+          "치과",
+          "City Hall",
+          "시청역",
+          "parking",
+          "주차",
+          "friendly",
+          "친절"
+        ],
+        "required_trace_actions": [
+          "search_facilities",
+          "search_indexed_evidence",
+          "search_multilingual_comments",
+          "select_comment_evidence",
+          "assess_search_coverage",
+          "finish_search"
+        ],
+        "required_methods": [
+          "facility_semantic",
+          "facility_bm25",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
+          "multilingual_comment_search"
+        ],
+        "required_trace_actions_each_turn": true,
+        "positive_terms": [
+          "cheilitis",
+          "clear explanations"
+        ],
+        "reverse_target": {
+          "place_id": "19521641",
+          "retrieval_rank_lte": 5,
+          "presented_rank_lte": 5,
+          "seed": "reverse-target-v1|mapo-derm",
+          "name": "이지함피부과의원",
+          "latitude": 37.5563578579,
+          "longitude": 126.9443618308,
+          "evidence_requirements": {
+            "decisive": [
+              {
+                "evidence_id": "review:325180cb5153b903bfa2",
+                "supports": [
+                  "cheilitis care",
+                  "detailed explanation",
+                  "fast treatment"
+                ]
+              }
+            ],
+            "contextual": [
+              {
+                "evidence_id": "review:f489ced242bd47e5a12d",
+                "supports": [
+                  "detailed explanation",
+                  "long-wait context"
+                ]
+              },
+              {
+                "evidence_id": "review:01a30b8affcce494ccd4",
+                "supports": [
+                  "long-wait context",
+                  "friendliness context"
+                ]
+              }
+            ]
+          }
+        },
+        "expected_turn_count": 2,
+        "expected_response_languages": [
+          "English",
+          "Korean"
+        ],
+        "required_comment_query_scripts": [
+          "Hangul",
+          "Latin"
+        ],
+        "transit_observation": {
+          "artifact": "fixtures/20260902-mapoderm-transit.json",
+          "provider": "kakao",
+          "observed_on": "2026-09-02",
+          "request_sha256": "87075dda11501a845a092f716cd71c903c76eec4acbd3857972d4bebb5d24d59",
+          "response_sha256": "74faeb601382778dc3d91396946daef5eb9c570e32f06936070b3a583565152d"
+        }
+      },
+      "privacy": {
+        "synthetic_location": true,
+        "allow_reviewer_identity": false
+      }
+    },
+    {
+      "id": "code-switch-reset-04-ko-en",
+      "schema_version": 3,
+      "pair_id": "code-switch-reset-04",
+      "counterpart_id": "code-switch-reset-04-en-ko",
+      "source_language": "Korean",
+      "driver": "natural_actor_with_staged_card",
+      "user_persona": "한국어 시청역 치과 요청을 영어 대흥역 피부과 요청으로 교체하는 이중 언어 환자.",
+      "opening_query": "시청역에서 1km 이내이고 주차가 필수이며 친절하다는 실제 후기가 있는 치과를 찾아 주세요.",
+      "hidden_constraints": [
+        "영어 교정 요청은 진료과, 위치, 반경, 주차, 후기 조건을 모두 교체한다.",
+        "최종 답변은 영어여야 한다."
+      ],
+      "expected_retrieval_behaviors": [
+        "교정 검색 전에 치과, 시청역, 주차, 친절 조건을 제거한다.",
+        "피부과, 구순염, 자세한 설명에 대해 완전한 다국어 검색을 실행한다."
+      ],
+      "success_criteria": [
+        "최종 상태에는 교정된 대흥역 피부과 조건만 남는다.",
+        "마포 숨은 대상이 5위 이내이고 답변은 영어다."
+      ],
+      "public_patient_card": {
+        "persona": "요청을 영어로 바꿀 이중 언어 환자입니다.",
+        "opening_message": "시청역에서 1km 이내이고 주차가 필수이며 친절하다는 실제 후기가 있는 치과를 찾아 주세요.",
+        "staged_requests": [
+          "I need to change that. Find a dermatologist within 2 km of Daeheung Station. Remove parking, and require cheilitis care plus actual comments supporting detailed explanations."
+        ],
+        "stop_condition": "Stop when the corrected English request fully replaces the old request."
+      },
+      "oracle": {
+        "visibility": "grader_only",
+        "origin": {
+          "label": "Daeheung Station",
+          "latitude": 37.5476479056751,
+          "longitude": 126.942473188734
+        },
+        "maximum_distance_km": 2.0,
+        "strict_radius": true,
+        "expected_specialty": "피부과",
+        "final_language": "English",
+        "removed_terms": [
+          "치과",
+          "City Hall",
+          "시청역",
+          "parking",
+          "주차",
+          "friendly",
+          "친절"
+        ],
+        "required_trace_actions": [
+          "search_facilities",
+          "search_indexed_evidence",
+          "search_multilingual_comments",
+          "select_comment_evidence",
+          "assess_search_coverage",
+          "finish_search"
+        ],
+        "required_methods": [
+          "facility_semantic",
+          "facility_bm25",
+          "review_bm25",
+          "review_bge_m3_sparse",
+          "review_bge_m3_dense",
+          "multilingual_comment_search"
+        ],
+        "required_trace_actions_each_turn": true,
+        "positive_terms": [
+          "cheilitis",
+          "clear explanations"
+        ],
+        "reverse_target": {
+          "place_id": "19521641",
+          "retrieval_rank_lte": 5,
+          "presented_rank_lte": 5,
+          "seed": "reverse-target-v1|mapo-derm",
+          "name": "이지함피부과의원",
+          "latitude": 37.5563578579,
+          "longitude": 126.9443618308,
+          "evidence_requirements": {
+            "decisive": [
+              {
+                "evidence_id": "review:325180cb5153b903bfa2",
+                "supports": [
+                  "cheilitis care",
+                  "detailed explanation",
+                  "fast treatment"
+                ]
+              }
+            ],
+            "contextual": [
+              {
+                "evidence_id": "review:f489ced242bd47e5a12d",
+                "supports": [
+                  "detailed explanation",
+                  "long-wait context"
+                ]
+              },
+              {
+                "evidence_id": "review:01a30b8affcce494ccd4",
+                "supports": [
+                  "long-wait context",
+                  "friendliness context"
+                ]
+              }
+            ]
+          }
+        },
+        "expected_turn_count": 2,
+        "expected_response_languages": [
+          "Korean",
+          "English"
+        ],
+        "required_comment_query_scripts": [
+          "Hangul",
+          "Latin"
+        ],
+        "transit_observation": {
+          "artifact": "fixtures/20260902-mapoderm-transit.json",
+          "provider": "kakao",
+          "observed_on": "2026-09-02",
+          "request_sha256": "87075dda11501a845a092f716cd71c903c76eec4acbd3857972d4bebb5d24d59",
+          "response_sha256": "74faeb601382778dc3d91396946daef5eb9c570e32f06936070b3a583565152d"
+        }
+      },
+      "privacy": {
+        "synthetic_location": true,
+        "allow_reviewer_identity": false
+      }
+    }
+  ],
+  "evidence_policy": {
+    "decisive": "Every decisive evidence item is a required same-facility verbatim review for the target hard gate.",
+    "contextual": "Contextual evidence is reported when absent but does not independently fail the target hard gate."
+  }
+}

@@ -1,5 +1,11 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field, StringConstraints
+from typing import Annotated, Optional, List, Dict, Any
+
+
+ChatMessage = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=4_000),
+]
 
 class State(BaseModel):
     """
@@ -50,6 +56,9 @@ class State(BaseModel):
     gender_terms: List[str] = Field(default_factory=list)
     disease_terms: List[str] = Field(default_factory=list)
     comment_terms: List[str] = Field(default_factory=list)
+    # Canonical availability constraints such as ``tuesday_evening``. Keep
+    # these separate from review preferences: hours are facility facts.
+    required_hours: List[str] = Field(default_factory=list)
     extraction_source: Optional[str] = None
     extraction_error: Optional[str] = None
     # ⭐ NEW: Track if this is a general/random search
@@ -87,14 +96,159 @@ class State(BaseModel):
     last_search_timestamp: Optional[str] = None
     last_retrieval_trace: List[Dict[str, Any]] = Field(default_factory=list)
     last_retrieval_observations: List[Dict[str, Any]] = Field(default_factory=list)
+    last_retrieval_metadata: Dict[str, Any] = Field(default_factory=dict)
+    last_retrieval_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    last_retrieval_run_id: Optional[str] = None
+
+    def clear_retrieval_telemetry(self) -> None:
+        """Discard client-carried diagnostics before processing a new request."""
+        self.last_retrieval_trace = []
+        self.last_retrieval_observations = []
+        self.last_retrieval_metadata = {}
+        self.last_retrieval_candidates = []
+        self.last_retrieval_run_id = None
     
     class Config:
         arbitrary_types_allowed = True
 
 
+PRIVATE_CHAT_STATE_FIELDS = frozenset({
+    "last_search_query",
+    "last_results_count",
+    "last_search_timestamp",
+    "last_retrieval_trace",
+    "last_retrieval_observations",
+    "last_retrieval_metadata",
+    "last_retrieval_candidates",
+    "last_retrieval_run_id",
+})
+PRIVATE_RESULT_FIELDS = frozenset({
+    "combined_score",
+    "relevance_boost",
+    "relevance_rank",
+    "retrieval_matched_terms",
+    "retrieval_methods",
+    "retrieval_trace",
+})
+PUBLIC_RESULT_FIELDS = frozenset({
+    "Key_Highlights",
+    "Summaries",
+    "Summaries_Korean",
+    "address",
+    "amenities",
+    "business_hours",
+    "category",
+    "distance",
+    "distance_km",
+    "district",
+    "dong",
+    "english_confidence_score",
+    "entity_type",
+    "final_rank",
+    "has_english",
+    "is_emergency",
+    "lat",
+    "lon",
+    "medical_info_parsed",
+    "name",
+    "phone",
+    "place_id",
+    "retrieval_evidence",
+    "retrieval_evidence_groups",
+    "website",
+})
+PUBLIC_EVIDENCE_FIELDS = frozenset({
+    "evidence_id",
+    "corroboration_count",
+    "distinctiveness_score",
+    "evidence_role",
+    "matched_constraint_ids",
+    "similar_review_count",
+    "is_verbatim",
+    "language",
+    "place_id",
+    "relevance_reason",
+    "source_field",
+    "source_type",
+    "text",
+    "translated_text",
+    "visit_date",
+})
+
+
+def serialize_state_for_chat(
+    state: State,
+    *,
+    include_debug: bool,
+) -> Dict[str, Any]:
+    """Serialize patient state without evaluation-only telemetry."""
+    serialized = state.model_dump()
+    if include_debug:
+        return serialized
+    return {
+        field: value
+        for field, value in serialized.items()
+        if field not in PRIVATE_CHAT_STATE_FIELDS
+    }
+
+
+def serialize_results_for_chat(
+    results: List[Dict[str, Any]],
+    *,
+    include_debug: bool,
+) -> List[Dict[str, Any]]:
+    """Serialize recommendations while retaining patient-facing review excerpts."""
+    if include_debug:
+        return results
+
+    serialized_results: List[Dict[str, Any]] = []
+    for result in results:
+        public_result = {
+            field: value
+            for field, value in result.items()
+            if field in PUBLIC_RESULT_FIELDS
+        }
+        evidence = result.get("retrieval_evidence")
+        if isinstance(evidence, list):
+            public_result["retrieval_evidence"] = [
+                {
+                    field: value
+                    for field, value in item.items()
+                    if field in PUBLIC_EVIDENCE_FIELDS
+                }
+                for item in evidence
+                if isinstance(item, dict)
+            ]
+        groups = result.get("retrieval_evidence_groups")
+        if isinstance(groups, dict):
+            public_result["retrieval_evidence_groups"] = {
+                role: [
+                    {
+                        field: value
+                        for field, value in item.items()
+                        if field in PUBLIC_EVIDENCE_FIELDS
+                    }
+                    for item in values
+                    if isinstance(item, dict)
+                ]
+                for role, values in groups.items()
+                if role in {"supporting", "warnings"}
+                and isinstance(values, list)
+            }
+            unverified = groups.get("unverified")
+            if isinstance(unverified, list):
+                public_result["retrieval_evidence_groups"]["unverified"] = [
+                    str(value)
+                    for value in unverified
+                    if isinstance(value, str)
+                ]
+        serialized_results.append(public_result)
+    return serialized_results
+
+
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
-    message: str
+    message: ChatMessage
     current_state: State
 
 

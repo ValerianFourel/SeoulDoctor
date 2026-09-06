@@ -144,7 +144,15 @@ def _review_text(review: Any) -> tuple[str, str]:
             ),
             "",
         )
-        return str(text or "").strip(), str(review.get("language", "Unknown"))
+        language = next(
+            (
+                review.get(key)
+                for key in ("language", "lang", "review_language")
+                if review.get(key)
+            ),
+            "Unknown",
+        )
+        return str(text or "").strip(), str(language)
     return str(review or "").strip(), "Unknown"
 
 
@@ -204,14 +212,33 @@ def build_specific_evidence_records(df: Any) -> List[Dict[str, Any]]:
 
         for index, highlight in enumerate(_as_items(_row_value(row, "Key_Highlights"))):
             if isinstance(highlight, Mapping):
-                topic = str(highlight.get("topic", "")).strip()
-                percentage = highlight.get("percentage")
-                text = topic
-                if topic and percentage is not None:
-                    text = f"{topic} ({percentage}% of review highlights)"
+                # Production data uses topic_en/topic_ko. Index both languages.
+                topics = (
+                    (highlight.get("topic_en") or highlight.get("topic"), "English", "topic_en"),
+                    (highlight.get("topic_ko"), "Korean", "topic_ko"),
+                )
+                count = highlight.get("count")
+                relevance = highlight.get("relevance")
+                for topic, language, source_suffix in topics:
+                    topic = str(topic or "").strip()
+                    if not topic:
+                        continue
+                    detail = ""
+                    if count is not None:
+                        detail = f" ({count} source reviews)"
+                    elif relevance is not None:
+                        detail = f" (relevance {relevance})"
+                    add_record(
+                        f"{topic}{detail}",
+                        "review_highlight",
+                        index,
+                        language,
+                        source_field=f"Key_Highlights.{source_suffix}",
+                    )
             else:
-                text = str(highlight).strip()
-            add_record(text, "review_highlight", index, "Mixed")
+                add_record(
+                    str(highlight).strip(), "review_highlight", index, "Mixed"
+                )
 
         for source_type, field in (("amenity", "amenities"), ("medical_info", "medical_info_parsed")):
             facts = _flatten_fact("", _row_value(row, field))

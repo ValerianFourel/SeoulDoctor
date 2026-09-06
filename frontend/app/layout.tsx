@@ -1,7 +1,6 @@
 // app/layout.tsx
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import { Analytics } from "@vercel/analytics/react";
 import Script from "next/script";
 
 import "./globals.css";
@@ -15,15 +14,13 @@ const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
 });
-
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ??
-  (process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : "http://localhost:3000");
+const configuredSiteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+const metadataBase = configuredSiteUrl
+  ? new URL(configuredSiteUrl)
+  : undefined;
 
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
+  ...(metadataBase ? { metadataBase } : {}),
   title: "Seoul Medical Facility Finder | AI Medical Concierge",
   description:
     "Find the best English-speaking medical facilities in Seoul with AI assistance. Search by specialty, location, and language capabilities.",
@@ -47,7 +44,7 @@ export const metadata: Metadata = {
     type: "website",
     locale: "en_US",
     siteName: "Seoul Medical Facility Finder",
-    url: siteUrl,
+    ...(metadataBase ? { url: metadataBase } : {}),
   },
   twitter: {
     card: "summary_large_image",
@@ -127,7 +124,6 @@ export default function RootLayout({
         
         <CookieConsent />
         <ConsentScripts />
-        <Analytics />
       </body>
     </html>
   );

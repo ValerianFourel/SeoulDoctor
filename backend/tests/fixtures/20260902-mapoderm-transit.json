@@ -1,0 +1,19 @@
+{
+  "provider": "kakao",
+  "observed_at": "2026-09-02T11:55:38+00:00",
+  "origin": {
+    "latitude": 37.5476479056751,
+    "longitude": 126.942473188734
+  },
+  "destination": {
+    "latitude": 37.5563578579,
+    "longitude": 126.9443618308
+  },
+  "mode": "BUS",
+  "route_distance_m": 1360,
+  "duration_s": 694,
+  "transfers": 0,
+  "fare_krw": 1200,
+  "request_sha256": "87075dda11501a845a092f716cd71c903c76eec4acbd3857972d4bebb5d24d59",
+  "response_sha256": "74faeb601382778dc3d91396946daef5eb9c570e32f06936070b3a583565152d"
+}
