@@ -121,7 +121,10 @@ def main() -> None:
                     target_language=language,
                 ),
             )
-            if outcome.telemetry.status != "indexed":
+            if (
+                outcome.telemetry.status != "complete"
+                or outcome.telemetry.fallback_reason is not None
+            ):
                 raise AssertionError(outcome.telemetry.as_private_dict())
             if pipeline.calls != 1:
                 raise AssertionError("Phase 4 made more than one embedding call")
@@ -131,6 +134,7 @@ def main() -> None:
                 "top_facility_id": str(outcome.dataframe.iloc[0]["place_id"]),
                 "scope_count": len(scope.facility_ids),
                 "retry_ran": outcome.telemetry.retry_ran,
+                "elapsed_ms": outcome.telemetry.elapsed_ms,
                 "channel_hit_counts": dict(outcome.telemetry.channel_hit_counts),
             })
         print(json.dumps({

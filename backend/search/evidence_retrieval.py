@@ -134,6 +134,8 @@ class EvidenceRecallResult:
     reranker_reason: str
     retry_ran: bool
     semantic_status: str = "disabled"
+    search_ms: float = 0.0
+    reranking_ms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,7 @@ class EvidenceRecallPolicy:
     distinctiveness_weight: float = 0.10
     redundancy_penalty: float = 0.15
     hybrid_rrf_k: float = 60.0
+    require_remote_services: bool = False
 
     def __post_init__(self) -> None:
         if not 1 <= self.shortlist_limit <= 50:
@@ -437,12 +440,14 @@ class ConstraintEvidenceRetriever:
                 empty_groups, (), (), (), "complete", False, "no_constraints", False
             )
 
+        search_started = perf_counter()
         first_search = self._search(
             scoped_index,
             constraints,
             shortlist,
             limit=self.policy.lexical_per_cell,
         )
+        search_ms = (perf_counter() - search_started) * 1000
         first_candidates = first_search.candidates
         semantic_statuses = [first_search.semantic_status]
         pool = allocate_admissions(
@@ -453,11 +458,13 @@ class ConstraintEvidenceRetriever:
             pool,
             budget=self.policy.initial_rerank_budget,
         )
+        reranking_started = perf_counter()
         scored, reranker_used, reranker_reason = self._score(
             admitted,
             first_candidates,
             constraints,
         )
+        reranking_ms = (perf_counter() - reranking_started) * 1000
         coverage = assess_facility_coverage(displayed, constraints, scored)
 
         retry_ran = False
@@ -472,12 +479,14 @@ class ConstraintEvidenceRetriever:
             retry_candidates: list[EvidenceCellCandidate] = []
             for cell in missing:
                 constraint = retry_constraints[cell.constraint_id]
+                search_started = perf_counter()
                 retry_search = self._search(
                     scoped_index,
                     (constraint,),
                     (cell.facility_id,),
                     limit=self.policy.retry_lexical_per_cell,
                 )
+                search_ms += (perf_counter() - search_started) * 1000
                 retry_candidates.extend(retry_search.candidates)
                 semantic_statuses.append(retry_search.semantic_status)
             already_admitted = {item.hit.evidence_id for item in admitted}
@@ -489,16 +498,20 @@ class ConstraintEvidenceRetriever:
                 retry_candidates,
                 budget=self.policy.retry_rerank_budget,
             )
+            reranking_started = perf_counter()
             retry_scored, retry_used, retry_reason = self._score(
                 retry_admitted,
                 retry_candidates,
                 constraints,
             )
+            reranking_ms += (perf_counter() - reranking_started) * 1000
             all_candidates.extend(retry_candidates)
             scored = _merge_scored(scored, retry_scored)
             reranker_used = reranker_used or retry_used
-            if retry_used or reranker_reason == "disabled":
-                reranker_reason = retry_reason
+            if retry_reason != "no_candidates":
+                reranker_reason = ",".join(dict.fromkeys((
+                    *reranker_reason.split(","), *retry_reason.split(","),
+                )))
             coverage = assess_facility_coverage(displayed, constraints, scored)
             admitted = (*admitted, *retry_admitted)
 
@@ -519,9 +532,23 @@ class ConstraintEvidenceRetriever:
             admitted,
             attached_ids,
         )
+        services_succeeded = (
+            all(status in {"ok", "disabled"} for status in semantic_statuses)
+            and all(reason in {"ok", "disabled", "no_candidates"}
+                    for reason in reranker_reason.split(","))
+        )
+        if self.policy.require_remote_services:
+            services_succeeded = services_succeeded and (
+                self._semantic_source is not None
+                and self._reranker is not None
+                and all(status == "ok" for status in semantic_statuses)
+                and all(reason in {"ok", "no_candidates"}
+                        for reason in reranker_reason.split(","))
+            )
         finish_status: FinishStatus = (
             "complete"
-            if not any(cell.required and cell.status == "missing" for cell in coverage)
+            if services_succeeded
+            and not any(cell.required and cell.status == "missing" for cell in coverage)
             else "partial_evidence"
         )
         return EvidenceRecallResult(
@@ -534,6 +561,8 @@ class ConstraintEvidenceRetriever:
             reranker_reason=reranker_reason,
             retry_ran=retry_ran,
             semantic_status=",".join(dict.fromkeys(semantic_statuses)),
+            search_ms=search_ms,
+            reranking_ms=reranking_ms,
         )
 
     def _search(
@@ -906,7 +935,18 @@ def select_evidence_groups(
         selected: list[ScoredEvidence] = []
         covered: set[str] = set()
         unused = list(candidates)
-        if len(unused) > 1 and limit > 1:
+        warnings = sorted(
+            (item for item in unused if "risk" in item.roles),
+            key=lambda item: (-item.selection_score, item.hit.ordinal),
+        )
+        for warning in warnings:
+            if len(selected) >= limit:
+                break
+            if warning.matched_constraint_ids - covered:
+                selected.append(warning)
+                covered.update(warning.matched_constraint_ids)
+                unused.remove(warning)
+        if len(unused) > 1 and len(selected) < limit and limit > 1:
             distinctive = max(
                 unused,
                 key=lambda item: (
@@ -919,8 +959,12 @@ def select_evidence_groups(
             covered.update(distinctive.matched_constraint_ids)
             unused.remove(distinctive)
         while unused and len(selected) < limit:
+            selected_cluster_ids = {
+                item.local_cluster_id for item in selected
+            }
             unused.sort(
                 key=lambda item: (
+                    item.local_cluster_id in selected_cluster_ids,
                     -len(item.matched_constraint_ids - covered),
                     -item.selection_score,
                     item.local_cluster_size,
@@ -928,17 +972,9 @@ def select_evidence_groups(
                 )
             )
             choice = unused.pop(0)
-            if (
-                any(existing.local_cluster_id == choice.local_cluster_id for existing in selected)
-                and any(
-                    item.local_cluster_id != choice.local_cluster_id
-                    for item in unused
-                )
-            ):
-                unused.append(choice)
-                continue
             selected.append(choice)
             covered.update(choice.matched_constraint_ids)
+
         supporting = tuple(
             item for item in candidates
             if item.roles.intersection({"support", "disease"})

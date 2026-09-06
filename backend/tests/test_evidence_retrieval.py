@@ -323,6 +323,41 @@ class EvidenceRetrievalTests(unittest.TestCase):
             {item.hit.evidence_id for item in groups["alpha"].presented},
         )
 
+    def test_presentation_skips_a_duplicate_cluster_without_looping(self) -> None:
+        def scored(
+            evidence_id: str,
+            ordinal: int,
+            selection_score: float,
+            distinctiveness: float,
+            cluster_id: str,
+        ) -> ScoredEvidence:
+            return ScoredEvidence(
+                hit=hit(evidence_id, "alpha", evidence_id, ordinal),
+                matched_constraint_ids=frozenset({"kind"}),
+                roles=frozenset({"support"}),
+                lexical_rank=ordinal,
+                rerank_rank=None,
+                rerank_score=None,
+                distinctiveness=distinctiveness,
+                local_cluster_id=cluster_id,
+                local_cluster_size=2 if cluster_id == "generic" else 1,
+                corroboration_count=1,
+                selection_score=selection_score,
+            )
+
+        evidence = (
+            scored("generic-distinctive", 1, 1.0, 1.0, "generic"),
+            scored("generic-duplicate", 2, 0.9, 0.5, "generic"),
+            scored("different-cluster", 3, 0.8, 0.4, "different"),
+        )
+
+        groups = select_evidence_groups(("alpha",), evidence, (), limit=3)
+
+        self.assertEqual(
+            [item.hit.evidence_id for item in groups["alpha"].presented],
+            ["generic-distinctive", "different-cluster", "generic-duplicate"],
+        )
+
     def test_admission_is_fair_across_facility_constraint_cells(self) -> None:
         candidates = (
             EvidenceCellCandidate(

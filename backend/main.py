@@ -120,6 +120,7 @@ from contextlib import asynccontextmanager
 from huggingface_hub import hf_hub_download
 from dotenv import load_dotenv
 from datetime import datetime
+from time import perf_counter
 import logging
 
 # Local imports
@@ -161,6 +162,7 @@ from cookies import (
 
 # Import RAG Pipeline
 from rag_pipeline import RAGPipeline
+from evidence_response import finalize_evidence_response
 from raw_review_store import ensure_raw_review_parquet
 from config import (
     BGE_M3_RETRIEVER_API_TOKEN,
@@ -191,6 +193,7 @@ from query_facets import (
 )
 from rate_limit import SlidingWindowRateLimiter
 from search.contracts import DistanceRule
+from search.evidence_retrieval import EvidenceRecallPolicy
 from search.indexes import IndexLoadError, IndexRepository
 from search.indexes.manifest import sha256_file
 from search.live_retrieval import (
@@ -200,6 +203,7 @@ from search.live_retrieval import (
 )
 from search.rules import compile_legacy_state_rules, compile_shadow_rules
 from search.reranker import RemoteEvidenceReranker
+from search.readiness import probe_retrieval
 from search.scope import ScopeBuilder
 from search.semantic_retriever import RemoteBgeM3ReviewRetriever
 from search.turn_delta import compile_turn_delta, reduce_search_state
@@ -590,6 +594,27 @@ def health_check() -> Dict[str, Any]:
             ),
         },
     }
+
+
+@app.get("/ready/retrieval")
+def retrieval_readiness() -> Dict[str, Any]:
+    health_check()
+    if search_index_release is None:
+        raise HTTPException(503, detail={"ready": False, "reason": "index_unavailable"})
+    probe_state = State(location="Seoul", is_citywide_search=True)
+    compilation = compile_legacy_state_rules(
+        "진료 설명 consultation", probe_state, turn_id="readiness",
+    )
+    if compilation.rules is None:
+        raise HTTPException(503, detail={"ready": False, "reason": "probe_scope_unavailable"})
+    scope = ScopeBuilder().build(
+        df_filtered, compilation.rules, index_version=search_index_release.version,
+    )
+    with search_index_release.within(scope) as scoped:
+        report = probe_retrieval(scoped, semantic_evidence_source, evidence_reranker)
+    if not report["ready"]:
+        raise HTTPException(503, detail=report)
+    return report
 
 
 app.add_middleware(
@@ -1817,6 +1842,7 @@ def execute_search(
                     legacy_pipeline=rag_pipeline,
                     evidence_reranker=evidence_reranker,
                     semantic_evidence_source=semantic_evidence_source,
+                    evidence_policy=EvidenceRecallPolicy(require_remote_services=True),
                 ).rank(
                     scope=scope_selection,
                     eligible=final_df,
@@ -1964,7 +1990,8 @@ def execute_search(
                 soft_keywords=", ".join([*state.keywords, *state.comment_terms]) or "none"
             )
         }]
-        
+
+        generation_started = perf_counter()
         try:
             response_text, _ = request_text_completion(
                 client,
@@ -2021,6 +2048,10 @@ def execute_search(
             else:
                 response_text = f"{len(final_df)}개의 시설을 찾았습니다. 상위 {n_results}개:"
         
+        state.last_retrieval_metadata.setdefault("stage_timings_ms", {})[
+            "answer_generation"
+        ] = (perf_counter() - generation_started) * 1000
+
         # ===== PREPARE RESULTS FOR FRONTEND =====
         
         for idx, (_, row) in enumerate(final_df.head(n_results).iterrows(), start=1):
@@ -2034,8 +2065,10 @@ def execute_search(
             
             simple_fields = ['address', 'phone', 'business_hours', 'english_confidence_score']
             for field in simple_fields:
-                if field in row.index and pd.notna(row[field]):
-                    result[field] = safe_convert_to_python(row[field])
+                if field in row.index:
+                    value = safe_convert_to_python(row[field])
+                    if value is not None:
+                        result[field] = value
             
             if 'file_district' in row.index and pd.notna(row['file_district']):
                 result['district'] = safe_convert_to_python(row['file_district'])
@@ -2158,6 +2191,10 @@ def execute_search(
     privacy_safe_log(consent, "=" * 60 + "\n")
 
     response_text = clean_llm_response(response_text)
+    if state.last_retrieval_metadata.get("retrieval_status") not in {None, "not_run"}:
+        response_text, results = finalize_evidence_response(
+            response_text, results, state.last_retrieval_metadata, language,
+        )
     return response_text, serialize_results_for_chat(
         results, include_debug=ENABLE_RETRIEVAL_DEBUG
     )

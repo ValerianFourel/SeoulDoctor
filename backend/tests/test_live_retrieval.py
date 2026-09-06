@@ -384,6 +384,64 @@ class LiveRetrievalTests(unittest.TestCase):
         self.assertIn("friendly", reranker.queries[0])
         self.assertIn("친절", reranker.queries[0])
 
+    def test_evidence_channel_can_change_facility_order(self) -> None:
+        class EvidenceForCharlie(FakeScopedIndex):
+            def search_facilities(
+                self, query: str, limit: int = 200
+            ) -> list[FacilityHit]:
+                del query, limit
+                return [
+                    facility_hit(facility_id, rank, "lexical")
+                    for rank, facility_id in enumerate(
+                        ("alpha", "bravo", "charlie"), start=1
+                    )
+                ]
+
+            def search_dense(
+                self, _: object, limit: int = 200
+            ) -> list[FacilityHit]:
+                del limit
+                return [
+                    facility_hit(facility_id, rank, "dense")
+                    for rank, facility_id in enumerate(
+                        ("alpha", "bravo", "charlie"), start=1
+                    )
+                ]
+
+            def search_evidence_for_facilities(
+                self,
+                query: str,
+                *,
+                facility_ids: tuple[str, ...],
+                limit_per_facility: int,
+                source_types: tuple[str, ...],
+            ) -> list[EvidenceHit]:
+                del query, limit_per_facility, source_types
+                return (
+                    [evidence_hit("charlie", 1)]
+                    if "charlie" in facility_ids
+                    else []
+                )
+
+        result = CandidateRetrievalAdapter(
+            active_index=FakeIndex(EvidenceForCharlie()),
+            legacy_pipeline=FakePipeline(),
+        ).rank(
+            scope=self.scope,
+            eligible=self.frame,
+            rules=make_rules(evidence=True),
+            query=replace(self.query(), search_mode="zone"),
+        )
+
+        self.assertEqual(result.dataframe.iloc[0]["place_id"], "charlie")
+        charlie = next(
+            item
+            for item in result.dataframe.attrs["rag_candidates"]
+            if item["place_id"] == "charlie"
+        )
+        self.assertEqual(charlie["evidence_rank"], 1)
+
+
     def test_evidence_is_attached_across_the_frozen_shortlist(self) -> None:
         facility_ids = ("alpha", "bravo", "charlie", "delta", "echo")
         frame = pd.DataFrame({
@@ -425,7 +483,7 @@ class LiveRetrievalTests(unittest.TestCase):
         self.assertEqual(result.telemetry.termination_reason, "finish_search")
         self.assertTrue(result.telemetry.retry_ran)
         self.assertEqual(len(scoped.facility_queries), 1)
-        self.assertEqual(len(scoped.evidence_queries), 6)
+        self.assertEqual(len(scoped.evidence_queries), 7)
         self.assertEqual(scoped.dense_calls, 1)
         self.assertEqual(len(pipeline.embedding_calls), 1)
         self.assertEqual(

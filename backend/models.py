@@ -155,9 +155,12 @@ PUBLIC_RESULT_FIELDS = frozenset({
     "place_id",
     "retrieval_evidence",
     "retrieval_evidence_groups",
+    "recommendation_status",
     "website",
 })
 PUBLIC_EVIDENCE_FIELDS = frozenset({
+    "review_source_sha256",
+    "source_locator",
     "evidence_id",
     "corroboration_count",
     "distinctiveness_score",

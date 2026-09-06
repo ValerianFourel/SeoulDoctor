@@ -297,3 +297,74 @@ The next action is to create a separate RAG fix branch, reproduce the Korean
 retrieval orchestration failure without changing the sealed cards, and inspect
 why the English third turn did not produce a complete checkpoint. After a fix,
 run the same targeted pair with a new run ID.
+
+## Retrieval-to-reply implementation, 2026-09-06
+
+Owner: root local implementation session. Branch:
+`local/rag-visible-evidence-20260906`, starting commit
+`f8209d7d7ea6fe638dd6aa1aba316201d366f6b3`.
+Owns sequential changes to the response/evidence path, service readiness,
+related regression tests, verification scripts, and this coordination record.
+The four pre-existing retrieval source/test modifications remain preserved;
+untracked presentation and retriever draft files are outside this task.
+Sealed scenario cards, targets, and thresholds remain unchanged.
+
+The local BGE coverage audit verified 1,791,749 eligible review IDs with no
+missing, duplicate, orphaned, or wrong-facility index entries. Index revision:
+`a6a3ab6f70c67c15090d175efd4ecdea553b329e`; model revision:
+`5617a9f61b028005a4858fdac845db406aefb181`; source revision:
+`3911d79dc31e6a6ccfa3f64a7e401b88893bf66a`. Reuse these artifacts without
+regeneration. The 128-token encoding truncates 57,134 source reviews; 989 rows
+have empty learned sparse representations, with dense vectors present.
+Saved row coverage is not evidence of live GPU readiness.
+
+The user approved private process-only credential loading from backend/.env.
+Never print, copy, commit, or upload those values. No replacement paid GPU
+resources will be started under the current runbook restriction.
+
+### Verified implementation checkpoint
+
+Local changes add full-eligible-scope lexical comment discovery before the
+20-facility semantic shortlist, warning-first evidence selection, and mandatory
+remote-service completion checks in the production search path. Failed retries
+cannot erase an earlier reranker failure. Evidence carries its source digest.
+The patient-visible renderer retains whole original comments and facility/ID
+references, strips wrong-facility attachments, and replaces confident narrative
+with a candidate-only response when retrieval or suitability is unresolved.
+The frontend now shows that status and originals instead of labeling generated
+translations as verbatim reviews. Source/test ownership includes
+`frontend/components/ChatInterface.tsx`, `backend/evidence_response.py`,
+`backend/search/readiness.py`, related new tests, and
+`scripts/audit_visible_evidence.py` and `scripts/smoke_phase4_retrieval.py`.
+
+The real search response path reproduced an array-valued business-hours crash;
+its fix and regression pass. This is not yet traced to the historical deployed
+500s. The readiness endpoint executes dense/sparse retrieval, local resolution,
+and reranking. It explicitly does not verify CUDA execution. Per-stage evidence
+search, reranking, and generation timings are recorded; no concurrency benchmark
+has run. The old offline smoke expected the obsolete `indexed` status; it now
+requires `complete` and no fallback. Sealed cases were not changed.
+
+Verified tests: 205 backend tests, 36 focused evaluator tests, five retriever
+tests, and frontend production build passed. The sandboxed retriever pytest
+attempt stalled and was interrupted; the approved host run passed in 0.74 s.
+Offline rerendering of the saved Yongsan EN/KO final responses made the complete
+original decisive comment visible with correct ownership in both languages.
+This is a rendering comparison, not a live after-evaluation or evidence that
+recommendation suitability passes. No live evaluation ran during this change.
+
+Authenticated inspection found private Space revision
+`c291916971fe30c70db9f655a9fa727790b27e2e` running on CPU Basic with HTTP 200 health.
+Both original GPU jobs are canceled; all 20 returned jobs are terminal. No
+matching prior evaluation runner was found on the host. The credential review
+accepted the user's explicit exception after clarification. No new hardware
+was launched, and these code changes have not been deployed.
+
+Remaining work: full-scope BGE discovery beyond the shortlist, explicit
+supported/contradicted/unestablished semantic judgments for every requirement,
+remaining constraint/refinement gaps, runtime model revision and CUDA proof,
+endpoint lease handling, exact historical 500 reproduction, independent judge
+repairs, and end-to-end/concurrency verification. The pipeline is not complete.
+Next action: obtain a fresh bounded temporary-GPU authorization, inspect
+resources again, then finish service integration and deploy for the unchanged
+targeted gate. Do not launch a broader evaluation until that gate passes.

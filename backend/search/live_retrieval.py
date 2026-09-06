@@ -194,6 +194,13 @@ class CandidateRetrievalAdapter:
             embedding = _embed_query(self._legacy_pipeline, query.text)
             allowed = frozenset(scope.facility_ids)
             with self._active_index.within(scope) as scoped:
+                scope_evidence = {}
+                for evidence_query in (_evidence_queries(rules, query) if rules.evidence else ()):
+                    for hit in scoped.search_evidence(
+                        evidence_query, limit=100,
+                        source_types=("verbatim_review",),
+                    ):
+                        scope_evidence.setdefault(hit.evidence_id, hit)
                 facility_attempt = _Attempt(
                     lexical=tuple(scoped.search_facilities(
                         query.text,
@@ -203,7 +210,7 @@ class CandidateRetrievalAdapter:
                         embedding,
                         limit=self._policy.facility_limit,
                     )),
-                    evidence=(),
+                    evidence=tuple(scope_evidence.values()),
                 )
                 _validate_attempt(facility_attempt, allowed)
                 candidates = weighted_rrf(facility_attempt, allowed, self._policy)
@@ -225,8 +232,16 @@ class CandidateRetrievalAdapter:
                     # provisional top three.
                     attachment_facility_ids=shortlist,
                 )
+                review_source_sha256 = scoped.review_source_sha256
 
             evidence_hits = tuple(item.hit for item in evidence_result.evidence)
+            merged = _Attempt(
+                lexical=facility_attempt.lexical,
+                dense=facility_attempt.dense,
+                evidence=evidence_hits,
+            )
+            candidates = weighted_rrf(merged, allowed, self._policy)
+
             hit_by_id = {hit.evidence_id: hit for hit in evidence_hits}
             evidence_methods_by_facility: dict[str, set[str]] = {}
             for event in evidence_result.admissions:
@@ -249,16 +264,21 @@ class CandidateRetrievalAdapter:
                 candidates, evidence_methods_by_facility
             )
             evidence_by_facility = {
-                facility_id: [evidence_payload(item) for item in groups.presented]
+                facility_id: [
+                    {**evidence_payload(item), "review_source_sha256": review_source_sha256}
+                    for item in groups.presented
+                ]
                 for facility_id, groups in evidence_result.by_facility.items()
             }
             evidence_groups_by_facility = {
                 facility_id: {
                     "supporting": [
-                        evidence_payload(item) for item in groups.supporting
+                        {**evidence_payload(item), "review_source_sha256": review_source_sha256}
+                        for item in groups.supporting
                     ],
                     "warnings": [
-                        evidence_payload(item) for item in groups.warnings
+                        {**evidence_payload(item), "review_source_sha256": review_source_sha256}
+                        for item in groups.warnings
                     ],
                     "unverified": list(groups.unverified),
                 }
@@ -289,11 +309,6 @@ class CandidateRetrievalAdapter:
                 )
             )
             coverage_sufficient = evidence_result.finish_status == "complete"
-            merged = _Attempt(
-                lexical=facility_attempt.lexical,
-                dense=facility_attempt.dense,
-                evidence=evidence_hits,
-            )
             telemetry = RetrievalTelemetry(
                 status="complete" if coverage_sufficient else "incomplete",
                 termination_reason="finish_search",
@@ -872,6 +887,10 @@ def _attach_private_metadata(
             "reranker_candidate_count": len(rerank_outcome.hits),
         })
     if evidence_result is not None:
+        dataframe.attrs["rag_metadata"]["stage_timings_ms"] = {
+            "evidence_search": evidence_result.search_ms,
+            "evidence_reranking": evidence_result.reranking_ms,
+        }
         dataframe.attrs["rag_metadata"]["evidence_coverage"] = [
             {
                 "facility_id": cell.facility_id,
