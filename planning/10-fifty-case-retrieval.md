@@ -149,3 +149,50 @@ Next action: when the existing ncs L4 Space is RUNNING, verify its exact runtime
 revision and CUDA readiness, then execute these unchanged fixtures once in a
 fresh private run directory and sync that checkpoint. Do not allocate replacement
 hardware or regenerate embeddings to unblock this evaluator.
+
+## Completed live run, 2026-09-07
+
+At the user's renewed request, run `mini-retrieval-50-20260906T233703Z` used
+the unchanged frozen fixtures on active Space revision
+`2e9a6e65b1037f347791fb265cbe061ebcb070c7`. The existing allocation was now
+`l40sx1`; this session did not change or purchase hardware. Evaluation Git HEAD
+was `7c8bb944d70451d5db734bbabac68cc10be8220c`. Thirty-six required focused
+tests passed immediately before execution.
+
+The facility encoder warmed and the real CUDA probe passed on NVIDIA L40S:
+1024 dimensions, nonempty sparse output, pinned model revision
+`5617a9f61b028005a4858fdac845db406aefb181`. Live policy limits matched the
+unchanged values above, with four workers and coverage retry disabled.
+Warmup/metadata checks took 1.577 seconds; measured retrieval took 146.962
+seconds, within the 300-second deadline. No new query preparation occurred.
+
+| Language | Draws | Facility hits | Review admission hits | Selected hits | Complete passes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| English | 20 | 9 | 11 | 1 | 0 |
+| Korean | 20 | 9 | 14 | 7 | 0 |
+| Mixed | 10 | 8 | 6 | 4 | 0 |
+| All | 50 | 26 | 31 | 12 | 0 |
+
+All 50 requests returned valid responses. There were zero ownership errors,
+zero unknown ownership rows and zero timeouts. **All 50 were incomplete**, so
+the runner exited 1. Reranking was disabled for every case. Semantic retrieval
+reported `request_failed` for two English draws and `ok` for the other 48.
+These observations are not a controlled improvement comparison with the seven
+casebook: queries, weighting and hardware differ.
+
+Median response latency was 9.559 seconds and p95 was 14.584 seconds. By
+language, median/p95 were English 1.884/2.457, Korean 12.027/15.144, and mixed
+10.340/14.584 seconds. Successful-case throughput was 0 passing cases/second;
+50 returned incomplete requests are not 50 successes. The draw metrics retain
+duplicate weighting across 18 unique pairs and seven facilities. Per-pair
+counts, rates and all 50 detailed rows are in the private checkpoint.
+
+The four private files are synced to `ValerianFourel/seouldoc-eval-handoff`
+at revision `06dccdcccbc3b27c26c72f87be088d8cb79604a9`, under
+`runs/mini-retrieval-50-20260906T233703Z/`. The earlier blocked attempt and
+seven-case baseline are preserved. No generation, translation, browser or LLM
+judging ran during retrieval. No target or ranking change was made.
+
+Next retrieval action: diagnose the two English semantic failures and missing
+reranker in a separate application/service task before repeating the frozen
+cases. Selected-ID hits still do not verify patient-facing visibility.
