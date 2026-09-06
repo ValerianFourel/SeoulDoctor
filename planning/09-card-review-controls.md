@@ -64,3 +64,15 @@ the page, Previous worked, original toggles worked, and missing/failed translati
 metadata retained Korean originals. Provisional cards showed the normal summary;
 the old candidate paragraph was absent. No horizontal overflow, visible internal
 IDs, or page errors were observed.
+
+Deployment result: application source 14a9e7c3ad92694a8a2d571c6342ab5e4138aa96
+was pushed to origin/ncs and uploaded as Space source
+2e9a6e65b1037f347791fb265cbe061ebcb070c7. The image build and upload completed.
+The bounded runtime wait ended with RUNTIME_ERROR: “Scheduling failure: not
+enough hardware capacity.” Requested hardware remains l4x1; current hardware
+is null. Website returned 503. This is an infrastructure scheduling blocker,
+not a measured model/dataset startup bottleneck. No replacement hardware,
+restart loop, or rebuild was started. The Google key was configured privately;
+three live Basic-v2 translation checks passed before deployment. Live translated
+card verification remains blocked. Next action: verify the exact runtime
+revision and translated cards when the existing Space can acquire its L4.

@@ -832,3 +832,36 @@ The user specifically authorizes use of that key from backend/.env; load it only
 inside a private process, never display or commit it. Existing global incomplete
 search messaging and source evidence remain preserved. No ranking or location
 logic change is part of this UI/translation task.
+
+## Fifty-draw retrieval evaluator, 2026-09-07
+
+Root owns scripts/mini_retrieval_eval_50.py, its focused tests, planning/10-fifty-case-retrieval.md, and this entry on ncs, parent
+14a9e7c3ad92694a8a2d571c6342ab5e4138aa96. The original seven-case command,
+fixtures and results remain unchanged. Fifty replacement draws are frozen from
+an explicitly restricted 19-pair population: 18 unique pairs, seven clinics,
+20 English/20 Korean/10 mixed. No ranking or application change belongs here.
+
+Local verification: 252 backend tests and frontend build passed. The previously
+authorized card/translation image built at Space source
+2e9a6e65b1037f347791fb265cbe061ebcb070c7 (app Git source 14a9e7c).
+Hugging Face reports RUNTIME_ERROR: Scheduling failure: not enough hardware
+capacity. Requested hardware remains l4x1; no hardware/storage change or restart
+was made. Website returned 503. Live retrieval and translated-card verification
+are blocked by infrastructure scheduling, not demonstrated application startup
+latency. Next action: once the existing L4 Space is RUNNING, verify its exact
+runtime revision and CUDA readiness, then execute the frozen suite in a fresh
+private run directory.
+
+Evaluator implementation is committed at
+2b186c6116997b6036c1c551fc51b9b7b1d35508. The bounded deployment gate produced
+50 BLOCKED rows, no retrieval requests, and no measured quality/latency results.
+Private fixtures/provenance/results are synced at Dataset revision
+ef941a0ce929df871f635c303c82191570e85a69 under
+runs/mini-retrieval-50-20260906T232853Z/. See planning/10-fifty-case-retrieval.md
+for source pins, limitations, tests, reproduction command and the next action.
+The earlier card/translation deployment blocker is recorded in note 09.
+
+Final local checks: 252 backend tests, 36 focused evaluation/grader tests, five
+retriever tests (bounded host retry), frontend build, shell syntax and diff
+checks passed. The sandboxed retriever attempt stalled and was interrupted.
+No live retrieval retry followed the blocked checkpoint.
