@@ -922,3 +922,19 @@ remain unverified. The earlier evaluation completed all 50 cases but passed
 none: reranking disabled for all, two English semantic failures.
 Next action: review the local cleanup, then diagnose retrieval service failures
 in a separate task. Do not deploy this cleanup under the current instruction.
+
+## Final session summary, 2026-09-07
+
+Owner: root; branch ncs; documentation-start HEAD
+f66708c6978dbb3c239c28f4aac900f59b8c4dbc; application cleanup commit
+1807fa81f5709514562935fcef37cede6d17ae85 remains local and undeployed.
+This task owns planning/13-session-handoff.md, the planning/handoff.md pointer
+and this appended entry. Other uncommitted documentation is preserved.
+The final note consolidates manual Hugging Face GPU assignment, Google Basic-v2
+translation, Korean-original fallback, English filtering, three/seven-comment
+pages, measured retrieval results, and a staged BGE-M3 precision plan.
+It distinguishes implemented behavior, pending display activation, incomplete
+retrieval and future work. No application changes, evaluation, deployment or
+infrastructure action ran while writing it. Documentation links and diff were
+checked. Next action: inspect the existing Space's active revision and GPU
+readiness, then verify the submitted display release without changing hardware.

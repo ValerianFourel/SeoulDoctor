@@ -1,5 +1,8 @@
 # Assessment handoff
 
+Latest session summary: [Korean evidence for English-speaking patients](13-session-handoff.md).
+Read that note before the historical setup entries below.
+
 Branch `ncs`; worktree `/tmp/seouldoc-ncs`. Owner: Codex assessment setup session.
 Owned files: `planning/`, README assessment section, appended project-state entry.
 Baseline commit `64e1fc2ff1d5d8d51be5cadba6e9f308b9e8ce8f`. The setup commit is the first commit after this baseline
