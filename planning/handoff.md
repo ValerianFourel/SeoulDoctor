@@ -41,3 +41,10 @@ assessment deployment with GPU retrieval. Source synchronization and its tests
 are prepared, but no live deployment has occurred. See hf-deployment.md.
 Current next action: inject HF_TOKEN and OPENROUTER_API_KEY through the process
 environment, then inspect live resources and provision the isolated Spaces.
+
+Branch publication checkpoint: ncs commit
+e0f99935ac68a57e4dea3bc36bde70834302ef1d was pushed to origin/ncs.
+The initial sandbox attempt failed DNS; the approved retry succeeded.
+The pre-push hook reported three nonblocking medium PII/internal findings
+without details; public-submission review remains pending. No Space sync ran
+and no GitHub secret or enabling variable was configured by this session.

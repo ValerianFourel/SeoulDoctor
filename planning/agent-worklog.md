@@ -54,3 +54,10 @@ Local verification completed: 220 backend tests passed in 4.115 seconds,
 including four new deployment-boundary tests. Frontend production build passed.
 Both source-manifest dry runs passed. Live provisioning and sync remain blocked
 by absent credentials; no remote success is claimed.
+
+Branch publication checkpoint: ncs commit
+e0f99935ac68a57e4dea3bc36bde70834302ef1d was pushed to origin/ncs.
+The initial sandbox attempt failed DNS; the approved retry succeeded.
+The pre-push hook reported three nonblocking medium PII/internal findings
+without details; public-submission review remains pending. No Space sync ran
+and no GitHub secret or enabling variable was configured by this session.
