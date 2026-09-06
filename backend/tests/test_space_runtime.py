@@ -69,3 +69,5 @@ class SpaceDeploymentTests(unittest.TestCase):
         self.assertEqual(gpu[0][gpu[0].index('--port') + 1], '7861')
         self.assertEqual(web[0][web[0].index('--port') + 1], '7860')
         self.assertEqual(module.service_commands(False), [web])
+        for command, _ in (gpu, web):
+            self.assertIn('--no-access-log', command)

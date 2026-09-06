@@ -15,11 +15,11 @@ def service_commands(gpu_enabled: bool):
     if gpu_enabled:
         commands.append(([
             "/opt/retriever/bin/python", "-m", "uvicorn", "production:app",
-            "--host", "127.0.0.1", "--port", "7861",
+            "--host", "127.0.0.1", "--port", "7861", "--no-access-log",
         ], "/home/user/app/retriever"))
     commands.append(([
         sys.executable, "-m", "uvicorn", "space_app:app", "--host", "0.0.0.0",
-        "--port", "7860", "--proxy-headers", "--forwarded-allow-ips", "*",
+        "--port", "7860", "--no-access-log", "--proxy-headers", "--forwarded-allow-ips", "*",
     ], str(Path(__file__).resolve().parent)))
     return commands
 
