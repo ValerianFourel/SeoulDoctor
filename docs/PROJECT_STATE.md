@@ -1,5 +1,83 @@
 # SeoulDoc project state
 
+
+## Verified simplification pass, 2026-09-06
+
+Owner: side-conversation refactor session. Delivery branch:
+`local/rag-visible-evidence-20260906`. Implementation commit:
+`a7c26ce6159453e134611aab9400ba34a1d1ea95`.
+Work was isolated on `local/debloat-shadowed-defaults` in
+`/tmp/seouldoc-debloat-shadowed-defaults`, then fast-forwarded onto the delivery
+branch after verification. Owned files: `backend/utils.py`,
+`backend/tests/test_citywide_defaults.py`, and this coordination entry only.
+Other sessions' source changes and dirty documentation were preserved.
+
+Read-only inventory counted tracked Python, JavaScript, and TypeScript files
+under backend, frontend, services, and scripts, excluding `next-env.d.ts`.
+Counts include blank lines and tests, but exclude data and generated artifacts.
+The initial baseline at `8c17793d0f00b6ee040185ea50d854f2c6b801d2` was
+114 files and 37,474 lines. The main thread independently added two diagnostic
+files with 274 lines in `903a2996b55698bfeddb61603a0a3165a1cf4a9a`.
+After rebasing, the comparable baseline was 116 files and 37,748 lines.
+
+| Metric | Rebased baseline | Refactor result |
+| --- | ---: | ---: |
+| Source files including tests | 116 | 117 |
+| Source lines including tests | 37,748 | 37,748 |
+| Lines in utils.py | 978 | 933 |
+| Definitions of ensure_city_wide_defaults | 2 | 1 |
+| Backend dependency declarations | 16 | 16 |
+| Retriever declarations across five manifests | 25 | 25 |
+| Frontend runtime dependencies | 6 | 6 |
+| Frontend development dependencies | 12 | 12 |
+
+The ranked deletion plan was:
+1. Shadowed city-wide defaults definition: 45 lines, clear maintenance benefit,
+   low behavior risk, cheap characterization and syntax-tree verification.
+2. Repeated evaluation state defaults: possible dozens of lines, medium risk
+   from runner-specific state contracts. Deferred.
+3. Oversized main and retrieval modules: potentially large benefit, high risk
+   and verification cost, active main-thread ownership. Deferred.
+4. Dependency and compatibility removal: deletion benefit not proven, high
+   deployment or privacy risk without usage evidence. Retained.
+
+Only item 1 shipped. Python already replaced the first definition with the
+second during module execution. The deleted body, docstring, six standalone
+comments, and one inline comment could not affect subsequent callers.
+The live function, public signature, imports, and all callers remain unchanged.
+No runtime wrapper or new abstraction was introduced. The existing State shape,
+Seoul-spelling behavior, coordinate truthiness, and privacy logging were retained.
+The new 45-line test characterizes ten input combinations before and after
+deletion. A whole-module AST comparison proved that the shadowed definition
+was the only executable-code subtraction.
+
+Focused characterization passed before and after deletion. Full backend
+discovery passed 211 tests before rebase and 213 tests in 3.873 seconds after
+rebase. The isolated frontend production build passed after rebase. Its initial
+sandboxed attempt failed with a generic webpack error; the approved host retry
+passed. Dependencies were reused, not installed or modified. No environment
+files or real datasets were copied into the worktree.
+
+Deslop and no-comments reviews were performed locally before commit. The
+side-conversation prohibition on sub-agents prevented independent agent review.
+No added comments, suppressions, defensive wrappers, casts, or compatibility
+layers were found. No comments were restored, no extra fixes were accepted,
+and no constraint encodings remain open. Existing branch changes outside this
+pass were inspected only for overlap, not rewritten.
+
+The Laziness Protocol limited this pass to one proven deletion. Subtract Before
+You Add ruled out a replacement helper. Minimize Reader Load removed the
+misleading second source of behavior. Model the Domain retained the existing
+State object rather than adding a new representation. Prove It Works required
+both characterization and AST equivalence, followed by full verification.
+
+No sealed cases, thresholds, retrieval algorithms, public APIs, deployment
+contracts, dependency manifests, credentials, or private artifacts changed.
+Broader repository simplification is not complete. Remaining risks are the
+deferred candidates and the absence of an independent review agent.
+Next action: select another unowned, behavior-pinned simplification after the
+main evaluation work, using this same narrow verification standard.
+
 Updated: 2026-09-05
 
 This file records the work shared between the local Codex session and Codex
