@@ -19,7 +19,7 @@ def target_checks(body, target):
     text = normalized(target["comment"])
     source_id = target["source_evidence_id"]
     match = re.search(r":review:(\d+)$", source_id)
-    evidence_id = None
+    evidence_id = target.get("evidence_id")
     if match:
         identity = f"{place}|{int(match[1])}|{target['comment'].strip()}"
         evidence_id = "review:" + sha256(identity.encode()).hexdigest()[:20]
@@ -44,10 +44,28 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_dir", type=Path)
     parser.add_argument("--oracle", type=Path, required=True)
+    parser.add_argument("--reviews", type=Path)
     args = parser.parse_args()
     oracle = json.loads(args.oracle.read_text())
-    statuses, failures, methods, judges = Counter(), Counter(), Counter(), Counter()
-    latencies, exact, total_turns = [], {}, 0
+    sealed_targets = {}
+    if args.reviews:
+        import pyarrow.dataset as ds
+        cases = json.loads((ROOT / "backend/tests/grounded_bilingual_scenarios.json").read_text())["scenarios"]
+        target_cases = [case for case in cases if case.get("oracle", {}).get("reverse_target")]
+        places = list({str(case["oracle"]["reverse_target"]["place_id"]) for case in target_cases})
+        table = ds.dataset(args.reviews, format="parquet").to_table(
+            columns=["place_id", "review_index", "review_text"], filter=ds.field("place_id").isin(places))
+        source = {}
+        for row in table.to_pylist():
+            text = str(row["review_text"] or "").strip()
+            identity = f"{row['place_id']}|{int(row['review_index'])}|{text}"
+            eid = "review:" + sha256(identity.encode()).hexdigest()[:20]
+            source[eid] = {"place_id": row["place_id"], "source_evidence_id": eid, "evidence_id": eid, "comment": text}
+        for case in target_cases:
+            decisive = case["oracle"]["reverse_target"]["evidence_requirements"]["decisive"]
+            sealed_targets[case["id"]] = [source[item["evidence_id"]] for item in decisive]
+    statuses, failures, methods, judges, repairs = Counter(), Counter(), Counter(), Counter(), Counter()
+    latencies, exact, sealed_exact, total_turns = [], {}, {}, 0
     for path in sorted(args.run_dir.glob("*/result.json")):
         record = json.loads(path.read_text())
         statuses[record["status"]] += 1
@@ -67,6 +85,9 @@ def main():
         sid = record["scenario_id"]
         if sid in oracle:
             exact[sid] = [target_checks(t["body"], oracle[sid]) for t in conversation["turns"]]
+        if sid in sealed_targets:
+            sealed_exact[sid] = [[target_checks(t["body"], target) for target in sealed_targets[sid]]
+                                 for t in conversation["turns"]]
         judge_file = path.parent / "judges.json"
         if judge_file.exists():
             for review in json.loads(judge_file.read_text())["reviews"]:
@@ -75,18 +96,26 @@ def main():
     ledger_path = args.run_dir / "model_usage.json"
     ledger = json.loads(ledger_path.read_text())["calls"] if ledger_path.exists() else []
     costs = [(call.get("usage") or {}).get("cost") for call in ledger]
+    repair_calls = 0
+    for path in args.run_dir.glob("*/*-review-repair-v1.json"):
+        attempts = json.loads(path.read_text())["attempts"]
+        repair_calls += len(attempts)
+        costs.extend((attempt.get("usage") or {}).get("cost") for attempt in attempts)
+        repairs["valid_citations" if attempts[-1]["citation_valid"] else "invalid_or_error"] += 1
     report = {"release_passed": False, "statuses": dict(statuses), "successful_app_turns": total_turns,
               "http_errors": dict(failures), "service_statuses": dict(methods), "judges": dict(judges),
               "request_latency_seconds": {"count": len(latencies),
                 "median": latencies[len(latencies)//2] if latencies else None,
                 "p95": latencies[min(len(latencies)-1, int(len(latencies)*0.95))] if latencies else None},
-              "model_calls": len(ledger), "reported_model_cost_usd": sum(c for c in costs if isinstance(c, (int,float))),
+              "model_calls": len(ledger), "repair_calls": repair_calls, "repair_judgments": dict(repairs),
+              "reported_model_cost_usd": sum(c for c in costs if isinstance(c, (int,float))),
               "calls_missing_reported_cost": sum(c is None for c in costs), "app_model_cost_excluded": True,
               "holdout_exact_comment_checks": exact,
+              "sealed_exact_comment_checks": sealed_exact,
               "limitations": ["Citation validation is not semantic judgment validation",
                  "Recorded failed app requests are included in latency", "No GPU-backed release verification"]}
     atomic_write(args.run_dir / "objective_summary.json", report)
-    print(json.dumps({k:v for k,v in report.items() if k != "holdout_exact_comment_checks"}))
+    print(json.dumps({k:v for k,v in report.items() if not k.endswith("exact_comment_checks")}))
 
 
 if __name__ == "__main__":

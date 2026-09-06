@@ -1,4 +1,4 @@
-"""Re-review invalid Qwen records without replaying any app conversation."""
+"""Re-review invalid judge records without replaying any app conversation."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,11 +22,13 @@ def main():
     pending = []
     for path in args.run_dir.glob("*/judges.json"):
         reviews = json.loads(path.read_text())["reviews"]
-        if any(x["model"] == "qwen/qwen3.8-27b" and not x["citation_valid"] for x in reviews):
-            pending.append(path.parent)
+        for item in reviews:
+            if not item["citation_valid"]:
+                pending.append((path.parent, item["model"]))
 
-    def review(directory):
-        output = directory / "qwen-review-repair-v1.json"
+    def review(task):
+        directory, model = task
+        output = directory / (model.replace("/", "-") + "-review-repair-v1.json")
         if output.exists():
             return {"scenario": directory.name, "status": "existing_record_preserved"}
         conversation = json.loads((directory / "conversation.json").read_text())
@@ -36,7 +38,7 @@ def main():
                     {"role": "user", "content": json.dumps({"dimensions": DIMENSIONS,
                      "turns": conversation["turns"]}, ensure_ascii=False)}]
         record = {"scenario": directory.name, "provisional": True, "original_review_preserved": True,
-                  "model": "qwen/qwen3.8-27b", "max_tokens": 8192,
+                  "model": model, "max_tokens": 8192,
                   "reasoning": {"effort": "none", "exclude": True}, "attempts": []}
         for attempt in range(2):
             begin = time.perf_counter()
