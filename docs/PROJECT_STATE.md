@@ -324,6 +324,10 @@ resources will be started under the current runbook restriction.
 
 ### Verified implementation checkpoint
 
+Implementation commit: `af1bf165948625b2fe24983862ca416f4bb2355f`.
+This integrates the pre-existing selector and ranking corrections, retaining
+their related tests. Unrelated untracked workspace files remain untouched.
+
 Local changes add full-eligible-scope lexical comment discovery before the
 20-facility semantic shortlist, warning-first evidence selection, and mandatory
 remote-service completion checks in the production search path. Failed retries
