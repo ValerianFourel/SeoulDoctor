@@ -26,3 +26,11 @@ The browser fixtures were synthetic UI checks, separate from real retrieval.
 Deployment status will be recorded after the authorized same-Space upload.
 No reranking, embedding, query fixture, translation API, hardware or corpus
 change was made by this display task.
+
+The display change was committed/pushed at
+66022eabf25ee0dde0ebeab4276aef78d7e6ef0b and uploaded as Space source
+4138eb056b80f4689fb0ef87244cf128c44280b2 before the later no-deployment
+cleanup instruction. A final read-only check reported RUNNING_APP_STARTING
+on existing l40sx1; runtime SHA still 2e9a6e65b1037f347791fb265cbe061ebcb070c7.
+Activation and live card verification are pending. No restart or second upload
+was made. The subsequent behavior-preserving cleanup is local only.

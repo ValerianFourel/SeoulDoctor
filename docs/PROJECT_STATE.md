@@ -896,3 +896,29 @@ three or fewer words filtered out. Korean rules and API evidence remain intact.
 browser checks passed filtering, 3/7/2 pagination, Previous and collapse.
 Next action: verify the display deployment; address missing reranking and the
 two English semantic failures separately before repeating the frozen suite.
+
+## Light cleanup handoff, 2026-09-07
+
+Owner: root, branch ncs, code commit
+1807fa81f5709514562935fcef37cede6d17ae85. Owned source is only
+frontend/components/ReviewEvidence.tsx, with planning/12-light-cleanup.md
+and this appended entry. The component now selects a usable translation once
+for both filtering and rendering. No public interfaces, pagination, original
+visibility, translation fallback, evaluation semantics or ranking changed.
+The documentation side conversation's uncommitted files are preserved.
+
+Verified 3,336 exact before/after HTML renders, English desktop/Korean mobile
+browser controls, 253 backend tests and the frontend build. Sequential local
+how/deslop/comment review followed the poteto Refactoring playbook; no agents
+were delegated. No further live evaluation, deployment or infrastructure change
+ran during cleanup. The cleanup commit is local and was not pushed.
+
+The preceding display release remains uploaded at Space source
+4138eb056b80f4689fb0ef87244cf128c44280b2, from Git
+66022eabf25ee0dde0ebeab4276aef78d7e6ef0b. Final read-only check reports
+RUNNING_APP_STARTING on l40sx1, runtime SHA still
+2e9a6e65b1037f347791fb265cbe061ebcb070c7. Activation and live card checks
+remain unverified. The earlier evaluation completed all 50 cases but passed
+none: reranking disabled for all, two English semantic failures.
+Next action: review the local cleanup, then diagnose retrieval service failures
+in a separate task. Do not deploy this cleanup under the current instruction.
