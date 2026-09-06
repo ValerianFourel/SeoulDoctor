@@ -8,14 +8,8 @@ import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = {
-    "app": "ValerianFourel/SeoulDoctor-ncs",
-    "retriever": "ValerianFourel/SeoulDoctor-ncs-retriever",
-}
-RETRIEVER_FILES = {
-    "Dockerfile", "requirements.txt", "requirements-prod.txt",
-    "production.py", "production_core.py",
-}
+TARGETS = {"app": "ValerianFourel/SeoulDoctor-ncs-retriever"}
+RETRIEVER_FILES = {"requirements.txt", "requirements-prod.txt", "production.py", "production_core.py"}
 
 
 def git(*args):
@@ -27,10 +21,8 @@ def destination(path, component):
     if any(part.startswith(".") or part in {"tests", "node_modules", "out", "__pycache__"}
            for part in parts):
         return None
-    if component == "retriever":
-        prefix = "services/retriever/"
-        name = path.removeprefix(prefix)
-        return name if path.startswith(prefix) and name in RETRIEVER_FILES else None
+    if path.startswith("services/retriever/"):
+        return path if path.removeprefix("services/retriever/") in RETRIEVER_FILES else None
     if path == "Dockerfile" or path == "backend/requirements.txt":
         return path
     if path.startswith("backend/") and path.endswith(".py"):
@@ -90,7 +82,9 @@ def main():
     # README carries provisioned Space configuration and is intentionally retained.
     for entry in info.siblings:
         name = entry.rfilename
-        managed = destination(name, "app") if args.component == "app" else name in RETRIEVER_FILES
+        managed = destination(name, "app") or name in {
+            "production.py", "production_core.py", "requirements.txt", "requirements-prod.txt",
+        }
         if managed and name not in files:
             operations.append(CommitOperationDelete(path_in_repo=name))
     commit = api.create_commit(target, repo_type="space", operations=operations,

@@ -43,9 +43,23 @@ COPY --chown=user:user backend/*.py ./
 COPY --chown=user:user backend/search ./search
 COPY --from=frontend-builder --chown=user:user /build/frontend/out /home/user/app/frontend
 
+ARG NCS_ENABLE_GPU=false
+ENV NCS_ENABLE_GPU=${NCS_ENABLE_GPU}
+COPY --chown=user:user services/retriever/requirements*.txt /home/user/app/retriever/
+RUN if [ "$NCS_ENABLE_GPU" = "true" ]; then \
+      python -m venv /opt/retriever \
+      && /opt/retriever/bin/pip install --no-cache-dir \
+         -r /home/user/app/retriever/requirements.txt \
+         -r /home/user/app/retriever/requirements-prod.txt \
+      && /opt/retriever/bin/pip install --no-cache-dir huggingface-hub==0.28.1; \
+    fi
+COPY --chown=user:user services/retriever/production*.py /home/user/app/retriever/
+
 USER user
 
 EXPOSE 7860
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10m --retries=3 \
-    CMD ["sh", "-c", "python restore_release.py && exec uvicorn space_app:app --host 0.0.0.0 --port 7860 --proxy-headers --forwarded-allow-ips '*' "]
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/health', timeout=8)"]
+
+CMD ["python", "space_runtime.py"]

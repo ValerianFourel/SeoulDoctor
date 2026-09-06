@@ -20,3 +20,8 @@ Keep sync disabled until private Spaces and secrets are configured. Reuse corpus
 embeddings and compute new query embeddings on GPU. A first random sample is
 a plumbing check only; relevance and end-to-end recommendation quality remain
 separate verification work. No paid hardware has been provisioned.
+
+The user requested one website and GPU deployment at the existing retriever URL.
+Use the current main frontend/backend with BGE-M3 on an internal loopback port;
+keep the user-selected L4 and existing corpus. Replace the two-target deployment
+workflow with one combined target. Preserve core retrieval and ranking behavior.

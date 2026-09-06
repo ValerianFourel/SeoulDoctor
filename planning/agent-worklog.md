@@ -78,3 +78,9 @@ ready on CPU. Local checks: 222 backend tests and five retriever tests passed;
 frontend production build passed. Live GPU inference and comment display are
 pending the manual GPU upgrade. Automatic GitHub sync still needs NCS_HF_TOKEN
 and NCS_HF_SYNC_ENABLED configured in GitHub; source upload is manual for now.
+
+Combined deployment prepared and locally verified: 225 backend tests passed,
+five retriever tests passed, and frontend build passed. The root routing test
+proves HTML, existing API routes, and GPU readiness can coexist. User authorized
+additional app keys; they were privately configured on the existing L4 Space.
+The ncs sync target is now that combined Space only. Live verification pending.

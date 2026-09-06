@@ -642,3 +642,23 @@ ready on CPU. Local checks: 222 backend tests and five retriever tests passed;
 frontend production build passed. Live GPU inference and comment display are
 pending the manual GPU upgrade. Automatic GitHub sync still needs NCS_HF_TOKEN
 and NCS_HF_SYNC_ENABLED configured in GitHub; source upload is manual for now.
+
+## Combined ncs GPU application, 2026-09-07
+
+Owner: root ncs deployment session; parent dc2e2ee5fc86f5d33609f1612208206ca606eb6b.
+User requests the full main application at SeoulDoctor-ncs-retriever, retaining
+the GPU they enabled. Remote main was fetched and remains
+64e1fc2ff1d5d8d51be5cadba6e9f308b9e8ce8f; frontend and core search match it.
+Owns Dockerfile, backend/space_runtime.py and space_app.py, deployment sync and
+workflow, focused tests, and planning records. No ranking/UI redesign is planned.
+Live inspection proved the requested Space uses NVIDIA L4 and BGE-M3 CUDA query
+inference succeeds; its root 404 is an API-only deployment. The original Space
+also now uses L4, a user-managed change which this task will not modify.
+The earlier ncs Dockerfile accidentally replaced HEALTHCHECK CMD and omitted
+startup CMD. Correct this deployment bug with a regression check.
+
+Combined deployment prepared and locally verified: 225 backend tests passed,
+five retriever tests passed, and frontend build passed. The root routing test
+proves HTML, existing API routes, and GPU readiness can coexist. User authorized
+additional app keys; they were privately configured on the existing L4 Space.
+The ncs sync target is now that combined Space only. Live verification pending.

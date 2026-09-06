@@ -25,12 +25,13 @@ class AssessmentDeploymentTests(unittest.TestCase):
                      "frontend/app/page.tsx", "frontend/public/img/logo.png"]:
             self.assertEqual(destination(path, "app"), path)
 
-    def test_retriever_uses_its_own_root_without_fixture_or_drafts(self):
-        self.assertEqual(destination("services/retriever/Dockerfile", "retriever"), "Dockerfile")
-        self.assertEqual(destination("services/retriever/production.py", "retriever"), "production.py")
-        for path in ["Dockerfile", "services/retriever/app.py",
+    def test_combined_bundle_keeps_gpu_sources_separate_from_backend(self):
+        for name in ["production.py", "production_core.py", "requirements.txt", "requirements-prod.txt"]:
+            path = "services/retriever/" + name
+            self.assertEqual(destination(path, "app"), path)
+        for path in ["services/retriever/Dockerfile", "services/retriever/app.py",
                      "services/retriever/production_draft.py", "services/reranker/Dockerfile"]:
-            self.assertIsNone(destination(path, "retriever"))
+            self.assertIsNone(destination(path, "app"))
 
     def test_targets_cannot_replace_original_application(self):
         self.assertNotIn("ValerianFourel/SeoulDoctor", TARGETS.values())

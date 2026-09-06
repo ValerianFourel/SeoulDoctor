@@ -27,7 +27,3 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.NCS_HF_TOKEN }}
         run: python scripts/sync_ncs_spaces.py app --apply
-      - name: Sync GPU retriever
-        env:
-          HF_TOKEN: ${{ secrets.NCS_HF_TOKEN }}
-        run: python scripts/sync_ncs_spaces.py retriever --apply
