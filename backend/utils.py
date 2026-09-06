@@ -209,51 +209,6 @@ def normalize_seoul_to_null(location: Optional[str]) -> Optional[str]:
     return location
 
 
-# REPLACEMENT for existing ensure_city_wide_defaults function
-
-def ensure_city_wide_defaults(state: State, consent: CookieConsent) -> State:
-    """
-    If no location specified (or just "Seoul"), default to city-wide Seoul search.
-    ⭐ CRITICAL: Does NOT set GPS coordinates to avoid location bias.
-    
-    This function normalizes "Seoul"-only references to None and sets up proper
-    city-wide search parameters with no location bias.
-    """
-    # ⭐ STEP 1: Normalize "Seoul" to None
-    state.location = normalize_seoul_to_null(state.location)
-    
-    # ⭐ STEP 2: Check if location is effectively empty
-    location_is_empty = (
-        not state.location and 
-        not state.latitude and 
-        not state.district
-    )
-    
-    # ⭐ STEP 3: Set city-wide defaults if no specific location
-    if location_is_empty:
-        privacy_safe_log(consent, "🌆 No specific location → defaulting to city-wide Seoul")
-        
-        # ⚠️ Keep everything NULL for true city-wide (no display bias)
-        state.location = None  # ← Explicitly None (not "Seoul")
-        state.latitude = None
-        state.longitude = None
-        state.district = None
-        state.dong = None
-        state.address_korean = None
-        
-        state.max_distance_km = 25.0
-        state.search_mode = 'distance'
-        state.travel_label = "Anywhere in Seoul"
-        state.travel_confidence = 1.0
-        state.is_citywide_search = True
-        
-        privacy_safe_log(consent, "   ✓ City-wide mode: All location fields NULL, no GPS, no district bias")
-    else:
-        # We have specific location data - preserve it
-        privacy_safe_log(consent, f"✓ Specific location preserved: {state.location or state.district or f'GPS ({state.latitude:.4f}, {state.longitude:.4f})'}")
-    
-    return state
-
 def ensure_city_wide_defaults(state: State, consent: CookieConsent) -> State:
     """
     If no location specified (or just "Seoul"), default to city-wide Seoul search.
