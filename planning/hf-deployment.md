@@ -119,3 +119,10 @@ ready on CPU. Local checks: 222 backend tests and five retriever tests passed;
 frontend production build passed. Live GPU inference and comment display are
 pending the manual GPU upgrade. Automatic GitHub sync still needs NCS_HF_TOKEN
 and NCS_HF_SYNC_ENABLED configured in GitHub; source upload is manual for now.
+
+Source upload completed from ncs commit
+4b14eb70a20386d0f14d6164244e7688098f40e3. Application Space commit:
+b8a6e1ad61486717c4fd02026f056c6cc724daeb. Retriever Space commit:
+7f1822acdae454d5db3886beef94dd6994f76651. Both uploads succeeded.
+Build/runtime readiness is separate from successful source upload.
+Next action: user selects GPU hardware in the retriever Space settings.
