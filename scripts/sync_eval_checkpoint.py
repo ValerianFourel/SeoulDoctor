@@ -10,7 +10,7 @@ import re
 from huggingface_hub import HfApi
 
 
-DEFAULT_DATASET = "ValerianFourel/seouldoc-eval-handoff-20260905"
+DEFAULT_DATASET = "ValerianFourel/seouldoc-eval-handoff"
 RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
 TOKEN_PATTERN = re.compile(
     r"(?i)(?:bearer\s+|sk-or-v1-|hf_)[A-Za-z0-9._~+/=-]{12,}"

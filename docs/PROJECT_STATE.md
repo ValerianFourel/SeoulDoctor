@@ -42,8 +42,8 @@ scenario wording to make a run pass.
   `ValerianFourel/seouldoc-app-release-20260905` at revision
   `3911d79dc31e6a6ccfa3f64a7e401b88893bf66a`.
 - The private result Dataset is
-  `ValerianFourel/seouldoc-eval-handoff-20260905`. Its seeded checkpoint
-  revision is `6602bd2f4e84d902ee52fb4651bc845f4378d96a`.
+  `ValerianFourel/seouldoc-eval-handoff`. Its latest checkpoint
+  revision is `ea0ec8f6fb5b462df0808193a95c297691d92880`.
 - The release has 8,484 facilities, 8,484 facility vectors, 1,791,749 raw
   reviews, and 2,060,433 evidence rows.
 - At `2026-09-05T10:22:29Z`, the local deployment checkpoint recorded a
@@ -262,3 +262,38 @@ The Hugging Face jobs API returned no running job in the 20 most recent jobs.
 The two T4 Small jobs created on 2026-09-05 at 10:08 UTC are canceled. Do not
 start replacement hardware for the evaluation suites. The targeted gate can
 use the running CPU Basic Space and the configured remote model provider.
+
+## Targeted live gate — 2026-09-06
+
+Task owner: root evaluation coordinator. Result ownership was limited to
+`.codex-handoff/results/targeted-20260906T125751Z/`. Patient agents made calls
+only to the private `ValerianFourel/SeoulDoctor` Space.
+
+The targeted gate failed and the remaining suites were not launched. The
+English patient journey saved two of three required turns and remained active.
+The suite runner rejected that incomplete checkpoint and did not replay it.
+The Korean journey completed all three turns. Its deterministic grade failed
+`retrieval_orchestration` and `retrieval_orchestration_each_turn`. The target
+facility was retrieval rank 1 and presented rank 1, with its required decisive
+evidence attached. Three contextual evidence IDs were missing. Qwen grading did
+not run because journey integrity failed first.
+
+The run made five application calls. No call was made after the targeted gate
+failed. The redacted journeys, deterministic Korean grade, suite report, and
+run summary were uploaded to private Dataset
+`ValerianFourel/seouldoc-eval-handoff` at commit
+`ea0ec8f6fb5b462df0808193a95c297691d92880`.
+
+Unresolved failures:
+
+- The English journey stopped after two successful recorded turns and cannot
+  be resumed or replayed under the append-only run contract.
+- The Korean journey did not satisfy the required retrieval action ordering on
+  every search turn.
+- The complete sealed, bilingual regression, stress, and random holdout suites
+  remain blocked by the targeted gate.
+
+The next action is to create a separate RAG fix branch, reproduce the Korean
+retrieval orchestration failure without changing the sealed cards, and inspect
+why the English third turn did not produce a complete checkpoint. After a fix,
+run the same targeted pair with a new run ID.

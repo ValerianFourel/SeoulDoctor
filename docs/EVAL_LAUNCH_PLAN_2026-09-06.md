@@ -31,7 +31,7 @@ These non-secret variables are optional because the scripts contain pinned defau
 SEOULDOC_APP_ENDPOINT=https://valerianfourel-seouldoctor.hf.space/chat
 SEOULDOC_RELEASE_DATASET=ValerianFourel/seouldoc-app-release-20260905
 SEOULDOC_RELEASE_REVISION=3911d79dc31e6a6ccfa3f64a7e401b88893bf66a
-SEOULDOC_RESULTS_DATASET=ValerianFourel/seouldoc-eval-handoff-20260905
+SEOULDOC_RESULTS_DATASET=ValerianFourel/seouldoc-eval-handoff
 ```
 
 Never print credential values. Never write them to prompts, logs, manifests, or result files.

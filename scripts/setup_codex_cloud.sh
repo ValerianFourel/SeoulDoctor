@@ -8,7 +8,7 @@ release_root="$handoff_root/release"
 checkpoint_root="$handoff_root/checkpoints"
 release_dataset="${SEOULDOC_RELEASE_DATASET:-ValerianFourel/seouldoc-app-release-20260905}"
 release_revision="${SEOULDOC_RELEASE_REVISION:-3911d79dc31e6a6ccfa3f64a7e401b88893bf66a}"
-results_dataset="${SEOULDOC_RESULTS_DATASET:-ValerianFourel/seouldoc-eval-handoff-20260905}"
+results_dataset="${SEOULDOC_RESULTS_DATASET:-ValerianFourel/seouldoc-eval-handoff}"
 
 if [[ -z "${HF_TOKEN:-}" ]]; then
   echo "HF_TOKEN must be configured as a Codex Cloud environment variable." >&2

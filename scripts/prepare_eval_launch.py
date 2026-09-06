@@ -17,7 +17,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PINNED_ENDPOINT = "https://valerianfourel-seouldoctor.hf.space/chat"
 PINNED_RELEASE = "ValerianFourel/seouldoc-app-release-20260905"
 PINNED_REVISION = "3911d79dc31e6a6ccfa3f64a7e401b88893bf66a"
-PINNED_RESULTS = "ValerianFourel/seouldoc-eval-handoff-20260905"
+PINNED_RESULTS = "ValerianFourel/seouldoc-eval-handoff"
 TARGETED_SCENARIOS = (
     "reverse-yongsan-peds-03-en",
     "reverse-yongsan-peds-03-ko",

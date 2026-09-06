@@ -19,9 +19,9 @@ journeys. Run the targeted gate first and the full suite only after it passes.
 - Verified Space source revision:
   `dfab9c80082a2b274916edc8d5ea40ed95e3b8a2`
 - Private checkpoint Dataset:
-  `ValerianFourel/seouldoc-eval-handoff-20260905`
-- Seed checkpoint revision:
-  `6602bd2f4e84d902ee52fb4651bc845f4378d96a`
+  `ValerianFourel/seouldoc-eval-handoff`
+- Latest checkpoint revision:
+  `ea0ec8f6fb5b462df0808193a95c297691d92880`
 - Local run lineage: `20260905-hf-release-eval-resume1`
 
 The release Dataset contains:
@@ -71,7 +71,7 @@ Recommended non-secret values:
 SEOULDOC_APP_ENDPOINT=https://valerianfourel-seouldoctor.hf.space/chat
 SEOULDOC_RELEASE_DATASET=ValerianFourel/seouldoc-app-release-20260905
 SEOULDOC_RELEASE_REVISION=3911d79dc31e6a6ccfa3f64a7e401b88893bf66a
-SEOULDOC_RESULTS_DATASET=ValerianFourel/seouldoc-eval-handoff-20260905
+SEOULDOC_RESULTS_DATASET=ValerianFourel/seouldoc-eval-handoff
 ```
 
 `SEOULDOC_EVAL_AUTH_TOKEN` must be a token that can call the private Space.
