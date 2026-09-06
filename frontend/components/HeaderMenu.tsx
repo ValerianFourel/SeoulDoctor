@@ -117,6 +117,13 @@ export default function HeaderMenu() {
                   >
                     <span>⚙️</span> How It Works
                   </Link>
+                  <Link
+                    href="/docs"
+                    onClick={() => setIsOpen(false)}
+                    className="block px-4 py-2.5 text-sm hover:bg-blue-50 transition-colors flex items-center gap-2"
+                  >
+                    <span>📚</span> Documentation
+                  </Link>
                   <Link 
                     href="/faq" 
                     onClick={() => setIsOpen(false)}

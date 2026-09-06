@@ -2,6 +2,8 @@
 
 **AI-Powered Medical Facility Search for Seoul, South Korea**
 
+Public, launch-ready documentation is available at [`/docs`](http://localhost:3000/docs) when the frontend is running.
+
 A sophisticated conversational AI system that helps users find the right medical facilities in Seoul based on their specific needs, location, and preferences. The system uses hybrid search (BM25 + Vector embeddings), natural language processing, and intelligent routing to provide highly personalized medical facility recommendations.
 
 ---
