@@ -566,3 +566,27 @@ evaluation tools. It does not deploy the Hugging Face application.
 Backend discovery passed 216 tests in 3.988 seconds and the frontend production
 build passed. User changes to `AGENTS.md`, presentation files, package files,
 and retriever drafts remain outside the publication.
+
+## AI-Native Builder assessment setup, 2026-09-06
+
+Owner: Codex assessment setup session. Branch `ncs`, isolated worktree
+`/tmp/seouldoc-ncs`. Starting commit
+`64e1fc2ff1d5d8d51be5cadba6e9f308b9e8ce8f`, also the observed local
+`origin/main` integration reference. Owns `planning/`, the assessment section
+in `README.md`, and this appended coordination entry only on `ncs`.
+Original-worktree changes to this file and AGENTS.md remain outside this branch.
+The user's current assessment instruction prohibits product changes, paid
+compute, deployment, visibility changes, and private artifact publication.
+Historical permissions above are not exercised for this task.
+
+Setup delivers the baseline, plan, reviewer workflow, decisions, factual agent
+worklog, demo outline, submission checklist, and session-export limitations.
+Local isolated checks passed: 36 focused evaluator tests, frontend production
+build, and setup shell syntax. No live evaluation or resource inspection ran.
+Historical model/index/Dataset revisions remain unchanged and are not freshly
+verified; no assessment resources or remote checkpoints were created.
+Repository-only live recommendations remain blocked by private data, model API
+access, and retrieval services. Public repository access is unverified.
+See `planning/handoff.md` for commit resolution and remaining tasks.
+Next action: select one reproducible preference-refinement journey and identify
+the smallest measurable change, including a bounded synthetic fixture if needed.

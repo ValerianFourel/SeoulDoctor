@@ -10,6 +10,30 @@ pinned: false
 
 # Seoul Doctor Matchmaker 🏥
 
+## AI-Native Builder assessment
+
+The `ncs` branch starts from `64e1fc2f`. SeoulDoctor's multilingual chat,
+facility search, evidence rendering, and evaluation tools already existed.
+Assessment setup adds reviewer instructions and planning artifacts only;
+new product behavior is pending. The proposed build will improve one
+reproducible conversational recommendation journey, with scope chosen first.
+
+See [the assessment brief](planning/assessment-brief.md),
+[reviewer setup and run commands](planning/reviewer-setup.md), and
+[the plan](planning/plan.md). With existing dependencies, run
+`npm --prefix frontend run build` for an offline frontend check. Local chat uses
+FastAPI on port 8000 and Next.js on port 3000; the reviewer guide lists both
+commands and their data/service prerequisites.
+
+Live recommendations require private data and external services. A small,
+clearly labeled synthetic demo is proposed for reproducible review, trading
+live-retrieval proof for a repeatable journey. No demo mode is built yet.
+[Baseline checks](planning/baseline.md) distinguish verified local results from
+historical claims elsewhere in this README. [Agent worklog](planning/agent-worklog.md)
+and [session-log status](planning/session-logs/README.md) document collaboration.
+Public repository access and the short demo recording remain pending in the
+[submission checklist](planning/submission-checklist.md).
+
 **AI-Powered Medical Facility Search for Seoul, South Korea**
 
 Public, launch-ready documentation is available at [`/docs`](http://localhost:3000/docs) when the frontend is running.
