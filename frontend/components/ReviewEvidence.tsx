@@ -4,6 +4,14 @@ import { useId, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
 const LETTER = new RegExp("\\p{L}", "u");
+const FIRST_PAGE_SIZE = 3;
+const NEXT_PAGE_SIZE = 7;
+
+function isShortEnglish(text: string, language?: string) {
+  const english = language === "English" || language === "en"
+    || (!language && /[a-z]/i.test(text) && !LETTER.test(text.replace(/[a-z]/gi, "")));
+  return english && /[a-z]/i.test(text) && (text.match(/[a-z0-9]+(?:['’][a-z0-9]+)*/gi) ?? []).length <= 3;
+}
 
 type Presentation =
   | { status: "hidden" | "original" | "unavailable"; language: string }
@@ -31,11 +39,20 @@ export default function ReviewEvidence({ reviews, language }: {
   const [expanded, setExpanded] = useState(true);
   const [page, setPage] = useState(0);
   const contentId = useId();
-  const visible = reviews.filter(review => review.is_verbatim
-    && LETTER.test(review.text.replace(/[\u1100-\u11ff\u3130-\u318f]/g, "")));
+  const visible = reviews.filter(review => {
+    if (!review.is_verbatim || !LETTER.test(review.text.replace(/[\u1100-\u11ff\u3130-\u318f]/g, ""))) return false;
+    const presentation = review.presentation;
+    if (presentation?.status === "translated" && presentation.language === language && presentation.text.trim()) {
+      return !isShortEnglish(presentation.text, presentation.language);
+    }
+    return !isShortEnglish(review.text, review.language);
+  });
 
-  const currentPage = Math.min(page, Math.max(0, Math.ceil(visible.length / 5) - 1));
-  const pageReviews = visible.slice(currentPage * 5, currentPage * 5 + 5);
+  const lastPage = Math.max(0, Math.ceil((visible.length - FIRST_PAGE_SIZE) / NEXT_PAGE_SIZE));
+  const currentPage = Math.min(page, lastPage);
+  const pageStart = currentPage === 0 ? 0 : FIRST_PAGE_SIZE + (currentPage - 1) * NEXT_PAGE_SIZE;
+  const pageEnd = Math.min(visible.length, pageStart + (currentPage === 0 ? FIRST_PAGE_SIZE : NEXT_PAGE_SIZE));
+  const pageReviews = visible.slice(pageStart, pageEnd);
 
   return (
     <section className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -55,7 +72,7 @@ export default function ReviewEvidence({ reviews, language }: {
       <div id={contentId} hidden={!expanded} className="mt-2">
         {visible.length === 0 ? (
           <p className="text-sm text-slate-600">
-            {korean ? "표시할 수 있는 원문 후기가 반환되지 않았습니다." : "No original comments were returned for this facility."}
+            {korean ? "표시할 수 있는 후기가 없습니다." : "No comments available to display."}
           </p>
         ) : (
           <div className="space-y-3">
@@ -92,13 +109,13 @@ export default function ReviewEvidence({ reviews, language }: {
             })}
           </div>
         )}
-        {visible.length > 5 && (
+        {visible.length > FIRST_PAGE_SIZE && (
           <nav className="mt-3 flex items-center justify-between text-xs" aria-label={korean ? "후기 페이지" : "Review pages"}>
             <button type="button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)} className="rounded px-2 py-1 text-blue-700 disabled:text-slate-400">
               {korean ? "이전" : "Previous"}
             </button>
-            <span>{currentPage * 5 + 1}–{Math.min(currentPage * 5 + 5, visible.length)} / {visible.length}</span>
-            <button type="button" disabled={(currentPage + 1) * 5 >= visible.length} onClick={() => setPage(currentPage + 1)} className="rounded px-2 py-1 text-blue-700 disabled:text-slate-400">
+            <span>{pageStart + 1}–{pageEnd} / {visible.length}</span>
+            <button type="button" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)} className="rounded px-2 py-1 text-blue-700 disabled:text-slate-400">
               {korean ? "다음" : "Next"}
             </button>
           </nav>

@@ -872,3 +872,27 @@ the wrong clinic even when its returned place_id agrees with that wrong card.
 Eight expansion tests and 253 full backend tests passed after this correction.
 No further live call ran; the frozen blocked checkpoint remains unchanged.
 Owner and next action remain as recorded above.
+
+## Fifty-case execution and comment-page limits, 2026-09-07
+
+Owner: root. Evaluation source HEAD: 7c8bb944d70451d5db734bbabac68cc10be8220c
+on ncs. Owns this appended entry and planning/10-fifty-case-retrieval.md for the
+run; frontend/components/ReviewEvidence.tsx and planning/11-comment-page-limits.md
+for the subsequent display request. Preserve the documentation side conversation's
+uncommitted explanation and coordination entry.
+
+Run mini-retrieval-50-20260906T233703Z completed all 50 frozen cases against
+Space 2e9a6e65b1037f347791fb265cbe061ebcb070c7 on its existing L40S.
+Real CUDA readiness passed. Warmup 1.577s; measured retrieval 146.962s. Hits:
+26 facilities, 31 admission reviews, 12 selected comments; zero ownership errors
+or timeouts. All 50 incomplete: reranker disabled, two English semantic failures.
+Exit 1 is a failed quality gate. Private checkpoint revision
+06dccdcccbc3b27c26c72f87be088d8cb79604a9. No hardware or retrieval changes.
+
+After the run, the user's display request was implemented: three comments on
+the first page, up to seven on later pages, and English displayed comments with
+three or fewer words filtered out. Korean rules and API evidence remain intact.
+253 backend tests and frontend build passed; English desktop/Korean mobile
+browser checks passed filtering, 3/7/2 pagination, Previous and collapse.
+Next action: verify the display deployment; address missing reranking and the
+two English semantic failures separately before repeating the frozen suite.
