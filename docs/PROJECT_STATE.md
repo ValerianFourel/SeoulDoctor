@@ -372,3 +372,23 @@ repairs, and end-to-end/concurrency verification. The pipeline is not complete.
 Next action: obtain a fresh bounded temporary-GPU authorization, inspect
 resources again, then finish service integration and deploy for the unchanged
 targeted gate. Do not launch a broader evaluation until that gate passes.
+
+### Renewed resource authorization
+
+The user has approved two replacement temporary T4 jobs, at most one hour
+each, capped at USD 0.80 combined plus OpenRouter charges. This supersedes
+the earlier no-replacement instruction for this pair only. No persistent
+hardware or storage is authorized. Published T4 Small plus exposed-port cost
+is USD 0.41/hour per job; use 55-minute timeouts to retain billing headroom.
+Inspect active resources before launch and cancel or let both expire afterward.
+Root continues ownership of the sequential service integration and evaluation.
+
+Renewed preflight: authenticated resource inspection again found the CPU Basic
+Space running at `c291916971fe30c70db9f655a9fa727790b27e2e` and all 20 returned
+jobs terminal. No replacement jobs were launched. The tool approval reviewer
+again rejected uploading the inspected metadata-only checkpoint, despite the
+user's renewed approval, citing `.env` loading and `.codex-handoff` upload as
+prohibited. The upload restriction conflicts with this runbook's explicit
+redacted-checkpoint upload requirement. Resolve that execution-policy conflict
+before spending the newly approved GPU budget. The prior checkpoint remains
+local and no new live evaluation has started.
