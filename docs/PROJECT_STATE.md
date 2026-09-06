@@ -84,6 +84,11 @@ This file records the work shared between the local Codex session and Codex
 Cloud. Update it before every handoff. Record observed results as verified
 facts. Put untested expectations under assumptions or unresolved issues.
 
+The consolidated [retrieval and evaluation work log](RETRIEVAL_EVAL_HANDOFF_2026-09-06.md)
+records the current implementation, exact revisions, historical failures,
+credential restart blocker, and remaining work. Its latest authorization summary
+supersedes historical cost and diagnostic-stop restrictions below.
+
 ## Objective
 
 Improve SeoulDoc's retrieval-augmented generation system through repeatable
@@ -105,9 +110,6 @@ scenario wording to make a run pass.
 
 - The coordination branch starts from code commit
   `d77ffac10639ef6c4c6f7d796b0a84ae1f84811a`.
-- The repository contains eight sealed scenarios in
-  `backend/tests/grounded_bilingual_scenarios.json`. They form four English,
-  Korean, or code-switch pairs.
 - `backend/tests/run_grounded_bilingual_suite.py` writes a checkpoint after
   each stage. It refuses to treat partial output as a pass.
 - The application model is `openai/gpt-oss-120b`. The saved full journeys are
@@ -155,8 +157,6 @@ scenario wording to make a run pass.
 | Keep hard rules server-owned. | A model may suggest evidence queries, but it must not change specialty, location, radius, prohibited rules, facility IDs, weights, or limits. |
 | Search within one authoritative eligible scope. | Facility retrieval and evidence retrieval must obey the same geographic and hard-rule boundary. |
 | Keep evidence identity through the response. | A review-dependent claim passes only when the evidence ID and facility ID still match the selected source comment. |
-| Gate the full run behind a targeted run. | This limits paid calls and gives a clear failure point before all eight journeys and Qwen grading. |
-| Keep the existing eight scenarios sealed. | Stable cases make before-and-after RAG comparisons meaningful. |
 | Put new random cases in a separate holdout batch. | A recorded random sample detects overfitting without changing the regression casebook. |
 | Use one branch and result path per simultaneous task. | Separate write targets prevent local and Cloud sessions from overwriting code or checkpoints. |
 | Keep artifacts in private Hugging Face Datasets. | Git stays small, while Cloud can restore the pinned release and intermediate results. |
@@ -289,7 +289,7 @@ a facility review.
 2. Run `python scripts/prepare_eval_launch.py` and require `"ready": true`.
 3. Query the Space and GPU job status. Do not duplicate active paid jobs.
 4. Run the unchanged targeted Yongsan pair.
-5. If the targeted pair passes, run the eight sealed journeys.
+5. Select the next diagnostic cases for the feature being improved.
 6. Run the 12-case bilingual regression suite and the 10-level stress ladder.
 7. Regenerate the 12-journey random holdout from the pinned seed and release.
 8. Run each random card in an isolated patient context and grade every result.
@@ -504,3 +504,65 @@ new charges, deployment, or remote checkpoint upload occurred. The pipeline and
 the 42-case evaluation remain unfinished. Next action: inject the three
 credentials into the agent process environment, then inspect existing resources
 and complete service integration before using the bounded GPU window.
+
+### Credential and resource recheck, 2026-09-06
+
+The user explicitly authorized loading `backend/.env` into the process for
+this task and lifted the USD 0.80 cap for necessary temporary computation.
+No permanent infrastructure is authorized. Root will still bound job durations
+and concurrency and report costs. This supersedes the older cap, not the
+requirements to inspect resources and clean up afterward.
+
+Credential loading succeeded with all three required names present, without
+printing values. Authenticated inspection found the private app still at
+`c291916971fe30c70db9f655a9fa727790b27e2e`, running on CPU Basic. All 20 listed
+jobs are terminal. The private results Dataset revision is
+`33b85912daf0ff08f55c9990f99c2aad37048d3c`.
+
+The execution approval reviewer rejected the metadata-only checkpoint upload
+twice. The second review accepted the private upload authorization but rejected
+the explicit dotenv load under its interpretation of AGENTS.md, despite the
+user's specific exception. No workaround was attempted. This is an execution
+approval conflict, not absent credentials or absent user authorization. No paid
+jobs, app deployment, or new evaluations were launched. The user-edited
+AGENTS.md was read and preserved without modification or staging.
+
+Root also corrected the obsolete retriever guide that instructed agents to
+build the already-existing corpus. Next action: resolve the execution-layer
+credential restriction through approved environment injection or reviewer
+policy, verify checkpoint upload, then continue service integration and live
+evaluation. The broad retrieval and 42-case evaluation objectives remain open.
+
+### Diagnostic queue ownership
+
+Root now owns `scripts/run_parallel_diagnostics.py` and its regression tests.
+The restarted session has process-environment credentials, and the prior local
+checkpoint uploaded at `1eabb4c5867302670529d4204a1fbe3d6f35663b`.
+A fresh targeted diagnostic run uses `diagnostic-targeted-20260906-resume2`.
+The planned shared queue evaluates the current deployed revision, not the local
+implementation. It explicitly labels missing GPU readiness and provisional
+independent judgments. No after-deployment success can be inferred from it.
+
+### Incremental improvement scope, 2026-09-06
+
+The user has deferred aggregate release-gate discussion and requested a ranked
+list of small product improvements. Historical results and scenario definitions
+remain preserved. Current reporting focuses on observed patient-facing failures,
+not a release score. Root owns this coordination entry. The explicitly requested
+`incremental_report` subagent owns only `docs/EVAL_RESULTS_2026-09-06.md` for a
+documentation-only cleanup. No application change, deployment, or evaluation is
+authorized by this narrower reporting task alone. Existing broader permissions
+are not exercised in this unit.
+
+### Main publication preparation, 2026-09-06
+
+The user authorized removing the remaining aggregate-check documentation
+references and publishing the task code to `main`. Root owns this sequential
+documentation and integration step. Historical raw results and test definitions
+remain unchanged. The current [diagnostic report](EVAL_RESULTS_2026-09-06.md)
+records the observed feature failures without the deferred aggregate score.
+The publication includes the existing retrieval-to-reply implementation and
+evaluation tools. It does not deploy the Hugging Face application.
+Backend discovery passed 216 tests in 3.988 seconds and the frontend production
+build passed. User changes to `AGENTS.md`, presentation files, package files,
+and retriever drafts remain outside the publication.

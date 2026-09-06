@@ -77,10 +77,21 @@ digest. A mismatch returns HTTP 409. Request limits are 50 facilities, 64 query
 cells, 2,000 characters per query, and 20 results per facility, query, and
 channel.
 
-## Remaining build step
+## Existing production release
 
-The runtime and app integration are implemented. The production 1.79-million
-review release has not been encoded yet. Build it offline on a temporary GPU,
-validate it against the raw-review digest and the component retrieval gates,
-then publish it to a private Dataset repository. Do not build the corpus during
-Space startup or a chat request.
+Reuse the existing private Dataset `ValerianFourel/seouldoc-bge-m3-review-index`
+at revision `a6a3ab6f70c67c15090d175efd4ecdea553b329e`. Its BGE-M3 model revision
+is `5617a9f61b028005a4858fdac845db406aefb181`. The source Dataset is
+`ValerianFourel/seouldoc-app-release-20260905` at revision
+`3911d79dc31e6a6ccfa3f64a7e401b88893bf66a`.
+
+The recorded full audit matched all 1,791,749 eligible review IDs and facility
+owners, with no missing, duplicate, or orphaned entries. Dense vectors exist
+for every eligible review. There are 989 empty learned-sparse rows. Encoding
+used a 128-token limit, exceeded by 57,134 original reviews, so full-text
+lexical retrieval remains important. Do not regenerate this corpus to restore
+an expired service.
+
+Artifact coverage does not establish live GPU readiness. Verify authenticated
+query inference, exact model/source revisions, both retrieval channels,
+evidence resolution, and actual CUDA execution before evaluation.

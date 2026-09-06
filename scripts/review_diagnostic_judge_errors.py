@@ -18,6 +18,7 @@ from scripts.run_parallel_diagnostics import DIMENSIONS, JUDGE_PROMPT, validate_
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_dir", type=Path)
+    parser.add_argument("--workers", type=int, default=3, choices=range(1, 5))
     args = parser.parse_args()
     pending = []
     for path in args.run_dir.glob("*/judges.json"):
@@ -67,7 +68,7 @@ def main():
                 break
         return {"scenario": directory.name, "citation_valid": record["attempts"][-1]["citation_valid"]}
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
         for future in as_completed([pool.submit(review, path) for path in pending]):
             print(json.dumps(future.result()), flush=True)
 

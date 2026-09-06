@@ -3,6 +3,13 @@ from scripts.summarize_diagnostics import target_checks
 
 
 class TargetCheckTests(unittest.TestCase):
+    def test_source_verified_identity_takes_precedence_over_normalized_sampler_text(self):
+        target = {"place_id": "a", "source_evidence_id": "a:review:0.0",
+                  "evidence_id": "review:verified", "comment": "normalized text"}
+        body = {"state": {"last_retrieval_metadata": {
+            "evidence_admissions": [{"evidence_id": "review:verified"}]}}, "results": []}
+        self.assertTrue(target_checks(body, target)["mapped_target_admitted"])
+
     def test_attached_comment_is_not_automatically_visible(self):
         target = {"place_id": "a", "source_evidence_id": "a:review:0", "comment": "nurses are rude"}
         body = {"response": "The doctor is kind.", "results": [{"place_id": "a",

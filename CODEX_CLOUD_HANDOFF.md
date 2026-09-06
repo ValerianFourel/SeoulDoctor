@@ -110,10 +110,11 @@ thresholds, and never label an incomplete or failed run as passed. Adaptive
 patient conversations remain a separate mode. Use new run IDs, separate
 checkpoint ownership, and identify the deployment revision for every result.
 
-The two replacement temporary GPU jobs retain the USD 0.80 combined cap.
-Inspect existing resources first. Use at most 55 minutes per job to leave
-headroom for exposed-port charges. This is not authorization for persistent
-hardware or storage.
+The user's latest authorization lifts the earlier USD 0.80 combined cap for
+necessary temporary computation. Inspect existing resources first, bound every
+job's duration and concurrency, and track costs. Prefer an initial 55-minute
+window and reassess actual progress before further spending. This is not
+authorization for persistent hardware, storage, or unrelated computation.
 
 Configure `BGE_M3_RETRIEVER_EXPIRES_AT` and `RERANKER_EXPIRES_AT` on the backend
 with timezone-aware ISO-8601 deadlines no later than the respective job
@@ -146,7 +147,8 @@ backend/venv/bin/python scripts/sync_eval_checkpoint.py "$target_dir"
 ```
 
 Proceed only when that command exits zero and `suite_report.json` says
-`"passed": true`. Then run all eight scenarios with Qwen judging:
+`"passed": true`. The following historical command runs the full grounded suite;
+it is not required for the current incremental-improvement discussion:
 
 ```bash
 full_run="cloud-full-$(date -u +%Y%m%dT%H%M%SZ)"

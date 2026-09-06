@@ -12,15 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "backend")]
 from patient_journey import atomic_write
 from scripts.audit_visible_evidence import normalized
+from evidence_response import finalize_evidence_response
 
 
 def target_checks(body, target):
     place = str(target["place_id"])
     text = normalized(target["comment"])
     source_id = target["source_evidence_id"]
-    match = re.search(r":review:(\d+)$", source_id)
+    match = re.search(r":review:(\d+)(?:\.0+)?$", source_id)
     evidence_id = target.get("evidence_id")
-    if match:
+    if match and evidence_id is None:
         identity = f"{place}|{int(match[1])}|{target['comment'].strip()}"
         evidence_id = "review:" + sha256(identity.encode()).hexdigest()[:20]
     cards = body.get("results") or []
@@ -52,20 +53,29 @@ def main():
         import pyarrow.dataset as ds
         cases = json.loads((ROOT / "backend/tests/grounded_bilingual_scenarios.json").read_text())["scenarios"]
         target_cases = [case for case in cases if case.get("oracle", {}).get("reverse_target")]
-        places = list({str(case["oracle"]["reverse_target"]["place_id"]) for case in target_cases})
+        places = list({str(case["oracle"]["reverse_target"]["place_id"]) for case in target_cases}
+                      | {str(target["place_id"]) for target in oracle.values()})
         table = ds.dataset(args.reviews, format="parquet").to_table(
             columns=["place_id", "review_index", "review_text"], filter=ds.field("place_id").isin(places))
-        source = {}
+        source, source_rows = {}, {}
         for row in table.to_pylist():
             text = str(row["review_text"] or "").strip()
             identity = f"{row['place_id']}|{int(row['review_index'])}|{text}"
             eid = "review:" + sha256(identity.encode()).hexdigest()[:20]
             source[eid] = {"place_id": row["place_id"], "source_evidence_id": eid, "evidence_id": eid, "comment": text}
+            source_rows[(str(row["place_id"]), int(row["review_index"]))] = source[eid]
+        for target in oracle.values():
+            match = re.search(r":review:(\d+)(?:\.0+)?$", target["source_evidence_id"])
+            if match:
+                original = source_rows[(str(target["place_id"]), int(match[1]))]
+                if normalized(original["comment"]) != normalized(target["comment"]):
+                    raise ValueError("Holdout source identity mismatch")
+                target["evidence_id"] = original["evidence_id"]
         for case in target_cases:
             decisive = case["oracle"]["reverse_target"]["evidence_requirements"]["decisive"]
             sealed_targets[case["id"]] = [source[item["evidence_id"]] for item in decisive]
     statuses, failures, methods, judges, repairs = Counter(), Counter(), Counter(), Counter(), Counter()
-    latencies, exact, sealed_exact, total_turns = [], {}, {}, 0
+    latencies, exact, sealed_exact, rerendered, total_turns = [], {}, {}, {}, 0
     for path in sorted(args.run_dir.glob("*/result.json")):
         record = json.loads(path.read_text())
         statuses[record["status"]] += 1
@@ -88,6 +98,13 @@ def main():
         if sid in sealed_targets:
             sealed_exact[sid] = [[target_checks(t["body"], target) for target in sealed_targets[sid]]
                                  for t in conversation["turns"]]
+            if conversation["turns"]:
+                body = dict(conversation["turns"][-1]["body"])
+                state = body.get("state", {})
+                body["response"], body["results"] = finalize_evidence_response(
+                    body.get("response", ""), body.get("results", []),
+                    state.get("last_retrieval_metadata") or {}, state.get("language_pref", "English"))
+                rerendered[sid] = [target_checks(body, target) for target in sealed_targets[sid]]
         judge_file = path.parent / "judges.json"
         if judge_file.exists():
             for review in json.loads(judge_file.read_text())["reviews"]:
@@ -112,6 +129,8 @@ def main():
               "calls_missing_reported_cost": sum(c is None for c in costs), "app_model_cost_excluded": True,
               "holdout_exact_comment_checks": exact,
               "sealed_exact_comment_checks": sealed_exact,
+              "offline_renderer_only_exact_comment_checks": rerendered,
+              "renderer_comparison_is_live": False,
               "limitations": ["Citation validation is not semantic judgment validation",
                  "Recorded failed app requests are included in latency", "No GPU-backed release verification"]}
     atomic_write(args.run_dir / "objective_summary.json", report)

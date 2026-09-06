@@ -4,12 +4,12 @@ This runbook prepares and launches every committed scenario family without chang
 
 ## Evaluation inventory
 
-The launch includes four scenario families:
+The current incremental plan focuses on these scenario families. The complete
+runner inventory remains unchanged in code:
 
-1. The sealed grounded suite contains eight English, Korean, and code-switch journeys in four language pairs.
-2. The bilingual regression suite contains 12 English and Korean journeys. It covers specialty, location, review-language bridging, amenities, negative preferences, insufficient evidence, prompt injection, and subjective polarity.
-3. The agentic stress ladder contains 10 progressive English, Korean, and mixed-language requests.
-4. The randomized holdout contains six facilities with paired English and Korean cards, for 12 journeys. Regenerate it from the pinned release with seed `6688037892107667854` before patient runs.
+1. The bilingual regression suite contains 12 English and Korean journeys. It covers specialty, location, review-language bridging, amenities, negative preferences, insufficient evidence, prompt injection, and subjective polarity.
+2. The agentic stress ladder contains 10 progressive English, Korean, and mixed-language requests.
+3. The randomized holdout contains six facilities with paired English and Korean cards, for 12 journeys. Regenerate it from the pinned release with seed `6688037892107667854` before patient runs.
 
 The committed scenario definitions stay frozen during the run. Do not replace a failed case or edit a target, threshold, prompt, or oracle after the first application response.
 
@@ -82,20 +82,6 @@ backend/venv/bin/python scripts/sync_eval_checkpoint.py "$target_dir"
 ```
 
 Proceed only when the runner exits zero and `suite_report.json` contains `"passed": true`.
-
-## Run all sealed grounded journeys
-
-```bash
-sealed_run="cloud-sealed-$(date -u +%Y%m%dT%H%M%SZ)"
-sealed_dir=".codex-handoff/results/$sealed_run"
-
-backend/venv/bin/python backend/tests/run_grounded_bilingual_suite.py \
-	--run-id "$sealed_run" \
-	--run-dir "$sealed_dir" \
-	--endpoint "${SEOULDOC_APP_ENDPOINT:-https://valerianfourel-seouldoctor.hf.space/chat}"
-
-backend/venv/bin/python scripts/sync_eval_checkpoint.py "$sealed_dir"
-```
 
 ## Run the bilingual regression suite
 
