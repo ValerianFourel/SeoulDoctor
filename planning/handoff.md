@@ -48,3 +48,20 @@ The initial sandbox attempt failed DNS; the approved retry succeeded.
 The pre-push hook reported three nonblocking medium PII/internal findings
 without details; public-submission review remains pending. No Space sync ran
 and no GitHub secret or enabling variable was configured by this session.
+
+## Private ncs Spaces created, 2026-09-06
+
+Created ValerianFourel/SeoulDoctor-ncs and
+ValerianFourel/SeoulDoctor-ncs-retriever as private Docker Spaces on CPU Basic.
+The user will select GPU hardware manually in the retriever Space settings.
+No GPU allocation or persistent storage purchase was performed. Required
+process-authorized credentials were set as Space secrets without printing them.
+The original Space remains unchanged at 8fb1fc893eaac192bb514047d8e0577055a425df.
+
+The ncs application now restores its pinned private release at startup instead
+of depending on an external mount. The retriever explicitly selects CUDA and
+performs a bilingual embedding probe exposed at /ready/gpu. It will not become
+ready on CPU. Local checks: 222 backend tests and five retriever tests passed;
+frontend production build passed. Live GPU inference and comment display are
+pending the manual GPU upgrade. Automatic GitHub sync still needs NCS_HF_TOKEN
+and NCS_HF_SYNC_ENABLED configured in GitHub; source upload is manual for now.

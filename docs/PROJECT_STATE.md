@@ -614,3 +614,31 @@ The initial sandbox attempt failed DNS; the approved retry succeeded.
 The pre-push hook reported three nonblocking medium PII/internal findings
 without details; public-submission review remains pending. No Space sync ran
 and no GitHub secret or enabling variable was configured by this session.
+
+### Authorized credential loading and live provisioning
+
+The user explicitly authorized loading HF_TOKEN, OPENROUTER_API_KEY, and
+SEOULDOC_EVAL_AUTH_TOKEN from backend/.env into this deployment process.
+No values are printed or committed. The read-only inspection succeeded: original
+Space 8fb1fc893eaac192bb514047d8e0577055a425df remains RUNNING on CPU Basic;
+all 20 returned jobs are terminal. Pinned semantic manifest matches 1,791,749
+reviews and model revision 5617a9f61b028005a4858fdac845db406aefb181.
+Root additionally owns backend/restore_release.py, Dockerfile startup wiring,
+retriever GPU verification, their tests, and deployment records on ncs only.
+
+## Private ncs Spaces created, 2026-09-06
+
+Created ValerianFourel/SeoulDoctor-ncs and
+ValerianFourel/SeoulDoctor-ncs-retriever as private Docker Spaces on CPU Basic.
+The user will select GPU hardware manually in the retriever Space settings.
+No GPU allocation or persistent storage purchase was performed. Required
+process-authorized credentials were set as Space secrets without printing them.
+The original Space remains unchanged at 8fb1fc893eaac192bb514047d8e0577055a425df.
+
+The ncs application now restores its pinned private release at startup instead
+of depending on an external mount. The retriever explicitly selects CUDA and
+performs a bilingual embedding probe exposed at /ready/gpu. It will not become
+ready on CPU. Local checks: 222 backend tests and five retriever tests passed;
+frontend production build passed. Live GPU inference and comment display are
+pending the manual GPU upgrade. Automatic GitHub sync still needs NCS_HF_TOKEN
+and NCS_HF_SYNC_ENABLED configured in GitHub; source upload is manual for now.

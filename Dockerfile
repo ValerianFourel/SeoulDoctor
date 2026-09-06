@@ -48,6 +48,4 @@ USER user
 EXPOSE 7860
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10m --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/health', timeout=8)"]
-
-CMD ["sh", "-c", "set -eu; release=/mnt/seouldoc-release; marker=/data/seouldoc/.release-20260905-ready; if [ ! -f \"$marker\" ]; then mkdir -p /data/seouldoc/chroma_db /data/seouldoc/search_indexes; chmod -R u+w /data/seouldoc/search_indexes; cp \"$release/sources/facilities.parquet\" /data/seouldoc/facilities.parquet; cp \"$release/sources/reviews.parquet\" /data/seouldoc/reviews.parquet; cp -R \"$release/chroma_db/.\" /data/seouldoc/chroma_db/; chmod -R u+w /data/seouldoc/chroma_db; cp -R \"$release/search_indexes/.\" /data/seouldoc/search_indexes/; chmod -R a-w /data/seouldoc/search_indexes; touch \"$marker\"; fi; exec uvicorn space_app:app --host 0.0.0.0 --port 7860 --proxy-headers --forwarded-allow-ips \"*\""]
+    CMD ["sh", "-c", "python restore_release.py && exec uvicorn space_app:app --host 0.0.0.0 --port 7860 --proxy-headers --forwarded-allow-ips '*' "]
