@@ -1,7 +1,7 @@
 # Separate 50-draw retrieval suite
 
 Owner: root, branch `ncs`. Implementation commit:
-`2b186c6116997b6036c1c551fc51b9b7b1d35508`. The original
+`8bd1368e32b16f53c74b1460c4c79e4d5c569cd3`. The original
 `scripts/mini_retrieval_eval.py`, its seven fixtures, historical checkpoints,
 and planning note 06 are unchanged. This expansion changes no application,
 retrieval ranking, embeddings, hardware, or deployment configuration.
@@ -128,10 +128,11 @@ to the pinned private Dataset revision above. The gate attempt used evaluator
 SHA-256 `f3467cca7ef7737d9369400cd746c0c82d5c08be5eed3403c64262873f449220`;
 the final code additionally labels in-progress checkpoints honestly, prints
 runtime diagnostics, records its own hash, and reports unavailable throughput
-as null. The blocked artifact was retained unchanged after those refinements.
+as null. A final ownership regression also checks target labels when a comment
+is consistently misassigned to the wrong card and returned owner. The blocked artifact was retained unchanged after those refinements.
 No second live attempt was made.
 
-Local checks: 252 backend tests passed, including seven focused expansion tests;
+Local checks: 253 backend tests passed, including eight focused expansion tests;
 36 required evaluation/grader tests passed; frontend production build passed.
 Five retriever tests passed in 0.73 seconds on a bounded host retry; the
 sandboxed attempt stalled and was interrupted. Shell syntax and Git diff checks

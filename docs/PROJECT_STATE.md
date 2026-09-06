@@ -865,3 +865,10 @@ Final local checks: 252 backend tests, 36 focused evaluation/grader tests, five
 retriever tests (bounded host retry), frontend build, shell syntax and diff
 checks passed. The sandboxed retriever attempt stalled and was interrupted.
 No live retrieval retry followed the blocked checkpoint.
+
+Final evaluator code commit: 8bd1368e32b16f53c74b1460c4c79e4d5c569cd3 on ncs.
+A final review added an explicit private-label check for a target selected under
+the wrong clinic even when its returned place_id agrees with that wrong card.
+Eight expansion tests and 253 full backend tests passed after this correction.
+No further live call ran; the frozen blocked checkpoint remains unchanged.
+Owner and next action remain as recorded above.
