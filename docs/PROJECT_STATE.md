@@ -590,3 +590,20 @@ access, and retrieval services. Public repository access is unverified.
 See `planning/handoff.md` for commit resolution and remaining tasks.
 Next action: select one reproducible preference-refinement journey and identify
 the smallest measurable change, including a bounded synthetic fixture if needed.
+
+## Assessment Space deployment preparation, 2026-09-06
+
+Owner: Codex ncs deployment session. Branch `ncs`, parent
+`31eca96c3919d489d979b88efbe25cb949a64df3`. Owns the new ncs sync workflow,
+`scripts/sync_ncs_spaces.py`, its deployment tests, and planning updates.
+The user now requests an isolated Hugging Face deployment following ncs and GPU
+BGE-M3 retrieval. This supersedes setup-only scope for that deployment.
+Existing application Space, main branch, and sealed evaluations stay unchanged.
+Use the existing corpus embeddings; live GPU query encoding is the missing step.
+Initial process checks found HF_TOKEN and OPENROUTER_API_KEY absent. No remote
+inspection, creation, hardware allocation, or deployment has run in this unit.
+
+Local verification completed: 220 backend tests passed in 4.115 seconds,
+including four new deployment-boundary tests. Frontend production build passed.
+Both source-manifest dry runs passed. Live provisioning and sync remain blocked
+by absent credentials; no remote success is claimed.

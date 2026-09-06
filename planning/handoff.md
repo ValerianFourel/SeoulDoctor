@@ -33,3 +33,11 @@ reviewer-setup.md if continuing locally.
 Single next action: select one reproducible preference-refinement journey and
 identify its smallest measurable improvement, including a bounded synthetic
 fixture if needed for reviewer reproduction.
+
+## Deployment follow-up
+
+The setup-only phase is over: the user requested a separate Hugging Face
+assessment deployment with GPU retrieval. Source synchronization and its tests
+are prepared, but no live deployment has occurred. See hf-deployment.md.
+Current next action: inject HF_TOKEN and OPENROUTER_API_KEY through the process
+environment, then inspect live resources and provision the isolated Spaces.

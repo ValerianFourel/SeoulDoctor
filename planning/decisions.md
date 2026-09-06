@@ -11,3 +11,12 @@
 | 2026-09-06 | Record an honest worklog and export limitation | No supported active-session export was exposed by inspected tools. |
 
 No implementation design, model replacement, or new evaluation result has been decided.
+
+## Deployment follow-up, 2026-09-06
+
+Use separate private ncs application and GPU-retriever Spaces, following the
+existing architecture. Synchronize committed ncs sources through GitHub Actions.
+Keep sync disabled until private Spaces and secrets are configured. Reuse corpus
+embeddings and compute new query embeddings on GPU. A first random sample is
+a plumbing check only; relevance and end-to-end recommendation quality remain
+separate verification work. No paid hardware has been provisioned.

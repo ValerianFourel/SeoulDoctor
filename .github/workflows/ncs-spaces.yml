@@ -1,0 +1,33 @@
+name: Deploy ncs assessment Spaces
+on:
+  push:
+    branches: [ncs]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ncs-spaces
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.ref == 'refs/heads/ncs' && vars.NCS_HF_SYNC_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: git checkout -B ncs HEAD
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install huggingface-hub==1.3.2
+      - name: Sync application
+        env:
+          HF_TOKEN: ${{ secrets.NCS_HF_TOKEN }}
+        run: python scripts/sync_ncs_spaces.py app --apply
+      - name: Sync GPU retriever
+        env:
+          HF_TOKEN: ${{ secrets.NCS_HF_TOKEN }}
+        run: python scripts/sync_ncs_spaces.py retriever --apply

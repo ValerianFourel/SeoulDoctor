@@ -39,3 +39,18 @@ model configuration or skill installation was performed.
 Codex wrote the planning files and README entry and reviewed their paths,
 commands, claims, and diff scope. Future implementation, debugging, recording,
 public-access checks, and session-log publication remain pending.
+
+## Deployment preparation follow-up
+
+The user authorized a separate assessment Hugging Face deployment and GPU
+retrieval milestone. Codex inspected deployment sources, current official Hub
+documentation, and process credential presence. HF_TOKEN and OPENROUTER_API_KEY
+were absent. It prepared a branch-scoped source synchronizer and GitHub workflow,
+with four focused deployment-boundary tests passing. No actual Space or GPU
+was created. The existing corpus is to be reused. GPU inference and visible
+comment proof remain pending; the current health endpoint alone cannot prove CUDA.
+
+Local verification completed: 220 backend tests passed in 4.115 seconds,
+including four new deployment-boundary tests. Frontend production build passed.
+Both source-manifest dry runs passed. Live provisioning and sync remain blocked
+by absent credentials; no remote success is claimed.
