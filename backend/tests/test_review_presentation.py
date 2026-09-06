@@ -142,3 +142,20 @@ class TranslationTests(unittest.TestCase):
             "retrieval_evidence_groups": {"supporting": [source]}}], {}, "English")
         self.assertEqual(cards[0]["retrieval_evidence"][0]["text"], source["text"])
         self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["status"], "original")
+
+    def test_spelled_time_count_is_preserved_but_changed_duration_rejected(self):
+        source = "설명을 제대로 듣지 못했고 2시간 넘게 기다렸어요."
+        items, _ = self.prepare([source], ["I did not hear the explanation properly and waited over two hours."])
+        self.assertEqual(items[0]["presentation"]["status"], "translated")
+        items, _ = self.prepare([source], ["I waited over three hours."])
+        self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+        self.assertEqual(items[0]["text"], source)
+
+    def test_comment_heavy_cards_use_one_bounded_deduplicated_batch(self):
+        from review_presentation import MAX_TRANSLATION_REVIEWS
+        sources = [f"간호사가 설명을 해주었어요 {index}" for index in range(MAX_TRANSLATION_REVIEWS + 1)]
+        translations = [f"The nurse explained things {index}" for index in range(MAX_TRANSLATION_REVIEWS)]
+        items, post = self.prepare(sources, translations)
+        self.assertEqual(len(post.call_args.kwargs["json"]["q"]), MAX_TRANSLATION_REVIEWS)
+        self.assertEqual(items[-1]["presentation"]["status"], "unavailable")
+        self.assertTrue(all(item["presentation"]["status"] == "translated" for item in items[:-1]))

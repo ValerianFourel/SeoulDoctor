@@ -1205,17 +1205,7 @@ export default function ChatInterface() {
                                   </div>
                                 )}
 
-                                {(facility.recommendation_status === "not_established" ||
-                                  facility.recommendation_status === "requires_review") && (
-                                  <p className="my-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                                    {currentState.language_pref === "Korean"
-                                      ? "조건 충족이 확인되지 않은 검색 후보입니다. 아래 후기와 주의사항을 확인해 주세요."
-                                      : "Search candidate, not an established match. Review the comments and caveats below."}
-                                  </p>
-                                )}
-
-                                {summary && facility.recommendation_status !== "not_established" &&
-                                  facility.recommendation_status !== "requires_review" && (
+                                {summary && (
                                   <div className="my-3">
                                     <p className={`text-sm sm:text-base text-slate-600 leading-relaxed break-words ${
                                       !isExpanded && needsExpansion ? 'line-clamp-2' : ''

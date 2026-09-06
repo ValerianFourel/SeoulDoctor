@@ -9,7 +9,7 @@ import requests
 
 TRANSLATION_URL = "https://translation.googleapis.com/language/translate/v2"
 MAX_TRANSLATION_CHARACTERS = 16000
-MAX_TRANSLATION_REVIEWS = 20
+MAX_TRANSLATION_REVIEWS = 100
 
 
 def response_language(message, previous="English", *, established=False, explicit=None):
@@ -48,6 +48,17 @@ def needs_translation(text, language):
 def _symbols(text):
     return [char for char in text if unicodedata.category(char) in {"So", "Sk"}
             or char in {'\u200d', '\ufe0f', '\u20e3'}]
+
+
+def _numbers(text):
+    time_counts = {word: str(number) for number, word in enumerate(
+        ("zero", "one", "two", "three", "four", "five", "six", "seven",
+         "eight", "nine", "ten", "eleven", "twelve"))}
+    normalized = re.sub(
+        r"\b(" + "|".join(time_counts) + r")\s+(?=(?:hours?|minutes?|days?|weeks?|months?|years?)\b)",
+        lambda match: time_counts[match.group(1).lower()] + " ", text, flags=re.IGNORECASE,
+    )
+    return re.findall(r"\d+(?:[.,]\d+)*", normalized)
 
 
 def prepare_review_presentations(cards, language, *, translation_api_key=""):
@@ -94,7 +105,7 @@ def prepare_review_presentations(cards, language, *, translation_api_key=""):
             translation = unescape(translation)
             if _symbols(source) != _symbols(translation):
                 continue
-            if re.findall(r"\d+(?:[.,]\d+)*", source) != re.findall(r"\d+(?:[.,]\d+)*", translation):
+            if _numbers(source) != _numbers(translation):
                 continue
             if language == "English" and (re.search(r"[가-힣]", translation) or not re.search(r"[A-Za-z]", translation)):
                 continue

@@ -820,3 +820,15 @@ b76d29fa from later runner/documentation commits, records the verified incomplet
 seven-case results and private checkpoint, and preserves startup optimization as
 pending work. No new application change, evaluation or deployment ran for this
 note. Next action: measure cold-start stages before implementing note 07.
+
+## Card summaries, comment controls and Google translation, 2026-09-07
+
+Root owns frontend/components/ChatInterface.tsx and ReviewEvidence.tsx,
+backend/review_presentation.py, its tests, and planning/09-card-review-controls.md
+on ncs, parent b0bbea14ab7094fe718f4d13ec4129b2bbb8c816. User requests normal
+facility summaries in place of per-card candidate text, five comments at a time,
+a small collapse arrow, and use of the newly provided GOOGLE_TRANSLATE_API_KEY.
+The user specifically authorizes use of that key from backend/.env; load it only
+inside a private process, never display or commit it. Existing global incomplete
+search messaging and source evidence remain preserved. No ranking or location
+logic change is part of this UI/translation task.
