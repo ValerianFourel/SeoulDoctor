@@ -11,7 +11,8 @@ recommendations or finish startup optimization.
 - Worktree: `/home/valerian/Seoul/SeoulDoc/.worktrees/ncs`.
 - HEAD when this handoff was written: `f66708c6978dbb3c239c28f4aac900f59b8c4dbc`.
 - Latest application cleanup commit: `1807fa81f5709514562935fcef37cede6d17ae85`.
-  This cleanup is local, not pushed or deployed.
+  This cleanup was local at the previous handoff and is included in the
+  requested ncs branch publication. No new Space deployment is part of this update.
 - Last pushed application change: `66022eabf25ee0dde0ebeab4276aef78d7e6ef0b`.
 - Owner: root Codex session. This final documentation task owns this note,
   the pointer in `planning/handoff.md`, and an appended PROJECT_STATE entry.
@@ -206,6 +207,60 @@ rewrite or an immediate index rebuild:
 These are next steps, not completed improvements. English-language reviews do
 not prove staff speak English. Facility evidence does not identify the behavior
 or qualifications of every doctor working there.
+
+## Example task for the next session: explain facility misses
+
+Start by fixing the incomplete pipeline, then investigate where the correct
+facility loses rank. The 50-case run admitted the target comment in 31 draws,
+but placed its facility in the top five in only 26. **Those totals alone do not
+identify which cases overlap.** Compare the per-draw labels before attributing
+the gap to any stage. Report both-hit, comment-only, facility-only and neither-hit
+counts, retaining duplicate weighting and a separate unique-pair breakdown.
+
+Use this order for relevance work after verifying the deployment:
+
+1. **Fix the two English semantic failures and restore reranking.** Every case
+   was incomplete, so establish a functioning baseline before tuning relevance.
+   Reranking may help, but measure its effect rather than assuming an improvement.
+2. **Trace every missed facility through the pipeline.** Determine whether
+   specialty/location filters excluded it, initial candidates omitted it, the
+   shortlist dropped it, or final ranking put it below fifth. Identify the first
+   failing stage; each failure class needs a different fix. If existing telemetry
+   cannot establish the stage, report it as unknown instead of inferring it from
+   the final response.
+3. **Check how relevant comments affect facility scores.** When strong matching
+   evidence is retrieved for a clinic, determine whether it meaningfully affects
+   facility ranking. Avoid rewarding clinics simply for having more reviews.
+   A relevant negative review should qualify the recommendation, not
+   automatically improve the clinic's suitability.
+4. **Improve candidate recall only where it fails.** Reranking cannot recover a
+   clinic that never reaches its candidate set. If diagnostics justify it, test
+   broader facility discovery from comment matches or a modest shortlist
+   increase, preserving hard constraints. Treat this as an explicit experimental
+   variant; keep the frozen baseline limits and results unchanged.
+5. **Test one change at a time on the frozen cases.** Track facility recall at
+   five, target-comment selection, ownership, completeness and latency. Report
+   sample counts and results by unique pair as well as all draws, so repeated
+   pairs do not dominate the conclusion. Preserve failed and incomplete results.
+
+Suggested prompt for the main thread:
+
+> For every facility miss in the frozen 50-case evaluation, identify the first
+> stage where the target facility disappears or falls below fifth. Separate
+> eligibility, candidate discovery, shortlist, and final-ranking failures.
+> Report the counts before proposing the smallest fix. Keep target IDs
+> exclusively in evaluation diagnostics.
+
+This is a future diagnostic task, not a completed finding or authorization to
+inject target IDs into retrieval. Collect ordinary stage candidate IDs in
+protected diagnostics and compare them with private labels in the evaluator.
+Do not pass expected IDs or target quotations to the application as search
+inputs. Keep diagnostic records private and distinguish the incomplete historical
+run from any new complete baseline.
+
+These tests reward finding a particular source clinic. Other returned clinics
+may also be suitable. Improving target-facility recall is useful, but does not
+by itself establish better patient recommendations.
 
 ## Remaining work and the next action
 

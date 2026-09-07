@@ -938,3 +938,23 @@ retrieval and future work. No application changes, evaluation, deployment or
 infrastructure action ran while writing it. Documentation links and diff were
 checked. Next action: inspect the existing Space's active revision and GPU
 readiness, then verify the submitted display release without changing hardware.
+
+## Next-session diagnostic brief and branch publication, 2026-09-07
+
+Owner: root; branch ncs; pre-update HEAD
+1df74812f94463c1288991c77eec57b91705a0f6. Owns the addition to
+planning/13-session-handoff.md and this entry. The user requests committing
+and pushing the pending ncs code and handoff, including cleanup code commit
+1807fa81f5709514562935fcef37cede6d17ae85. Other uncommitted documentation
+is excluded. No new application changes or Hugging Face deployment are requested.
+
+The added example prioritizes complete services, then per-draw overlap and
+first-stage facility-miss diagnostics, evidence-aware facility ranking, targeted
+recall experiments and frozen-case comparisons. Target IDs stay exclusively
+in private evaluator diagnostics. Aggregate hit totals are not an overlap
+analysis, and source-clinic recall is not proof of recommendation suitability.
+Documentation checks passed; no new evaluation or test run was needed for this
+addition. Existing code verification remains 253 backend tests, frontend build,
+browser checks and 3,336 exact HTML comparisons. Next implementation task:
+restore pipeline completeness, then report eligibility/discovery/shortlist/final
+ranking failure counts before proposing the smallest relevance change.
