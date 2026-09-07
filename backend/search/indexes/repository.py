@@ -480,6 +480,30 @@ class ScopedIndex:
         self._assert_open()
         return self._index.manifest.review_source_sha256
 
+    def list_original_reviews(
+        self, *, facility_ids: Sequence[str], limit_per_facility: int = 100,
+    ) -> list[EvidenceHit]:
+        """Read a bounded, source-ordered sample without a relevance claim."""
+        self._assert_open()
+        limit = _bounded_limit(limit_per_facility, maximum=100)
+        requested = tuple(dict.fromkeys(facility_ids))
+        if len(requested) > 50:
+            raise ValueError("facility shortlist cannot contain more than 50 IDs")
+        allowed = frozenset(int(value) for value in self._ordinals)
+        ordinals = [self._index._id_to_ordinal.get(identity) for identity in requested]
+        if any(ordinal not in allowed for ordinal in ordinals):
+            raise ValueError("facility shortlist contains an ID outside scope")
+        identities = []
+        for ordinal in ordinals:
+            rows = self._evidence_connection.execute(
+                "SELECT evidence_id FROM evidence_document "
+                "WHERE facility_ordinal = ? AND source_type = 'verbatim_review' "
+                "AND is_verbatim = 1 ORDER BY ordinal LIMIT ?",
+                (ordinal, limit),
+            ).fetchall()
+            identities.extend(row[0] for row in rows)
+        return self.resolve_evidence_ids(identities)
+
     def resolve_evidence_ids(
         self,
         evidence_ids: Sequence[str],

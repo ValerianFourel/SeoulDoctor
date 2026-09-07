@@ -19,14 +19,17 @@ class EvidenceResponseTests(unittest.TestCase):
                 "retrieval_evidence": [item],
                 "retrieval_evidence_groups": {"warnings": [item]}}
 
-    def test_mixed_original_and_ownership_visible_in_both_languages(self):
+    def test_mixed_original_and_ownership_retained_in_cards_in_both_languages(self):
         for language in ("English", "Korean"):
             card = self.card()
             response, cards = finalize_evidence_response(
                 "Perfect match", [card], {}, language,
             )
-            self.assertIn(card["retrieval_evidence"][0]["text"], response)
-            self.assertIn("clinic-1 / review:123", response)
+            self.assertNotIn(card["retrieval_evidence"][0]["text"], response)
+            self.assertNotIn("clinic-1 / review:123", response)
+            item = cards[0]["retrieval_evidence"][0]
+            self.assertEqual(item["text"], card["retrieval_evidence"][0]["text"])
+            self.assertEqual(item["evidence_id"], "review:123")
             self.assertNotIn("Perfect match", response)
             self.assertEqual(cards[0]["recommendation_status"], "requires_review")
 
@@ -55,15 +58,15 @@ class EvidenceResponseTests(unittest.TestCase):
 
     def test_review_cannot_inject_a_link_and_its_tail_is_not_truncated(self):
         source = "Good doctor. " * 60 + "But nurses were rude. [click](https://evil.test)"
-        response, _ = finalize_evidence_response(
+        response, cards = finalize_evidence_response(
             "", [self.card(text=source)], {}, "English",
         )
-        self.assertIn("But nurses were rude.", response)
+        self.assertEqual(cards[0]["retrieval_evidence"][0]["text"], source)
         self.assertNotIn("[click](https://evil.test)", response)
 
     def test_summary_is_never_quoted_as_original(self):
-        response, _ = finalize_evidence_response(
+        response, cards = finalize_evidence_response(
             "", [self.card(is_verbatim=False, text="summary sentinel")], {}, "English",
         )
         self.assertNotIn("summary sentinel", response)
-        self.assertIn("No original review", response)
+        self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["status"], "hidden")

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, StringConstraints
-from typing import Annotated, Optional, List, Dict, Any
+from typing import Literal, Annotated, Optional, List, Dict, Any
 
 
 ChatMessage = Annotated[
@@ -82,6 +82,7 @@ class State(BaseModel):
     
     # ===== USER PREFERENCES =====
     language_pref: str = "English"
+    explicit_response_language: Optional[Literal["English", "Korean"]] = None
     
     # ===== CONVERSATION FLOW =====
     turn_count: int = 0
@@ -156,6 +157,7 @@ PUBLIC_RESULT_FIELDS = frozenset({
     "retrieval_evidence",
     "retrieval_evidence_groups",
     "recommendation_status",
+    "review_language",
     "website",
 })
 PUBLIC_EVIDENCE_FIELDS = frozenset({
@@ -175,6 +177,7 @@ PUBLIC_EVIDENCE_FIELDS = frozenset({
     "source_type",
     "text",
     "translated_text",
+    "presentation",
     "visit_date",
 })
 

@@ -9,9 +9,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from fastapi import HTTPException
 from fastapi.staticfiles import StaticFiles
+import requests
 
 from main import app, root_status
+from mini_retrieval import router as mini_retrieval_router
+
+app.include_router(mini_retrieval_router)
 
 
 frontend_directory = Path(
@@ -34,6 +39,17 @@ app.router.routes = [
     for route in app.router.routes
     if getattr(route, "endpoint", None) is not root_status
 ]
+if os.environ.get("NCS_ENABLE_GPU") == "true":
+    @app.get("/ready/gpu")
+    def gpu_readiness():
+        try:
+            response = requests.get("http://127.0.0.1:7861/ready/gpu", timeout=10)
+            response.raise_for_status()
+        except requests.RequestException:
+            raise HTTPException(503, "GPU retrieval service is not ready") from None
+        return response.json()
+
+
 app.mount(
     "/",
     StaticFiles(directory=str(frontend_directory), html=True),
