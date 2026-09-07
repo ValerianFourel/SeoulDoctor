@@ -582,3 +582,18 @@ empty-comment case in English/Korean and available-comment suppression.
 Frontend production build passed after the sandboxed build failed. Facility
 summaries remain visible; comment panels and debug comment text are removed.
 Deployment and live checks pending. No retrieval algorithm or NCS changes.
+
+Deployed and verified: application commit
+`b95bc833f74ef263ec97a4ff465024494484b358` was pushed to GitHub main and
+uploaded to SeoulDoctor Space revision
+`8909ff673d2e1b5e7df97010f9e309f6a9dc4c7b`. All 82 deployment files match.
+Hugging Face reports RUNNING with that exact runtime revision. Live frontend
+returned HTTP 200 and its application bundle contains no original-review
+panels or comments-below instructions. A single live Myeongdong internal
+medicine search returned HTTP 200 and five facility cards, with no original
+comment sections or missing-original message. This was a smoke check, not a
+retrieval-quality evaluation. Existing public visibility and cpu-upgrade
+hardware were preserved. No NCS deployment or branch changes occurred.
+The user explicitly authorized private credential loading from backend/.env;
+no credential values or live response contents were printed or committed.
+Next action: refresh the app and start a new search using the deployed UI.
