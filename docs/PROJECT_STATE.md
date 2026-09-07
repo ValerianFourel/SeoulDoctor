@@ -566,3 +566,19 @@ evaluation tools. It does not deploy the Hugging Face application.
 Backend discovery passed 216 tests in 3.988 seconds and the frontend production
 build passed. User changes to `AGENTS.md`, presentation files, package files,
 and retriever drafts remain outside the publication.
+
+## Main without comment presentation, 2026-09-07
+
+Owner: root; branch local/main-optional-reviews at
+`d7e1a00e810ad1f1f86c6c74a739229b4069e1ce`. Owns backend/evidence_response.py,
+backend/prompt.py, frontend/components/ChatInterface.tsx, response tests, and
+this entry. User explicitly requests removing comment display from main and
+deploying to the original SeoulDoctor Space. NCS stays unchanged. Retain
+retrieval and ownership checks, but remove original-comment reply sections,
+card panels and quotation instructions.
+
+Verification: 218 backend tests passed, including the reported five-clinic
+empty-comment case in English/Korean and available-comment suppression.
+Frontend production build passed after the sandboxed build failed. Facility
+summaries remain visible; comment panels and debug comment text are removed.
+Deployment and live checks pending. No retrieval algorithm or NCS changes.

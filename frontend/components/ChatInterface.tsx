@@ -1223,13 +1223,12 @@ export default function ChatInterface() {
                                   facility.recommendation_status === "requires_review") && (
                                   <p className="my-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
                                     {currentState.language_pref === "Korean"
-                                      ? "조건 충족이 확인되지 않은 검색 후보입니다. 아래 후기와 주의사항을 확인해 주세요."
-                                      : "Search candidate, not an established match. Review the comments and caveats below."}
+                                      ? "요청하신 조건이 모두 확인되지는 않았습니다. 방문 전에 시설에 확인해 주세요."
+                                      : "Some requirements are unconfirmed. Please check with the facility before visiting."}
                                   </p>
                                 )}
 
-                                {summary && facility.recommendation_status !== "not_established" &&
-                                  facility.recommendation_status !== "requires_review" && (
+                                {summary && (
                                   <div className="my-3">
                                     <p className={`text-sm sm:text-base text-slate-600 leading-relaxed break-words ${
                                       !isExpanded && needsExpansion ? 'line-clamp-2' : ''
@@ -1287,38 +1286,6 @@ export default function ChatInterface() {
                                   </div>
                                 )}
                                                                             
-                                {facility.retrieval_evidence?.some((evidence) => evidence.is_verbatim) && (
-                                  <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-                                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-800">
-                                      {currentState.language_pref === "Korean" ? "관련 원문 후기" : "Relevant original reviews"}
-                                    </p>
-                                    <div className="space-y-2">
-                                      {facility.retrieval_evidence
-                                        .filter((evidence) => evidence.is_verbatim)
-                                        .map((evidence, evidenceIdx) => (
-                                          <div
-                                            key={evidence.evidence_id || `${facility.place_id}-comment-${evidenceIdx}`}
-                                            className="rounded-md bg-white p-2 text-sm text-slate-700"
-                                          >
-                                            <p className="font-medium text-slate-900">
-                                              “{evidence.text}”
-                                            </p>
-                                            <p className="mt-1 text-[11px] text-slate-500">
-                                              Verbatim review{evidence.visit_date ? ` · ${evidence.visit_date}` : ""}
-                                              {evidence.relevance_reason ? ` · ${evidence.relevance_reason}` : ""}
-                                              {evidence.evidence_id ? ` · ${facility.place_id} / ${evidence.evidence_id}` : ""}
-                                            </p>
-                                          </div>
-                                        ))}
-                                    </div>
-                                    <p className="mt-2 text-[10px] text-emerald-700">
-                                      {currentState.language_pref === "Korean"
-                                        ? "환자의 경험이며 사실이나 의료적 보장을 의미하지 않습니다."
-                                        : "Patient experiences, not verified facts or clinical guarantees."}
-                                    </p>
-                                  </div>
-                                )}
-
                                 {/* Debug: Show place_id */}
                                 {ENABLE_DEBUG_MODE && debugMode && (
                                   <div className="mt-2 pt-2 border-t border-slate-200 space-y-2">
@@ -1331,16 +1298,7 @@ export default function ChatInterface() {
                                     <p className="text-xs text-emerald-700 font-mono">
                                       Exact matches: {facility.retrieval_matched_terms?.join(", ") || "none"}
                                     </p>
-                                    {facility.retrieval_evidence?.map((evidence, evidenceIdx) => (
-                                      <div key={`${facility.place_id}-evidence-${evidenceIdx}`} className="rounded bg-slate-50 p-2 text-[11px] text-slate-700">
-                                        <div className="font-mono text-slate-500">
-                                          {evidence.is_verbatim ? "actual comment" : evidence.source_type}
-                                          {evidence.source_field ? ` · ${evidence.source_field}` : ""}
-                                          {evidence.matched_terms?.length ? ` · matched: ${evidence.matched_terms.join(", ")}` : ""}
-                                        </div>
-                                        <div>{evidence.text}</div>
-                                      </div>
-                                    ))}
+
                                   </div>
                                 )}
                               </div>

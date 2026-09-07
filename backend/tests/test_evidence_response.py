@@ -19,14 +19,15 @@ class EvidenceResponseTests(unittest.TestCase):
                 "retrieval_evidence": [item],
                 "retrieval_evidence_groups": {"warnings": [item]}}
 
-    def test_mixed_original_and_ownership_visible_in_both_languages(self):
+    def test_mixed_original_retained_in_data_without_comment_presentation(self):
         for language in ("English", "Korean"):
             card = self.card()
             response, cards = finalize_evidence_response(
                 "Perfect match", [card], {}, language,
             )
-            self.assertIn(card["retrieval_evidence"][0]["text"], response)
-            self.assertIn("clinic-1 / review:123", response)
+            self.assertNotIn(card["retrieval_evidence"][0]["text"], response)
+            self.assertEqual(cards[0]["retrieval_evidence"], card["retrieval_evidence"])
+            self.assertNotIn("clinic-1 / review:123", response)
             self.assertNotIn("Perfect match", response)
             self.assertEqual(cards[0]["recommendation_status"], "requires_review")
 
@@ -58,7 +59,7 @@ class EvidenceResponseTests(unittest.TestCase):
         response, _ = finalize_evidence_response(
             "", [self.card(text=source)], {}, "English",
         )
-        self.assertIn("But nurses were rude.", response)
+        self.assertNotIn("But nurses were rude.", response)
         self.assertNotIn("[click](https://evil.test)", response)
 
     def test_summary_is_never_quoted_as_original(self):
@@ -66,4 +67,21 @@ class EvidenceResponseTests(unittest.TestCase):
             "", [self.card(is_verbatim=False, text="summary sentinel")], {}, "English",
         )
         self.assertNotIn("summary sentinel", response)
-        self.assertIn("No original review", response)
+        self.assertNotIn("No original review", response)
+
+    def test_facilities_without_comments_keep_normal_reply_in_both_languages(self):
+        names = ["명동웰니스내과의원", "연세우리들의원", "을지바른의원", "대한민국의원", "연세365의원"]
+        results = [{"place_id": str(i), "name": name} for i, name in enumerate(names)]
+        for language, original in (("English", "Here are five nearby clinics."), ("Korean", "주변 의원 다섯 곳입니다.")):
+            with self.subTest(language=language):
+                response, cards = finalize_evidence_response(original, results, {"retrieval_status": "complete"}, language)
+                self.assertEqual(response, original)
+                self.assertEqual([card["name"] for card in cards], names)
+                self.assertNotIn("###", response)
+
+    def test_available_comments_do_not_create_reply_sections(self):
+        card = self.card(evidence_role="support")
+        card["retrieval_evidence_groups"] = {}
+        response, cards = finalize_evidence_response("Here is a nearby clinic.", [card], {}, "English")
+        self.assertEqual(response, "Here is a nearby clinic.")
+        self.assertEqual(cards[0]["retrieval_evidence"], card["retrieval_evidence"])
