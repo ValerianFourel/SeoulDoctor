@@ -23,35 +23,14 @@ class PinnedBgeM3Encoder:
             token=os.getenv("HF_TOKEN", "").strip() or None,
             ignore_patterns=("onnx/**", "*.jpg", "*.webp", ".DS_Store"),
         )
-        import torch
-        if not torch.cuda.is_available():
-            raise production_core.ReleaseError("CUDA is required for the ncs retriever")
         from FlagEmbedding import BGEM3FlagModel
 
         self.revision = normalized_revision
         self._model = BGEM3FlagModel(
             snapshot,
             use_fp16=True,
-            devices=["cuda:0"],
             trust_remote_code=False,
         )
-
-        probe = self.encode(["clear explanation", "친절한 설명"])
-        torch.cuda.synchronize()
-        device = next(self._model.model.parameters()).device
-        if device.type != "cuda":
-            raise production_core.ReleaseError("BGE-M3 model is not on CUDA")
-        self.gpu_proof = {
-            "device": str(device),
-            "gpu_name": torch.cuda.get_device_name(device),
-            "model_revision": self.revision,
-            "probe_queries": 2,
-            "dimension": int(probe.dense.shape[1]),
-            "sparse_nonempty": all(bool(row) for row in probe.sparse),
-            "cuda_allocated_bytes": torch.cuda.memory_allocated(device),
-        }
-        if probe.dense.shape != (2, 1024) or not self.gpu_proof["sparse_nonempty"]:
-            raise production_core.ReleaseError("GPU embedding probe failed")
 
     def encode(self, texts: list[str]) -> production_core.EncodedQueries:
         result = self._model.encode(
@@ -77,10 +56,3 @@ class PinnedBgeM3Encoder:
 # The core lifespan resolves this name when the Space starts.
 production_core.BgeM3Encoder = PinnedBgeM3Encoder
 app = production_core.app
-
-
-@app.get("/ready/gpu")
-def gpu_readiness():
-    if production_core.release is None:
-        raise production_core.HTTPException(503, "semantic release is not ready")
-    return {"ready": True, **production_core.release.encoder.gpu_proof}

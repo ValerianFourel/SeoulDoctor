@@ -26,25 +26,6 @@ issues, task ownership, the branch, the code commit, and the next action.
 - Stop or allow temporary GPU jobs to expire after the run. Do not purchase
   persistent hardware or storage.
 
-## Translation and visibility of selected comments
-
-- Keep available original reviews visible even if translation is unconfigured,
-  fails, or the API lacks presentation metadata. Do not hide comments behind
-  a translation requirement or present summaries as original reviews.
-- Use a simple local letter-presence check to exclude number-only, emoji-only,
-  and isolated-jamo noise. Preserve short meaningful comments and emojis in text.
-  Do not use a model for comment filtering or alter the retrieval corpus.
-- Selected-comment translation uses Google Cloud Translation Basic with
-  `model=nmt`, not Qwen or another chat LLM. Configure `GOOGLE_TRANSLATE_API_KEY`
-  through approved process environment or private Space secrets. Without it,
-  return originals immediately with translation-unavailable status.
-- Bound and deduplicate translation batches. Keep original text, comment IDs,
-  facility ownership, and source metadata in the API. Label translations and
-  offer originals, while hiding internal IDs from patient-facing markup.
-- Preserve emojis, numbers, staff roles, uncertainty, and negative feedback.
-  Verify translation meaning separately from API transport. Never invent comments
-  when retrieval returns none, or infer staff language ability from review language.
-
 ## Environment and verification
 
 Prepare a fresh cloud checkout with:

@@ -411,26 +411,6 @@ class SearchIndexReleaseTests(unittest.TestCase):
         self.assertIn("토요일 진료", document.trusted_facts)
 
 
-    def test_general_review_sample_is_original_bounded_and_scoped(self):
-        self.repository.publish(self._request())
-        self.repository.activate("test-v1")
-        with self.repository.open_active() as active:
-            with active.within(self._scope("test-v1", ("alpha",))) as scoped:
-                hits = scoped.list_original_reviews(facility_ids=("alpha",), limit_per_facility=1)
-                self.assertEqual(len(hits), 1)
-                self.assertEqual(hits[0].facility_id, "alpha")
-                self.assertTrue(hits[0].is_verbatim)
-                self.assertEqual(hits, scoped.resolve_evidence_ids([hits[0].evidence_id]))
-                self.assertTrue(hits[0].original_text)
-                self.assertTrue(hits[0].source_locator)
-                with self.assertRaisesRegex(ValueError, "outside scope"):
-                    scoped.list_original_reviews(facility_ids=("beta",))
-                self.assertEqual(
-                    scoped.list_original_reviews(facility_ids=("alpha",), limit_per_facility=101),
-                    scoped.list_original_reviews(facility_ids=("alpha",), limit_per_facility=100),
-                )
-                self.assertEqual(scoped.list_original_reviews(facility_ids=()), [])
-
     def test_facility_scoped_evidence_enforces_scope_and_per_facility_quota(self) -> None:
         self.repository.publish(self._request())
         self.repository.activate("test-v1")

@@ -58,8 +58,7 @@ class SearchResponseIntegrationTests(unittest.TestCase):
     def test_actual_response_withholds_incomplete_endorsement_and_quotes_conflict(self):
         response, cards = self.search()
         self.assertIn("Search is incomplete", response)
-        self.assertNotIn("but the nurses were rude", response)
-        self.assertIn("but the nurses were rude", cards[0]["retrieval_evidence"][0]["text"])
+        self.assertIn("but the nurses were rude", response)
         self.assertNotIn("Highly recommended", response)
         self.assertEqual(cards[0]["recommendation_status"], "not_established")
 

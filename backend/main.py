@@ -133,7 +133,7 @@ from models import (
 )
 from utils import (
     safe_convert_to_python, DISTANCE_MAPPING, clean_llm_response,
-    standardize_and_fill_state,detect_search_mode, fuzzy_keyword_match,
+    standardize_and_fill_state,detect_search_mode,detect_language, fuzzy_keyword_match,
     smart_cleanse_state,detect_field_changes,print_separator, normalize_seoul_to_null,
     has_vague_medical_term,user_wants_any_specialty, ensure_city_wide_defaults,
     validate_distance_criteria,download_and_cache_parquet, DEFAULT_MAX_DISTANCE,
@@ -163,7 +163,6 @@ from cookies import (
 # Import RAG Pipeline
 from rag_pipeline import RAGPipeline
 from evidence_response import finalize_evidence_response
-from review_presentation import response_language
 from raw_review_store import ensure_raw_review_parquet
 from config import (
     BGE_M3_RETRIEVER_API_TOKEN,
@@ -2201,7 +2200,6 @@ def execute_search(
     if state.last_retrieval_metadata.get("retrieval_status") not in {None, "not_run"}:
         response_text, results = finalize_evidence_response(
             response_text, results, state.last_retrieval_metadata, language,
-            translation_api_key=os.getenv("GOOGLE_TRANSLATE_API_KEY", ""),
         )
     return response_text, serialize_results_for_chat(
         results, include_debug=ENABLE_RETRIEVAL_DEBUG
@@ -2357,11 +2355,7 @@ def chat_endpoint(
     else:
         logger.info("📨 REQUEST (limited logging - no analytics consent)")
     
-    language, explicit_language = response_language(
-        req.message, req.current_state.language_pref,
-        established=req.current_state.turn_count > 0,
-        explicit=req.current_state.explicit_response_language,
-    )
+    language = detect_language(req.message)
     
     if should_log_analytics(consent):
         logger.info("=" * 60)
@@ -2369,7 +2363,6 @@ def chat_endpoint(
     enriched_state = standardize_and_fill_state(req.current_state, consent)
     enriched_state.clear_retrieval_telemetry()
     enriched_state.language_pref = language
-    enriched_state.explicit_response_language = explicit_language
     
     current_turn = enriched_state.turn_count + 1
     

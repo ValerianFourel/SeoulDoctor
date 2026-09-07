@@ -1,10 +1,16 @@
-"""Prepare concise replies and evidence cards while retaining original records."""
+"""Render retrieved originals without delegating quotation integrity to a model."""
 
 from copy import deepcopy
-from review_presentation import prepare_review_presentations
+from html import escape
+import re
 
 
-def finalize_evidence_response(response, results, metadata, language, *, translation_api_key=""):
+def _display(text: object) -> str:
+    # Quote source data literally; never let review text create Markdown links.
+    return re.sub(r"([\\`*_{}\[\]()#+!|>])", r"\\\1", escape(str(text)))
+
+
+def finalize_evidence_response(response, results, metadata, language):
     """Return visible evidence and matching cards, withholding unsafe endorsements.
 
     Retrieval roles describe search intent, not verified sentiment or suitability.
@@ -15,6 +21,7 @@ def finalize_evidence_response(response, results, metadata, language, *, transla
     incomplete = metadata.get("retrieval_status") in {
         "incomplete", "error", "fallback", "degraded",
     } or metadata.get("coverage_sufficient") is False
+    sections = []
     requires_review = False
     for card in cards:
         facility_id = str(card.get("place_id", ""))
@@ -24,7 +31,7 @@ def finalize_evidence_response(response, results, metadata, language, *, transla
         records = []
         seen = set()
         invalid = False
-        for item in [*warnings, *selected, *groups.get("supporting", [])]:
+        for item in [*warnings, *selected]:
             if not isinstance(item, dict):
                 invalid = True
                 continue
@@ -52,6 +59,40 @@ def finalize_evidence_response(response, results, metadata, language, *, transla
             "not_established" if incomplete or invalid or unverified
             else "requires_review" if risk else "evidence_available"
         )
+        lines = [f'### {_display(card.get("name", facility_id))}']
+        if risk:
+            lines.append(
+                "주의: 피하고 싶은 조건과 관련된 후기가 있습니다. 조건을 모두 충족한다고 추천할 수 없습니다. "
+                "검색 일치만으로 부정적인 내용이 확인된 것은 아닙니다."
+                if korean else
+                "Caution: reviews relevant to your avoidance preferences need review. "
+                "I cannot recommend this as meeting all your requirements. "
+                "A search match alone does not establish a negative claim."
+            )
+        if invalid or unverified:
+            lines.append("일부 조건은 근거로 확인되지 않았습니다." if korean else
+                         "Some requirements are not established by the available evidence.")
+        quoted = False
+        for item in records:
+            if not item.get("is_verbatim") or not isinstance(item.get("text"), str):
+                continue
+            quoted = True
+            label = "원문 후기" if korean else "Original review"
+            lines.append(f'{label}:\n\n> ' + _display(item["text"]).replace("\n", "\n> "))
+            lines.append(
+                f'{"출처" if korean else "Source"}: '
+                f'{_display(facility_id)} / {_display(item["evidence_id"])}'
+            )
+            requirements = item.get("matched_constraint_ids", [])
+            if requirements:
+                lines.append(
+                    ("관련 검색 조건: " if korean else "Retrieved for requirement: ")
+                    + ", ".join(_display(value) for value in requirements)
+                )
+        if not quoted:
+            lines.append("인용할 수 있는 원문 후기를 찾지 못했습니다." if korean else
+                         "No original review is available to quote.")
+        sections.append("\n\n".join(lines))
     if incomplete:
         response = (
             "검색이 완료되지 않아 조건을 충족하는 시설을 확인할 수 없습니다. "
@@ -67,11 +108,8 @@ def finalize_evidence_response(response, results, metadata, language, *, transla
             "Please review the evidence and unresolved requirements below. "
             "These candidates are not established as meeting all your requirements."
         )
-    elif cards:
-        response = (
-            "아래 카드에서 시설과 후기를 확인해 주세요. 검색된 후기만으로 요청하신 조건이 확인되는 것은 아닙니다."
-            if korean else
-            "See the facility cards and reviews below. Retrieved reviews alone do not establish that your requirements are met."
-        )
-    prepare_review_presentations(cards, language, translation_api_key=translation_api_key)
+    if sections:
+        disclaimer = ("후기는 환자의 경험이며 사실이나 의료적 보장을 의미하지 않습니다." if korean else
+                      "Reviews describe patient experiences, not verified facts or clinical guarantees.")
+        response = "\n\n".join([response, disclaimer, *sections])
     return response, cards
