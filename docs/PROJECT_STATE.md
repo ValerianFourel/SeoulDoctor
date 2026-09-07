@@ -958,3 +958,19 @@ addition. Existing code verification remains 253 backend tests, frontend build,
 browser checks and 3,336 exact HTML comparisons. Next implementation task:
 restore pipeline completeness, then report eligibility/discovery/shortlist/final
 ranking failure counts before proposing the smallest relevance change.
+
+## Concise assessment README, 2026-09-07
+
+Owner: root; branch ncs; code HEAD 15ce04908f33ead9620ae4201523ddab980ca0e2.
+This documentation task owns README.md and this coordination entry. Read the
+planning records and used poteto-mode to summarize the builder's decisions,
+implementation, pipeline, verification, remaining work and available logs.
+The README reports 31/50 comment admissions and 26/50 top-five facility hits,
+explains why the checks differ without inventing per-case overlap, and retains
+the missing reranking and English semantic failures as context. It links the
+historical README to preserve detailed prior documentation.
+
+Relative links, preserved Space metadata and git diff --check passed. No new
+application tests, evaluation or deployment ran for this documentation change.
+Other pending documentation is excluded. Next action: restore pipeline
+completeness, then trace each frozen facility miss before relevance tuning.
