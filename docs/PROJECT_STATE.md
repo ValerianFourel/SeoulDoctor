@@ -1505,3 +1505,8 @@ verification, root candidate Likert grading and private checkpoint sync remain
 unrun pending credential authorization. No push/deployment. Next action: use
 approved process credentials to launch the isolated candidate and run the fixed
 gate before the 12 adaptive conversations.
+
+Application repair commit: c977fe68592274a988ffb4ae1d096c0e202df2d7 on
+local/ncs-search-repair-20260909. Root owns this handoff and the integrated file
+sets above. The worktree was clean at this commit; no temporary resources were
+created. The public NCS Space has not been updated by this repair task.
