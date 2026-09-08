@@ -135,9 +135,10 @@ def _summary(cards, state, korean):
     return f"{opening} {closest}"
 
 
-def _follow_up(state, korean):
+def _follow_up(state, korean, *, radius_expanded=False):
     default_distance = bool(
         state
+        and not radius_expanded
         and not state.is_citywide_search
         and state.search_mode == "distance"
         and _location_label(state, korean)
@@ -238,6 +239,8 @@ will fix it. A narrower area does not repair a failed service. Do not use the ge
 Mention unknowns only when they affect the patient's stated needs. Do not add an English-service,
 credentials, or treatment checklist when the patient did not ask about those matters. When nearby
 matches exist, suggest comparing a named clinic or narrowing the area; do not widen it by default.
+After expanding past an empty radius, suggest comparing the returned clinics rather than
+repeating the empty smaller search.
 Put a matching [1], [2] marker directly after every patient-report claim in answer.
 Every citations entry must have its [marker] inside answer, and every marker must have
 a citations entry. For example: "A patient reported clear explanations [1]."
@@ -423,7 +426,7 @@ def _answer_context(question, state, cards, metadata, language):
         next_actions.append("ask what the patient needs the doctor to help with")
     if cards:
         next_actions.append("ask about a particular clinic or requirement in its reviews")
-    if not state.is_citywide_search:
+    if not state.is_citywide_search and not (cards and metadata.get("search_radius_expanded")):
         direction = "narrower" if cards else "wider"
         next_actions.append(f"offer a {direction} radius, with patient agreement, while preserving specialty")
     return {
@@ -641,7 +644,7 @@ def _fallback(cards, state, metadata, language, reason):
             "English consultations are unconfirmed. Ask the clinic whether an English consultation is available before booking."
         )
     elif metadata.get("retrieval_execution_status") not in {"partial", "failed"}:
-        paragraphs.append(_follow_up(state, korean))
+        paragraphs.append(_follow_up(state, korean, radius_expanded=bool(metadata.get("search_radius_expanded"))))
     return "\n\n".join(paragraphs)
 
 

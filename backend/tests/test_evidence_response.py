@@ -80,6 +80,17 @@ class EvidenceResponseTests(unittest.TestCase):
         self.assertIn("widened it to 5 km", reply)
         self.assertIn("keeping orthopedics", reply)
 
+    def test_expanded_search_does_not_offer_the_empty_smaller_radius(self):
+        for language in ("English", "Korean"):
+            for concern in ([], ["ankle pain"]):
+                reply, _ = fallback_response([self.card(distance=3.5)], {
+                    "search_attempted_radii_km": [1, 2, 5], "search_radius_expanded": True,
+                    "retrieval_execution_status": "complete"}, language,
+                    state=self.state(disease_terms=concern))
+                self.assertNotIn("within 1 km", reply)
+                self.assertNotIn("1 km 이내처럼", reply)
+                self.assertNotIn("1 km 이내 같은", reply)
+
     def test_known_concern_or_visit_reason_is_not_requested_again(self):
         for state in (self.state(disease_terms=["wrist pain"]), self.state(visit_reason="routine checkup")):
             reply, _ = fallback_response([self.card()], {}, "English", state=state)
