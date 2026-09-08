@@ -428,7 +428,7 @@ class LiveRetrievalTests(unittest.TestCase):
         self.assertEqual(len(alpha["retrieval_evidence"]), 3)
         self.assertEqual(len(reranker.queries), 1)
         self.assertIn("friendly", reranker.queries[0])
-        self.assertIn("친절", reranker.queries[0])
+        self.assertNotIn(" OR ", reranker.queries[0])
 
     def test_evidence_channel_can_change_facility_order(self) -> None:
         class EvidenceForCharlie(FakeScopedIndex):
