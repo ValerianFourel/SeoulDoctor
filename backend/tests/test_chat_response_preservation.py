@@ -311,6 +311,41 @@ class ChatResponsePreservationTests(unittest.TestCase):
         self.context_builder.assert_not_called()
         self.translation_request.assert_not_called()
 
+    def test_retrieval_answer_is_generated_verified_and_preserved(self):
+        boundary = JsonModelBoundary(
+            ["PROVIDE_INFO"], [_extraction(location="Jonggak")],
+        )
+        self._install_model_boundary(boundary)
+        self._install_geocoder()
+        answer = "A patient reports clear explanations at 광화문정형외과의원 [1]. English consultation remains unconfirmed. Ask the clinic before booking."
+        proposal = {
+            "answer": answer,
+            "assessments": [{
+                "place_id": "closest", "requirement": "clear explanations",
+                "status": "supports", "basis": "patient_report",
+                "staff_role": "doctor", "evidence_ids": ["review:closest"],
+                "explanation": "A patient reports that the clinician explained the visit clearly.",
+            }],
+            "citations": [{
+                "marker": 1, "place_id": "closest", "evidence_id": "review:closest",
+                "original_excerpt": "The clinician explained the visit clearly.",
+            }],
+        }
+        with patch.object(
+            self.main, "request_answer_completion", create=True,
+            side_effect=[(proposal, None), ({"accepted": True, "issues": []}, None)],
+        ) as completion:
+            reply = self.client.post("/chat", json={
+                "message": "Orthopedics near Jonggak. Is English consultation confirmed?",
+                "current_state": State().model_dump(),
+            })
+        self.assertEqual(reply.status_code, 200, reply.text)
+        self.assertEqual(reply.json()["response"], answer)
+        self.assertEqual(completion.call_count, 2)
+        closest = next(card for card in reply.json()["results"] if card["place_id"] == "closest")
+        self.assertEqual(closest["retrieval_evidence"][0]["text"], "The clinician explained the visit clearly.")
+        self.assertEqual(closest["answer_citations"][0]["evidence_id"], "review:closest")
+
     def test_korean_retrieval_reply_and_original_reviews_survive_serialization(self):
         boundary = JsonModelBoundary(
             ["PROVIDE_INFO"],

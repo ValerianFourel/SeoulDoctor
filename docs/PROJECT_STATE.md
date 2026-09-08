@@ -1,5 +1,30 @@
 # SeoulDoc project state
 
+## NCS answer reliability implementation ownership, 2026-09-08
+
+Root owns integration on `local/ncs-answer-reliability-20260908` in
+`/tmp/seouldoc-answer-reliability`, based on
+`9036fbc4f00888fe4e9d746b69b419272408aebe`. The user authorized the full
+reliability repair, visible original reviews, tests, NCS publication and NCS
+Space verification. Main and the original Space are excluded.
+
+Root owns `backend/main.py`, response orchestration, shared state models,
+integration tests, verification/deployment scripts and coordination records.
+Separate delegates own state reducer/facets/tests, retrieval contracts/tests,
+and frontend review/citation presentation/tests in isolated worktrees. Read-only
+design delegates first compare response designs. No simultaneous delegate may
+edit root's files. The detailed local plan is
+`/tmp/seouldoc-reliability-implementation/PLAN.md`.
+
+The current process lacks `HF_TOKEN` and `OPENROUTER_API_KEY`. The current user
+instruction permits approved environment variables only, so historical dotenv
+exceptions are not exercised. Local implementation and verification proceed.
+Authenticated deployment and adaptive model calls require those environment
+variables. No fresh compute budget is inferred from prior expired runs.
+
+Next action: reproduce the saved defects, select response interfaces, and
+implement the independently verifiable state, evidence and UI repairs.
+
 ## NCS adaptive targeted gate failed, 2026-09-08
 
 Root GPT-6 graded the Qwen3.8 27B patient run against the frozen location,
