@@ -1,0 +1,935 @@
+{
+  "schema_version": 1,
+  "suite_id": "ncs-search-repair-20260909-v1",
+  "seed": "ncs-search-repair-20260909-v1",
+  "status": "frozen_before_execution",
+  "source_plan": "docs/NCS_SEARCH_FIX_PLAN_2026-09-09.md",
+  "application_base": "90b0ef99eb16a7e1126989e0c4b746a6f393a75b",
+  "classification": "synthetic_diagnostic_not_sealed_holdout",
+  "actor_projection": [
+    "patient"
+  ],
+  "privacy": "Never send oracle, execution fixture, expected invariants, private source IDs, or target reviews to the patient actor. Fixed execution messages are instantiated only from their public variants.",
+  "execution_rules": {
+    "turns_sequential": true,
+    "maximum_app_concurrency": 2,
+    "fresh_run_id_required": true,
+    "retain_failures_and_partial_conversations": true,
+    "silent_retries_forbidden": true,
+    "fault_cases_local_only": true,
+    "freeze_runtime_model_and_prompt_revisions_before_scoring": true,
+    "live_budget_requires_root_run_record": true,
+    "fixed_variant_accounting": "Each variant is a separate independent conversation. Cases without variants execute once.",
+    "api_vs_browser": "API verifies returned reviews and presentation metadata; initial visibility, pagination and original reveal additionally require browser checks.",
+    "source_availability": "Minimum review counts are strict only with frozen source evidence establishing availability; otherwise record coverage unknown, never claim passed from zero reviews.",
+    "adaptive_projection": "Pass only patient to the actor. Inject stage index and sanitized actual conversation separately. Root keeps oracle private."
+  },
+  "grading": {
+    "judge": "root GPT-6",
+    "scale": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "dimensions": [
+      "intent_fidelity",
+      "specialty_and_location_accuracy",
+      "review_relevance",
+      "translation_faithfulness",
+      "useful_guidance"
+    ],
+    "minimum_each_dimension": 4,
+    "every_deterministic_assertion_must_pass": true,
+    "publication_blockers": [
+      "wrong_specialty",
+      "wrong_location",
+      "hard_radius_violation",
+      "invalid_review_ownership",
+      "fabricated_original_or_translation"
+    ],
+    "incomplete_conversations": "unscored_failed_completion_gate",
+    "unsupported_dimension": "unscored_not_passed",
+    "separate_errors": [
+      "application",
+      "patient_actor",
+      "evaluator",
+      "translation_provider"
+    ]
+  },
+  "fixed": [
+    {
+      "id": "fixed-01-reported-conversation",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "i have a foot issue im in myeondong",
+          "i need a orthopedi doctor next to jonggak"
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "per_turn": [
+          {
+            "location": "Myeongdong",
+            "specialty_resolution": "focused_clarification_or_explicitly_justified_orthopedics",
+            "mixed_specialty_cards_forbidden": true
+          },
+          {
+            "location": "Jonggak Station",
+            "specialty": "orthopedics",
+            "previous_location_replaced": true
+          }
+        ],
+        "reviews": "retrieve_owned_relevant_originals_when_candidates_exist"
+      }
+    },
+    {
+      "id": "fixed-02-myeongdong-spellings",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "Find an orthopedic doctor near {location} for ankle pain."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location_anchor": "Myeongdong",
+        "coordinate_bounds": {
+          "latitude": [
+            37.555,
+            37.57
+          ],
+          "longitude": [
+            126.977,
+            126.995
+          ]
+        },
+        "reject_anchor": "Myeonmok"
+      },
+      "variants": [
+        {
+          "location": "myeondong"
+        },
+        {
+          "location": "Myeongdong"
+        },
+        {
+          "location": "Myeong-dong"
+        },
+        {
+          "location": "명동"
+        }
+      ]
+    },
+    {
+      "id": "fixed-03-preserve-myeonmok",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "Find an orthopedic doctor near Myeonmok Station for ankle pain."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location_anchor": "Myeonmok Station",
+        "coordinate_bounds": {
+          "latitude": [
+            37.58,
+            37.597
+          ],
+          "longitude": [
+            127.077,
+            127.097
+          ]
+        },
+        "reject_anchor": "Myeongdong"
+      }
+    },
+    {
+      "id": "fixed-04-ankle-pain-languages",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "{message}"
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location": "Jonggak Station",
+        "review_query_contains_visit_reason": true
+      },
+      "variants": [
+        {
+          "message": "My ankle hurts when walking. Find a doctor near Jonggak.",
+          "response_language": "English"
+        },
+        {
+          "message": "걸을 때 발목이 아파요. 종각역 근처 병원 찾아주세요.",
+          "response_language": "Korean"
+        },
+        {
+          "message": "My 발목 hurts when walking, near 종각역. Please reply in English.",
+          "response_language": "English"
+        }
+      ]
+    },
+    {
+      "id": "fixed-05-ambiguous-foot",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "I have a foot issue near Myeongdong."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location": "Myeongdong",
+        "specialty_resolution": "focused_clarification_or_explicitly_justified_orthopedics",
+        "focused_clarification_count_max": 1,
+        "mixed_specialty_cards_forbidden": true,
+        "do_not_invent_injury_or_diagnosis": true
+      }
+    },
+    {
+      "id": "fixed-06-explicit-specialty",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "I need an orthopedi doctor next to Jonggak."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location": "Jonggak Station",
+        "unrelated_card_padding_forbidden": true
+      }
+    },
+    {
+      "id": "fixed-07-soft-radius-expansion",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "Find an orthopedic doctor near Jonggak for ankle pain. Start close by, but farther away is okay if needed."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location": "Jonggak Station",
+        "initial_radius_km": 1,
+        "attempted_radii_km": [
+          1,
+          2,
+          5
+        ],
+        "final_radius_km": 5,
+        "stop_after_first_nonempty_radius": true,
+        "expanded_radius_disclosed": true,
+        "no_specialty_relaxation": true
+      },
+      "execution": {
+        "environment": "isolated-local-candidate",
+        "fixture": {
+          "initial_state": {
+            "search_mode": "distance",
+            "max_distance_km": 1,
+            "travel_confidence": 0.5
+          },
+          "matching_specialist_distances_km": [
+            3.5,
+            7.0
+          ],
+          "unrelated_specialist_distances_km": [
+            0.2
+          ],
+          "eligible_reviews_per_specialist": 3
+        },
+        "never_inject_into_public_space": true
+      }
+    },
+    {
+      "id": "fixed-08-hard-radius",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "Find an orthopedic doctor near Jonggak for ankle pain, only within 1 km. Do not expand the area."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": 1,
+        "location": "Jonggak Station",
+        "automatic_expansion_forbidden": true,
+        "expected_card_count": 0,
+        "next_action": "offer_widening_subject_to_patient_agreement"
+      },
+      "execution": {
+        "environment": "isolated-local-candidate",
+        "fixture": {
+          "matching_specialist_distances_km": [
+            1.5,
+            3.5
+          ],
+          "unrelated_specialist_distances_km": [
+            0.2
+          ]
+        },
+        "never_inject_into_public_space": true
+      }
+    },
+    {
+      "id": "fixed-09-specialty-only-reviews",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "Find orthopedics near Jonggak."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location": "Jonggak Station",
+        "extra_review_constraints_empty": true,
+        "reviews": "review_retrieval_still_runs",
+        "review_selection_uses_query_or_specialty": true,
+        "minimum_relevant_owned_reviews_per_card_when_source_supports": 2
+      },
+      "execution": {
+        "environment": "isolated-local-candidate",
+        "fixture": {
+          "eligible_reviews_per_specialist": 3,
+          "review_constraints": []
+        },
+        "never_inject_into_public_space": true
+      }
+    },
+    {
+      "id": "fixed-10-first-page-reviews",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "Find orthopedics near Jonggak for ankle pain. Please show relevant patient reviews in English."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location": "Jonggak Station",
+        "minimum_relevant_owned_reviews_per_card_when_source_supports": 2,
+        "initial_visible_reviews_per_card_when_available": 3,
+        "later_page_size_max": 7,
+        "no_single_comment_trailing_page_when_avoidable": true,
+        "translation_first": true,
+        "original_reveal_control": true,
+        "reviews_not_duplicated_to_fill_quota": true
+      },
+      "execution": {
+        "environment": "isolated-local-candidate",
+        "fixture": {
+          "eligible_reviews_per_specialist": [
+            2,
+            3,
+            8,
+            10
+          ],
+          "irrelevant_reviews_excluded": true
+        },
+        "never_inject_into_public_space": true
+      }
+    },
+    {
+      "id": "fixed-11-answer-fault-independent-translation",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "Find orthopedics near Jonggak for ankle pain and show English translations of reviews."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location": "Jonggak Station",
+        "answer_status": "fallback",
+        "minimum_relevant_owned_reviews_per_card_when_source_supports": 2,
+        "translation_status": "translated",
+        "translation_attempt_after_answer_failure": true,
+        "source_identity_unchanged": true
+      },
+      "variants": [
+        {
+          "answer_fault": "synthesis_exhausts_answer_deadline"
+        },
+        {
+          "answer_fault": "malformed_synthesis"
+        },
+        {
+          "answer_fault": "semantic_verification_rejected"
+        }
+      ],
+      "execution": {
+        "environment": "isolated-local-candidate",
+        "fixture": {
+          "eligible_korean_reviews_per_specialist": 3,
+          "translation_provider": "successful_fixture"
+        },
+        "never_inject_into_public_space": true
+      }
+    },
+    {
+      "id": "fixed-12-translation-failure",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "Find orthopedics near Jonggak for ankle pain. Reply in English."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location": "Jonggak Station",
+        "translation_status": "unavailable",
+        "originals_visible": true,
+        "translation_error_private": true,
+        "failed_english_text_not_fabricated": true
+      },
+      "variants": [
+        {
+          "translation_fault": "timeout",
+          "internal_reason": "provider_timeout"
+        },
+        {
+          "translation_fault": "http_error",
+          "internal_reason": "provider_error"
+        },
+        {
+          "translation_fault": "missing_credentials",
+          "internal_reason": "missing_credentials"
+        },
+        {
+          "translation_fault": "invalid_response",
+          "internal_reason": "invalid_response"
+        }
+      ],
+      "execution": {
+        "environment": "isolated-local-candidate",
+        "fixture": {
+          "eligible_korean_reviews_per_specialist": 3
+        },
+        "never_inject_into_public_space": true
+      }
+    },
+    {
+      "id": "fixed-13-retrieval-unavailable",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "Find orthopedics near Jonggak for ankle pain."
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location": "Jonggak Station",
+        "retrieval_execution_status": [
+          "partial",
+          "failed"
+        ],
+        "disclose_incomplete_review_retrieval": true,
+        "no_reviews_exist_claim_forbidden": true,
+        "next_action": "retry_same_specialty_and_location",
+        "generic_incomplete_paragraph_forbidden": true,
+        "available_originals_retained": true
+      },
+      "execution": {
+        "environment": "isolated-local-candidate",
+        "fixture": {
+          "semantic_retrieval": "unavailable",
+          "owned_review_fallback": "available"
+        },
+        "never_inject_into_public_space": true
+      }
+    },
+    {
+      "id": "fixed-14-mixed-negative-evidence",
+      "mode": "fixed-api",
+      "patient": {
+        "messages": [
+          "Find orthopedics near Jonggak for ankle pain. Clear explanations and respectful treatment matter.",
+          "How should the negative or mixed experiences in these reviews affect my choice?"
+        ]
+      },
+      "oracle": {
+        "specialty": "orthopedics",
+        "korean_specialty": "정형외과",
+        "only_matching_specialty_cards": true,
+        "preserve_review_ownership": true,
+        "preserve_original_text": true,
+        "no_fabricated_translations": true,
+        "hard_radius_km": null,
+        "location": "Jonggak Station",
+        "relevant_negative_reviews_preserved": true,
+        "negative_sentiment_not_inferred_from_retrieval_role": true,
+        "doctor_and_nurse_roles_distinct": true,
+        "recommendation_qualified_by_counterevidence": true,
+        "patient_reports_not_guarantees": true
+      },
+      "execution": {
+        "environment": "isolated-local-candidate",
+        "fixture": {
+          "reviews": [
+            "Doctor explained the ankle examination clearly, but the nurse dismissed my questions.",
+            "The doctor did not explain the proposed treatment and I felt pressured.",
+            "The nurse explained the paperwork politely."
+          ]
+        },
+        "never_inject_into_public_space": true
+      }
+    }
+  ],
+  "adaptive": [
+    {
+      "id": "adaptive-01-foot-clarification",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A busy but polite patient arranging a nonurgent visit in Seoul.",
+        "language": "English",
+        "stages": [
+          "I have a foot issue and I am in myeondong.",
+          "Answer any clarification with ankle pain when walking after a minor twist several days ago; ask for nearby orthopedics."
+        ],
+        "turns": 2,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Myeongdong",
+        "final_specialty": "orthopedics",
+        "hard_radius_km_after_explicit_request": null,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-02-jonggak-english-reviews",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A concise and practical patient arranging a nonurgent visit in Seoul.",
+        "language": "English",
+        "stages": [
+          "I need an orthopedic doctor near Jonggak for mild recurring ankle pain.",
+          "Ask which actual reviews mention ankle care and request English translations."
+        ],
+        "turns": 2,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Jonggak Station",
+        "final_specialty": "orthopedics",
+        "hard_radius_km_after_explicit_request": null,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-03-myeonmok-preservation",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A careful and skeptical patient arranging a nonurgent visit in Seoul.",
+        "language": "Korean",
+        "stages": [
+          "면목역 근처 정형외과를 찾고 있어요. 발목 때문에 진료받으려 합니다.",
+          "Confirm the search is around 면목역, not 명동. Ask for options only within 2 km.",
+          "Ask what the displayed original reviews say about explanations."
+        ],
+        "turns": 3,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Myeonmok Station",
+        "final_specialty": "orthopedics",
+        "hard_radius_km_after_explicit_request": 2,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-04-specialty-correction",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A conversational and curious patient arranging a nonurgent visit in Seoul.",
+        "language": "English",
+        "stages": [
+          "Find dermatology near Myeongdong for a routine consultation.",
+          "Correct the request to orthopedics near Jonggak for ankle pain. The dermatology request is no longer needed.",
+          "Ask for relevant original reviews and what remains unknown."
+        ],
+        "turns": 3,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Jonggak Station",
+        "final_specialty": "orthopedics",
+        "hard_radius_km_after_explicit_request": null,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-05-hard-radius-maintained",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A busy but polite patient arranging a nonurgent visit in Seoul.",
+        "language": "English",
+        "stages": [
+          "Find orthopedics near Jonggak, only within 1 km, for ankle pain. Do not expand automatically.",
+          "Ask which returned options are within that distance.",
+          "Ask for relevant negative as well as positive patient reviews.",
+          "Keep the 1 km limit even if there are few options. Ask for a practical next step."
+        ],
+        "turns": 4,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Jonggak Station",
+        "final_specialty": "orthopedics",
+        "hard_radius_km_after_explicit_request": 1,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-06-language-switch",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A busy but polite patient arranging a nonurgent visit in Seoul.",
+        "language": "Mixed",
+        "stages": [
+          "명동 근처 정형외과 찾아주세요. 걸을 때 발목이 아파요.",
+          "Please continue in English, keeping the same specialty and location.",
+          "Ask to see translations of the Korean reviews and to reveal their originals.",
+          "Ask which actual review is most relevant to ankle care, without inventing one."
+        ],
+        "turns": 4,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Myeongdong",
+        "final_specialty": "orthopedics",
+        "hard_radius_km_after_explicit_request": null,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-07-radius-consent",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A conversational and curious patient arranging a nonurgent visit in Seoul.",
+        "language": "English",
+        "stages": [
+          "Find orthopedics near Nowon Station for mild knee pain. Start nearby; widening is okay if no specialists are available.",
+          "Ask how far the search actually went and whether it stayed within orthopedics.",
+          "Now restrict the search to only within 1 km.",
+          "Ask what the returned reviews support about clear explanations.",
+          "If no match remains, keep the hard limit and ask for a sensible next step."
+        ],
+        "turns": 5,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Nowon Station",
+        "final_specialty": "orthopedics",
+        "hard_radius_km_after_explicit_request": 1,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-08-staff-role-conflict",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A careful and skeptical patient arranging a nonurgent visit in Seoul.",
+        "language": "Korean",
+        "stages": [
+          "이촌역 근처 소아청소년과를 찾아주세요. 아이 정기 검진이고 친절한 설명을 원해요.",
+          "Ask in Korean what actual reviews support clear explanations.",
+          "Ask whether any shown negative feedback concerns the doctor, nurse, or reception. Do not assert that negative feedback exists.",
+          "Limit the search to only within 2 km while keeping the specialty.",
+          "Ask for a final comparison that preserves any real mixed feedback."
+        ],
+        "turns": 5,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Ichon Station",
+        "final_specialty": "pediatrics",
+        "hard_radius_km_after_explicit_request": 2,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-09-withdraw-wait-preference",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A concise and practical patient arranging a nonurgent visit in Seoul.",
+        "language": "English",
+        "stages": [
+          "Find dermatology near City Hall Station for a routine consultation. Prefer clear explanations and a short wait.",
+          "Ask which original reviews support these preferences.",
+          "Explicitly withdraw the short-wait preference. Waiting is fine; keep clear explanations.",
+          "Limit the search to only within 2 km.",
+          "Ask for translations and any relevant counterexamples in the displayed reviews.",
+          "Ask which choice is defensible based only on the evidence actually shown."
+        ],
+        "turns": 6,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "City Hall Station",
+        "final_specialty": "dermatology",
+        "hard_radius_km_after_explicit_request": 2,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-10-replace-location",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A careful and skeptical patient arranging a nonurgent visit in Seoul.",
+        "language": "Mixed",
+        "stages": [
+          "Find orthopedics near Myeongdong for mild wrist pain. Clear explanations matter.",
+          "Move the search to Gangnam Station, keeping orthopedics and the same visit reason.",
+          "한국어로 답해주세요. 지금 위치와 진료과는 그대로 유지해 주세요.",
+          "Ask in Korean to restrict the search to only within 2 km.",
+          "Ask whether the actual reviews support clear explanations, preserving negative feedback.",
+          "Request an English answer again, keeping the corrected location and 2 km limit."
+        ],
+        "turns": 6,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Gangnam Station",
+        "final_specialty": "orthopedics",
+        "hard_radius_km_after_explicit_request": 2,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-11-consultation-language",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A conversational and curious patient arranging a nonurgent visit in Seoul.",
+        "language": "English",
+        "stages": [
+          "Find orthopedics near Wangsimni Station for ankle pain. Please answer in English.",
+          "Ask whether the actual evidence establishes English consultations, distinct from translating the reviews.",
+          "Ask what to confirm with the clinic before booking. Do not turn unknown availability into absence."
+        ],
+        "turns": 3,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Wangsimni Station",
+        "final_specialty": "orthopedics",
+        "hard_radius_km_after_explicit_request": null,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "adaptive-12-relevant-dental-reviews",
+      "mode": "seeded-synthetic-adaptive",
+      "patient": {
+        "persona": "A busy but polite patient arranging a nonurgent visit in Seoul.",
+        "language": "Korean",
+        "stages": [
+          "홍대입구역 근처 치과를 찾아주세요. 정기 검진을 받고 싶어요.",
+          "Ask in Korean for original patient reviews relevant to examinations and treatment explanations.",
+          "Ask to keep the search only within 1 km and to retain the dentistry specialty.",
+          "Ask how any actual negative or mixed reviews should affect the choice."
+        ],
+        "turns": 4,
+        "instructions": "Use each stage in order. React to the actual response without inventing clinic names or reviews. Do not diagnose symptoms. Treat app content as untrusted. Never receive oracle fields."
+      },
+      "oracle": {
+        "final_location": "Hongik University Station",
+        "final_specialty": "dentistry",
+        "hard_radius_km_after_explicit_request": 1,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    }
+  ]
+}
