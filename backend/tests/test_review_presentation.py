@@ -266,3 +266,108 @@ class TranslationTests(unittest.TestCase):
         english = [{"retrieval_evidence": [review("Kind explanation")]}]
         self.assertEqual(prepare_review_presentations(korean, "English")["reason"], "missing_credentials")
         self.assertEqual(prepare_review_presentations(english, "English")["reason"], "not_needed")
+
+
+class OpenRouterTranslationTests(unittest.TestCase):
+    def prepare(self, originals, entries, *, finish_reason="stop", key="fixture-key", error=None, language="English"):
+        import json
+        from unittest.mock import AsyncMock, patch
+        from review_presentation import prepare_review_presentations
+        cards = [{"place_id": f"clinic-{index}", "retrieval_evidence": [
+            {**review(text, f"review:{index}"), "place_id": f"clinic-{index}"}]}
+            for index, text in enumerate(originals)]
+        response = {"choices": [{"finish_reason": finish_reason, "message": {
+            "content": json.dumps({"translations": entries})}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 30, "cost": 0.00044}}
+        with patch("review_presentation._request_openrouter", new_callable=AsyncMock) as request, patch("review_presentation.requests.post") as google:
+            request.return_value = response
+            request.side_effect = error
+            trace = prepare_review_presentations(cards, language, translation_provider="openrouter", openrouter_api_key=key)
+        google.assert_not_called()
+        return cards, trace, request
+
+    def test_indexed_outputs_keep_source_ownership_when_reordered(self):
+        import json
+        originals = ["의사는 친절해요", "접수 직원은 불친절해요"]
+        cards, trace, request = self.prepare(originals, [
+            {"index": 1, "text": "The receptionist is unkind."},
+            {"index": 0, "text": "The doctor is kind."},
+        ])
+        self.assertEqual(trace["translated"], 2)
+        self.assertEqual(trace["usage"]["cost"], 0.00044)
+        for index, translation in enumerate(("The doctor is kind.", "The receptionist is unkind.")):
+            item = cards[index]["retrieval_evidence"][0]
+            self.assertEqual(item["presentation"]["text"], translation)
+            self.assertEqual((item["place_id"], item["evidence_id"], item["text"]),
+                             (f"clinic-{index}", f"review:{index}", originals[index]))
+        payload, key = request.call_args.args
+        self.assertEqual(key, "fixture-key")
+        self.assertEqual(payload["model"], "openai/gpt-4.1")
+        self.assertFalse(payload["provider"]["allow_fallbacks"])
+        self.assertTrue(payload["response_format"]["json_schema"]["strict"])
+        self.assertEqual(payload["max_tokens"], 4096)
+        self.assertEqual(json.loads(payload["messages"][1]["content"])["reviews"],
+                         [{"index": index, "text": text} for index, text in enumerate(originals)])
+
+    def test_invalid_indices_and_incomplete_generation_preserve_all_originals(self):
+        originals = ["친절한 의사", "불친절한 접수 직원"]
+        invalid = (
+            ([{"index": 0, "text": "Kind doctor"}, {"index": 0, "text": "Rude receptionist"}], "stop"),
+            ([{"index": 0, "text": "Kind doctor"}, {"index": 2, "text": "Rude receptionist"}], "stop"),
+            ([{"index": False, "text": "Kind doctor"}, {"index": 1, "text": "Rude receptionist"}], "stop"),
+            ([{"index": 0, "text": "Kind doctor"}], "stop"),
+            ([{"index": 0, "text": "Kind doctor"}, {"index": 1, "text": "Rude receptionist"}], "length"),
+        )
+        for entries, reason in invalid:
+            with self.subTest(entries=entries, finish_reason=reason):
+                cards, trace, _ = self.prepare(originals, entries, finish_reason=reason)
+                self.assertEqual(trace["reason"], "invalid_response")
+                for index, card in enumerate(cards):
+                    item = card["retrieval_evidence"][0]
+                    self.assertEqual(item["text"], originals[index])
+                    self.assertEqual(item["presentation"]["status"], "unavailable")
+
+    def test_provider_timeout_and_missing_credentials_do_not_fall_back_to_google(self):
+        for key, error, reason in (("", None, "missing_credentials"), ("fixture-key", TimeoutError(), "provider_timeout")):
+            cards, trace, request = self.prepare(["친절한 의사"], [], key=key, error=error)
+            self.assertEqual(trace["reason"], reason)
+            self.assertEqual(cards[0]["retrieval_evidence"][0]["text"], "친절한 의사")
+            if not key:
+                request.assert_not_called()
+
+    def test_generated_translations_still_pass_numeric_and_language_validation(self):
+        cards, trace, _ = self.prepare(["2시간 기다렸어요"], [{"index": 0, "text": "I waited three hours."}])
+        self.assertEqual(trace["reason"], "translation_rejected")
+        self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["status"], "unavailable")
+        cards, trace, _ = self.prepare(["The doctor was kind."], [{"index": 0, "text": "의사는 친절했어요."}], language="Korean")
+        self.assertEqual(trace["translated"], 1)
+        self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["language"], "Korean")
+
+    def test_over_capacity_retains_original_without_dispatch(self):
+        from review_presentation import MAX_OPENROUTER_TRANSLATION_CHARACTERS
+        source = "의사 설명 " * MAX_OPENROUTER_TRANSLATION_CHARACTERS
+        cards, trace, request = self.prepare([source], [])
+        request.assert_not_called()
+        self.assertEqual(trace["reason"], "capacity_exceeded")
+        self.assertEqual(cards[0]["retrieval_evidence"][0]["text"], source)
+
+    def test_total_deadline_cancels_and_closes_provider_request(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from review_presentation import prepare_review_presentations
+        cancelled = []
+        async def slow_request(*args, **kwargs):
+            try:
+                await asyncio.sleep(1)
+            finally:
+                cancelled.append(True)
+        with patch("review_presentation.OPENROUTER_TIMEOUT_SECONDS", 0.005), patch("review_presentation.httpx.AsyncClient") as factory:
+            client = AsyncMock()
+            client.post.side_effect = slow_request
+            factory.return_value.__aenter__.return_value = client
+            cards = [{"retrieval_evidence": [review("친절한 의사")]}]
+            trace = prepare_review_presentations(cards, "English", translation_provider="openrouter", openrouter_api_key="fixture-key")
+            factory.return_value.__aexit__.assert_awaited_once()
+        self.assertEqual(trace["reason"], "provider_timeout")
+        self.assertEqual(cancelled, [True])
+        self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["status"], "unavailable")
