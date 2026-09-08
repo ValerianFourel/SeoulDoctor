@@ -1,6 +1,6 @@
 const { test, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-delete process.env.NEXT_PUBLIC_API_URL;
+delete process.env.NEXT_PUBLIC_LOCAL_API_URL;
 const { apiFetch, postJson, getApiBases } = require('../frontend/lib/api.ts');
 const primary = 'https://valerianfourel-seouldoctor-ncs-retriever.hf.space';
 const fallback = 'https://valerianfourel-seouldoctor.hf.space';
@@ -85,6 +85,6 @@ test('explicit development override is normalized without replacing production o
   const output = execFileSync(process.execPath, ['-e', `
     const {getApiBases} = require('./frontend/lib/api.ts');
     console.log(JSON.stringify(['localhost','test.vercel.app','www.seouldoc.io','demo.hf.space'].map(getApiBases)));
-  `], { cwd: require('node:path').resolve(__dirname, '..'), env: { ...process.env, NEXT_PUBLIC_API_URL: ' https://dev.example/api/// ' } });
+  `], { cwd: require('node:path').resolve(__dirname, '..'), env: { ...process.env, NEXT_PUBLIC_LOCAL_API_URL: ' https://dev.example/api/// ' } });
   assert.deepEqual(JSON.parse(output), [['https://dev.example/api'], [primary, fallback], [primary, fallback], ['']]);
 });

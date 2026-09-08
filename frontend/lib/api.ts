@@ -1,4 +1,4 @@
-const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, "");
+const configuredApiUrl = process.env.NEXT_PUBLIC_LOCAL_API_URL?.trim().replace(/\/+$/, "");
 const spaceApis = [
   "https://valerianfourel-seouldoctor-ncs-retriever.hf.space",
   "https://valerianfourel-seouldoctor.hf.space",

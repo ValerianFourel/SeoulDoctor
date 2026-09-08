@@ -155,7 +155,7 @@ export default function DocsPage() {
                 ))}
               </div>
               <h3 className="mt-8 mb-3 font-bold">Frontend <code className="text-sm text-slate-500">frontend/.env.local</code></h3>
-              <CodeBlock>{`NEXT_PUBLIC_API_URL=http://localhost:8000\nNEXT_PUBLIC_SITE_URL=http://localhost:3000`}</CodeBlock>
+              <CodeBlock>{`NEXT_PUBLIC_LOCAL_API_URL=http://localhost:8000\nNEXT_PUBLIC_SITE_URL=http://localhost:3000`}</CodeBlock>
             </section>
 
             <section id="api" className="scroll-mt-24">

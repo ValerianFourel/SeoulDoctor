@@ -8,7 +8,7 @@ APIs in order:
 
 `frontend/lib/api.ts` owns this policy. Production and Vercel previews ignore
 `NEXT_PUBLIC_API_URL` and always use this pair. Pages served inside an
-HF Space use their own origin. Local development uses `NEXT_PUBLIC_API_URL`
+HF Space use their own origin. Local development uses `NEXT_PUBLIC_LOCAL_API_URL`
 when configured, otherwise its own origin.
 
 Only `/chat` and `/set_travel_preference` can fall back. Requests are sequential,

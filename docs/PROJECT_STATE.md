@@ -636,3 +636,18 @@ the generated JavaScript contains no onrender.com URL. The real fallback
 response rendered clinic cards and disclosed incomplete retrieval. The test
 browser sent identical payloads to both Spaces; its outage simulation was
 removed afterward. This verifies routing and rendering, not retrieval quality.
+
+Vercel deployed `7e61150805773fefefeac9559e0f4fb0f30b2dee`, but its stale
+NEXT_PUBLIC_API_URL was still inlined into the bundle as an unused production
+value. Root removes that legacy variable reference, retaining an explicitly
+local override under NEXT_PUBLIC_LOCAL_API_URL. Verify the next production
+bundle contains both HF URLs and no onrender.com string.
+
+Root extends ownership to frontend/components/ChatInterface.tsx,
+frontend/app/docs/page.tsx, and frontend/.env.example for the same cleanup.
+The debug panel also inlined the old environment value; it will display the
+actual API routing instead. Local setup examples use the renamed local override.
+
+Final local validation passed: 17 routing tests, 218 backend tests, production
+build, and a scan of every generated JavaScript chunk proving no onrender.com
+string, even with the legacy Vercel environment value supplied to the build.

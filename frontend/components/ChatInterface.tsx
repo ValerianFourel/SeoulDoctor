@@ -4,7 +4,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, MapPin, Sparkles, Globe, Bug, ChevronDown, ChevronUp, X } from "lucide-react";
 import Link from 'next/link';
-import { postJson } from '../lib/api';
+import { getApiBases, postJson } from '../lib/api';
 
 const ENABLE_DEBUG_MODE =
   process.env.NEXT_PUBLIC_ENABLE_DEBUG_MODE === "true";
@@ -1034,7 +1034,7 @@ export default function ChatInterface() {
                   <div className="flex justify-between">
                     <span>API URL:</span>
                     <span className="font-mono text-cyan-400 text-[10px] truncate max-w-[180px]">
-                      {process.env.NEXT_PUBLIC_API_URL || 'Not set'}
+                      {getApiBases(typeof window === 'undefined' ? '' : window.location.hostname).map(base => base || 'Same origin').join(' → ')}
                     </span>
                   </div>
                   <div className="flex justify-between">
