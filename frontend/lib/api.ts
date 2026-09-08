@@ -6,14 +6,14 @@ const spaceApis = [
 const attemptTimeoutMs = 90_000;
 
 export function getApiBases(hostname: string): string[] {
-  if (hostname === "seouldoc.io" || hostname === "www.seouldoc.io") {
+  if (hostname === "seouldoc.io" || hostname === "www.seouldoc.io" || hostname.endsWith(".vercel.app")) {
     return spaceApis;
   }
   if (hostname.endsWith(".hf.space")) return [""];
-  if (configuredApiUrl && configuredApiUrl !== "https://seouldoctor.onrender.com") {
+  if (configuredApiUrl) {
     return [configuredApiUrl];
   }
-  return hostname.endsWith(".vercel.app") ? spaceApis : [""];
+  return [""];
 }
 
 const getErrorMessage = (body: unknown, status: number): string => {

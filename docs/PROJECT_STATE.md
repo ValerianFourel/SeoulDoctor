@@ -619,3 +619,20 @@ and Vercel publication remain pending. See [routing policy](WEBSITE_API_ROUTING.
 Live browser prepublication check: POST /set_travel_preference from
 https://www.seouldoc.io to each public Space returned 200 and preserved Nearby.
 The build includes both HF domains; no credentials were used.
+
+## Website publication and Render removal, 2026-09-09
+
+Vercel successfully deployed `27eef4ca33881760abaf8746764291ba86a3f44e`.
+The live website loaded the new bundle and its first chat received a reply
+from NCS. Simulating a 503 in the test browser produced exactly the NCS then
+original-Space request order, with full conversation state on both attempts.
+The user clarified that Render must be removed. Root now removes the obsolete
+URL comparison too: production and all Vercel previews always use HF; only
+local/custom hosts honor an explicit API override. No Render service or billing
+resource has been deleted. Deployment verification of this cleanup is pending.
+
+Cleanup validation: all 17 routing tests and the production build passed;
+the generated JavaScript contains no onrender.com URL. The real fallback
+response rendered clinic cards and disclosed incomplete retrieval. The test
+browser sent identical payloads to both Spaces; its outage simulation was
+removed afterward. This verifies routing and rendering, not retrieval quality.

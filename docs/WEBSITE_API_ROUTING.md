@@ -6,9 +6,8 @@ APIs in order:
 1. `https://valerianfourel-seouldoctor-ncs-retriever.hf.space`
 2. `https://valerianfourel-seouldoctor.hf.space`
 
-`frontend/lib/api.ts` owns this policy. Production ignores the historical
-Vercel `NEXT_PUBLIC_API_URL` value. Vercel previews use the same pair unless
-an explicit non-Render API override is configured. Pages served inside an
+`frontend/lib/api.ts` owns this policy. Production and Vercel previews ignore
+`NEXT_PUBLIC_API_URL` and always use this pair. Pages served inside an
 HF Space use their own origin. Local development uses `NEXT_PUBLIC_API_URL`
 when configured, otherwise its own origin.
 

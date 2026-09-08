@@ -1,6 +1,6 @@
 const { test, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-process.env.NEXT_PUBLIC_API_URL = 'https://seouldoctor.onrender.com';
+delete process.env.NEXT_PUBLIC_API_URL;
 const { apiFetch, postJson, getApiBases } = require('../frontend/lib/api.ts');
 const primary = 'https://valerianfourel-seouldoctor-ncs-retriever.hf.space';
 const fallback = 'https://valerianfourel-seouldoctor.hf.space';
@@ -15,7 +15,7 @@ function setup(handler) {
   global.fetch = async (url, init) => { calls.push({ url, init }); return handler(calls.length, init); };
   return calls;
 }
-test('production and previews replace legacy Render; Space and local stay same-origin', () => {
+test('production and previews use HF; Space and local stay same-origin', () => {
   for (const host of ['seouldoc.io', 'www.seouldoc.io', 'preview.vercel.app']) assert.deepEqual(getApiBases(host), [primary, fallback]);
   for (const host of ['localhost', '127.0.0.1', 'example.hf.space']) assert.deepEqual(getApiBases(host), ['']);
 });
@@ -86,5 +86,5 @@ test('explicit development override is normalized without replacing production o
     const {getApiBases} = require('./frontend/lib/api.ts');
     console.log(JSON.stringify(['localhost','test.vercel.app','www.seouldoc.io','demo.hf.space'].map(getApiBases)));
   `], { cwd: require('node:path').resolve(__dirname, '..'), env: { ...process.env, NEXT_PUBLIC_API_URL: ' https://dev.example/api/// ' } });
-  assert.deepEqual(JSON.parse(output), [['https://dev.example/api'], ['https://dev.example/api'], [primary, fallback], ['']]);
+  assert.deepEqual(JSON.parse(output), [['https://dev.example/api'], [primary, fallback], [primary, fallback], ['']]);
 });
