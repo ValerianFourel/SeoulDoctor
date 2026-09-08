@@ -304,6 +304,27 @@ def compile_evidence_constraints(
     return tuple(constraints)
 
 
+def rerank_relevance_query(constraints: Sequence[EvidenceConstraint]) -> str:
+    english = sum(bool(item.terms_en) for item in constraints)
+    korean = sum(bool(item.terms_ko) for item in constraints)
+    prefer_english = english >= korean
+    phrases = []
+    for item in constraints:
+        preferred, fallback = (
+            (item.terms_en, item.terms_ko) if prefer_english
+            else (item.terms_ko, item.terms_en)
+        )
+        terms = preferred or fallback
+        if terms:
+            phrases.append(terms[0])
+    phrases = list(dict.fromkeys(phrases))
+    if not phrases:
+        return ""
+    if prefer_english:
+        return "Patient reviews about " + " and ".join(phrases) + "."
+    return ", ".join(phrases) + "에 관한 환자 후기."
+
+
 def score_local_distinctiveness(
     hits: Sequence[EvidenceHit],
 ) -> Mapping[str, NoveltyProfile]:
@@ -882,11 +903,10 @@ class ConstraintEvidenceRetriever:
                 for cell in cells_by_evidence[item.hit.evidence_id]
                 if cell.role == role
             }
-            query_terms: list[str] = []
-            for constraint_id in sorted(role_constraints):
-                constraint = constraint_by_id[constraint_id]
-                query_terms.extend((*constraint.terms_en, *constraint.terms_ko))
-            query = " | ".join(dict.fromkeys(query_terms))
+            query = rerank_relevance_query(tuple(
+                constraint_by_id[constraint_id]
+                for constraint_id in sorted(role_constraints)
+            ))
             ordered_hits = tuple(item.hit for item in role_items)
             rerank_started = perf_counter()
             if self._reranker is None:
