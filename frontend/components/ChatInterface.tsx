@@ -122,9 +122,7 @@ const TRAVEL_OPTIONS = [
 
 // --- HELPER FUNCTION FOR FORMATTING AI RESPONSES ---
 const formatAIResponse = (text: string): string => {
-  let formatted = text.replace(/\*\*([^*]+)\*\*/g, '$1\n');
-  formatted = formatted.replace(/(\d+\.)/g, '\n$1');
-  return formatted;
+  return text.replace(/\*\*([^*]+)\*\*/g, '$1');
 };
 
 // --- CATEGORY TRANSLATION HELPER ---
@@ -223,7 +221,7 @@ export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
     { 
       role: "ai", 
-      content: "Hello, this is Seoul Doc Matchmaker. Tell me what kind of doctor you need, and I'll find the best options for you given your preferences. You can also share your location using the location button or by typing it in.",
+      content: "Hi, welcome to Seoul Doc Matchmaker. Tell me the specialty or symptoms you need help with and where in Seoul you'd like me to search. You can type a place name or use the location button.",
       timestamp: new Date().toISOString()
     }
   ]);

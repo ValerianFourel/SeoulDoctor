@@ -1975,16 +1975,23 @@ def execute_search(
     if len(final_df) > 0:
         n_results = select_optimal_result_count(final_df, min_results=3, max_results=5)
         privacy_safe_log(consent, f"✓ Selecting {n_results} results from {len(final_df)} facilities")
+        retrieval_owns_response = (
+            state.last_retrieval_metadata.get("retrieval_status")
+            not in {None, "not_run"}
+        )
         
-        try:
-            facilities_context = rag_pipeline.build_context_for_llm(
-                final_df, 
-                n_results=n_results, 
-                language=language
-            )
-        except Exception as e:
-            logger.error(f"Context building error: {e}", exc_info=True)
-            facilities_context = "Error building context"
+        if retrieval_owns_response:
+            facilities_context = ""
+        else:
+            try:
+                facilities_context = rag_pipeline.build_context_for_llm(
+                    final_df,
+                    n_results=n_results,
+                    language=language,
+                )
+            except Exception as e:
+                logger.error(f"Context building error: {e}", exc_info=True)
+                facilities_context = "Error building context"
         
         gen_messages = [{
             "role": "system",
@@ -2000,14 +2007,17 @@ def execute_search(
 
         generation_started = perf_counter()
         try:
-            response_text, _ = request_text_completion(
-                client,
-                model=GROQ_CHAT_MODEL,
-                messages=gen_messages,
-                temperature=0.4,
-                max_completion_tokens=768,
-                reasoning_effort="low",
-            )
+            if retrieval_owns_response:
+                response_text = ""
+            else:
+                response_text, _ = request_text_completion(
+                    client,
+                    model=GROQ_CHAT_MODEL,
+                    messages=gen_messages,
+                    temperature=0.4,
+                    max_completion_tokens=768,
+                    reasoning_effort="low",
+                )
             response_text = re.sub(r'[\u0400-\u04FF]+', 'Seoul', response_text)
             response_text = re.sub(r'대한민국 서울특별시 중구 세종대로 110', 'Seoul', response_text)
             response_text = re.sub(r'Seoul, 서울특별시 대한민국', '', response_text)
@@ -2055,9 +2065,10 @@ def execute_search(
             else:
                 response_text = f"{len(final_df)}개의 시설을 찾았습니다. 상위 {n_results}개:"
         
-        state.last_retrieval_metadata.setdefault("stage_timings_ms", {})[
-            "answer_generation"
-        ] = (perf_counter() - generation_started) * 1000
+        if not retrieval_owns_response:
+            state.last_retrieval_metadata.setdefault("stage_timings_ms", {})[
+                "answer_generation"
+            ] = (perf_counter() - generation_started) * 1000
 
         # ===== PREPARE RESULTS FOR FRONTEND =====
         
@@ -2201,6 +2212,7 @@ def execute_search(
     if state.last_retrieval_metadata.get("retrieval_status") not in {None, "not_run"}:
         response_text, results = finalize_evidence_response(
             response_text, results, state.last_retrieval_metadata, language,
+            state=state,
             translation_api_key=os.getenv("GOOGLE_TRANSLATE_API_KEY", ""),
         )
     return response_text, serialize_results_for_chat(
