@@ -80,6 +80,16 @@ class SearchRepairRunnerTests(unittest.TestCase):
         self.assertIn("Public original", encoded)
         self.assertIn("Public translation", encoded)
 
+    def test_actor_skips_hidden_reviews_without_losing_a_visible_slot(self):
+        reviews = [{"text": "Hidden punctuation", "presentation": {"status": "hidden"}},
+                   *[{"text": f"Visible review {index}"} for index in range(4)]]
+        turn = {"message": "Find a doctor", "response": {"body": {
+            "response": "Compare these reviews", "results": [{"retrieval_evidence": reviews}]}}}
+        encoded = json.dumps(actor_payload({"persona": "A patient"}, [turn], 1))
+        self.assertNotIn("Hidden punctuation", encoded)
+        self.assertIn("Visible review 2", encoded)
+        self.assertNotIn("Visible review 3", encoded)
+
     def test_missing_reviews_never_produce_quality_pass(self):
         response = body({"specialty": "정형외과"})
         response["results"] = [{"place_id": "alpha", "category": "정형외과", "retrieval_evidence": []}]

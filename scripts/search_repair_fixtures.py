@@ -159,7 +159,10 @@ class FixtureApp:
             "rag_pipeline": SimpleNamespace(embedding_function=lambda texts: [[1.0] * 1536 for _ in texts]),
             "ENABLE_RETRIEVAL_DEBUG": True, "GOOGLE_MAPS_API_KEY": "", "KAKAO_REST_API_KEY": "",
             "chat_rate_limiter": SlidingWindowRateLimiter(max_requests=100, window_seconds=60),
-            "evidence_reranker": SimpleNamespace(rerank=lambda query, hits: RerankOutcome(tuple(hits), True, "ok")),
+            "evidence_reranker": SimpleNamespace(rerank=lambda query, hits: RerankOutcome(
+                tuple(hits), True, "ok", "synthetic-reranker",
+                tuple((hit.evidence_id, 1.0 / (index + 1)) for index, hit in enumerate(hits)),
+            )),
             "semantic_evidence_source": SimpleNamespace(retrieve=lambda **kwargs: SemanticReviewOutcome(
                 "request_failed" if self.fixture.get("semantic_retrieval") == "unavailable" else "ok")),
         }

@@ -52,6 +52,7 @@ class SourceReportTests(unittest.TestCase):
     def test_later_page_and_supporting_group_errors_are_not_hidden_by_first_three(self):
         originals = {f"review:{index}": source(f"review:{index}") for index in range(5)}
         reviews = [review(identity) for identity in originals]
+        reviews[0]["presentation"] = {"status": "hidden"}
         reviews[3]["text"] = "Invented later-page text."
         foreign = review("review:4", owner="beta")
         case = {"id": "later-page", "status": "complete", "turns": [{"index": 0, "status": "complete",
@@ -62,6 +63,7 @@ class SourceReportTests(unittest.TestCase):
         report = summarize_case(case, originals, {}, SOURCE_SHA)
         card = report["turns"][0]["cards"][0]
         self.assertEqual(len(card["first_reviews"]), 3)
+        self.assertEqual(card["first_reviews"][0]["evidence_id"], "review:1")
         self.assertEqual(card["review_count"], 5)
         self.assertEqual(len(report["source_errors"]), 2)
         self.assertEqual(report["assertion_failures"], [{"turn": 0, "assertion": "specialty"}])

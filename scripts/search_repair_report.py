@@ -130,6 +130,7 @@ def summarize_case(case, originals, resolution_errors, source_sha):
         result["assertion_failures"].extend({"turn": turn_index, "assertion": item} for item in failures)
         for card_index, card in enumerate(body.get("results", [])):
             reviews = card.get("retrieval_evidence", [])
+            displayable = [review for review in reviews if review.get("presentation", {}).get("status") != "hidden"]
             checks = [verify_record(record, card.get("place_id"), collection, originals, resolution_errors, source_sha)
                       for collection, record in review_records(card)]
             errors = [{"turn": turn_index, "card": card_index, **check} for check in checks if not check["valid"]]
@@ -141,7 +142,7 @@ def summarize_case(case, originals, resolution_errors, source_sha):
             summary["cards"].append({**{key: card.get(key) for key in ("place_id", "name", "category", "address", "distance_km", "answer_status")},
                 "review_count": len(reviews), "translation_status_counts": statuses,
                 "first_reviews": [{"evidence_id": review.get("evidence_id"), "original": review.get("text"),
-                                   "presentation": review.get("presentation", {})} for review in reviews[:3]],
+                                   "presentation": review.get("presentation", {})} for review in displayable[:3]],
                 "source_checks": checks})
         result["turns"].append(summary)
     return result
