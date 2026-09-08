@@ -1,6 +1,7 @@
 """Prepare selected reviews for display without changing source evidence."""
 
 from html import unescape
+from itertools import zip_longest
 import re
 import unicodedata
 
@@ -64,9 +65,13 @@ def _numbers(text):
 def prepare_review_presentations(cards, language, *, translation_api_key=""):
     pending = {}
     characters = 0
+    trace = {"reason": None, "requested": 0, "translated": 0, "capacity_skipped": 0, "rejected": 0}
     for card in cards:
         card["review_language"] = language
-        for item in card.get("retrieval_evidence", []):
+    for row in zip_longest(*(card.get("retrieval_evidence", []) for card in cards)):
+        for item in row:
+            if item is None:
+                continue
             text = item.get("text", "")
             if not item.get("is_verbatim") or not useful_review(text):
                 status = "hidden"
@@ -82,37 +87,57 @@ def prepare_review_presentations(cards, language, *, translation_api_key=""):
             elif len(pending) < MAX_TRANSLATION_REVIEWS and characters + len(text) <= MAX_TRANSLATION_CHARACTERS:
                 pending[text] = [item]
                 characters += len(text)
-    if not pending or not translation_api_key:
-        return
+            else:
+                trace["capacity_skipped"] += 1
+    if not pending:
+        trace["reason"] = "capacity_exceeded" if trace["capacity_skipped"] else "not_needed"
+        return trace
+    if not translation_api_key:
+        trace["reason"] = "missing_credentials"
+        return trace
     originals = list(pending)
+    trace["requested"] = len(originals)
     try:
         response = requests.post(
             TRANSLATION_URL,
             headers={"X-Goog-Api-Key": translation_api_key},
             json={"q": originals, "target": "ko" if language == "Korean" else "en",
                   "format": "text", "model": "nmt"},
-            timeout=(2, 5),
+            timeout=(3, 12),
         )
         response.raise_for_status()
         payload = response.json()
         translations = payload["data"]["translations"]
         if not isinstance(translations, list) or len(translations) != len(originals):
-            return
+            trace["reason"] = "invalid_response"
+            return trace
         for source, result in zip(originals, translations):
             translation = result.get("translatedText") if isinstance(result, dict) else None
             if not isinstance(translation, str) or not translation.strip():
+                trace["rejected"] += 1
                 continue
             translation = unescape(translation)
             if _symbols(source) != _symbols(translation):
+                trace["rejected"] += 1
                 continue
             if _numbers(source) != _numbers(translation):
+                trace["rejected"] += 1
                 continue
             if language == "English" and (re.search(r"[가-힣]", translation) or not re.search(r"[A-Za-z]", translation)):
+                trace["rejected"] += 1
                 continue
             if language == "Korean" and not re.search(r"[가-힣]", translation):
+                trace["rejected"] += 1
                 continue
+            trace["translated"] += 1
             for item in pending[source]:
                 item["presentation"] = {"status": "translated", "language": language, "text": translation}
-    except (requests.RequestException, ValueError, KeyError, TypeError):
-        # Provider failures must not hide originals or expose request data in logs.
-        return
+    except requests.Timeout:
+        trace["reason"] = "provider_timeout"
+    except requests.RequestException:
+        trace["reason"] = "provider_error"
+    except (ValueError, KeyError, TypeError):
+        trace["reason"] = "invalid_response"
+    if trace["reason"] is None and trace["rejected"]:
+        trace["reason"] = "translation_rejected"
+    return trace

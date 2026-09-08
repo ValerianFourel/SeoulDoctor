@@ -16,7 +16,7 @@ class ReviewPresentationTests(unittest.TestCase):
         source = review("The nurse explained the paperwork clearly.")
         reply, cards = fallback_response([{"place_id": "fixture-clinic",
              "retrieval_evidence": [source]}], {"retrieval_execution_status": "partial"}, "English")
-        self.assertIn("search did not finish", reply)
+        self.assertIn("Review retrieval was incomplete", reply)
         self.assertNotIn(source["text"], reply)
         self.assertNotIn("review:fixture", reply)
         self.assertNotIn("evidence:fixture", reply)
@@ -71,7 +71,7 @@ class TranslationTests(unittest.TestCase):
             "https://translation.googleapis.com/language/translate/v2",
             headers={"X-Goog-Api-Key": "fixture-key"},
             json={"q": [source], "target": "en", "format": "text", "model": "nmt"},
-            timeout=(2, 5))
+            timeout=(3, 12))
 
     def test_invalid_or_failed_translation_retains_original(self):
         import requests
@@ -158,3 +158,23 @@ class TranslationTests(unittest.TestCase):
         self.assertEqual(len(post.call_args.kwargs["json"]["q"]), MAX_TRANSLATION_REVIEWS)
         self.assertEqual(items[-1]["presentation"]["status"], "unavailable")
         self.assertTrue(all(item["presentation"]["status"] == "translated" for item in items[:-1]))
+
+    def test_first_reviews_across_cards_get_translation_capacity_before_later_pages(self):
+        from unittest.mock import patch
+        from review_presentation import prepare_review_presentations
+        cards = [{"retrieval_evidence": [review(f"친절한 설명 {index}") for index in range(5)]},
+                 {"retrieval_evidence": [review("발목 치료 경험")]}]
+        with patch("review_presentation.MAX_TRANSLATION_REVIEWS", 2), patch("review_presentation.requests.post") as post:
+            post.return_value.json.return_value = {"data": {"translations": [
+                {"translatedText": "Kind explanation 0"}, {"translatedText": "Ankle treatment experience"}]}}
+            trace = prepare_review_presentations(cards, "English", translation_api_key="fixture")
+        self.assertEqual(post.call_args.kwargs["json"]["q"], ["친절한 설명 0", "발목 치료 경험"])
+        self.assertEqual(trace["capacity_skipped"], 4)
+        self.assertEqual(cards[1]["retrieval_evidence"][0]["presentation"]["status"], "translated")
+
+    def test_missing_credentials_are_distinct_from_translation_not_needed(self):
+        from review_presentation import prepare_review_presentations
+        korean = [{"retrieval_evidence": [review("친절한 설명")]}]
+        english = [{"retrieval_evidence": [review("Kind explanation")]}]
+        self.assertEqual(prepare_review_presentations(korean, "English")["reason"], "missing_credentials")
+        self.assertEqual(prepare_review_presentations(english, "English")["reason"], "not_needed")

@@ -476,6 +476,48 @@ class AnswerReliabilityTests(unittest.TestCase):
                 self.assertEqual(post.call_args.kwargs["json"]["q"], [source["text"]])
                 self.assertEqual(outcome.cards[0]["answer_citations"][0]["original_excerpt"], source["text"])
 
+    def test_exhausted_answer_budget_still_translates_originals(self):
+        source = review("의사는 친절하지만 간호사는 불친절했어요.")
+        complete = ScriptedCompletion(proposal(source))
+        with patch.object(evidence_response, "monotonic", side_effect=[0, 0, 0, 91, 91, 91]), patch("review_presentation.requests.post") as post:
+            post.return_value.json.return_value = {"data": {"translations": [
+                {"translatedText": "The doctor was kind, but the nurse was rude."}]}}
+            outcome = self.answer(complete, [card([source])], translation_key="fixture")
+        self.assertEqual(outcome.trace["reason"], "answer_deadline_exhausted")
+        self.assertEqual(outcome.cards[0]["retrieval_evidence"][0]["presentation"]["status"], "translated")
+        self.assert_originals(outcome, [source])
+
+    def test_rejected_answer_still_gets_independent_translation(self):
+        source = review("간호사는 친절했어요.")
+        complete = ScriptedCompletion(proposal(source), {"accepted": False, "issues": ["Unsupported claim"]})
+        with patch("review_presentation.requests.post") as post:
+            post.return_value.json.return_value = {"data": {"translations": [{"translatedText": "The nurse was kind."}]}}
+            outcome = self.answer(complete, [card([source])], translation_key="fixture")
+        self.assertEqual(outcome.trace["reason"], "semantic_verification_rejected")
+        self.assertEqual(outcome.trace["translation"]["translated"], 1)
+        self.assertEqual(outcome.cards[0]["retrieval_evidence"][0]["presentation"]["status"], "translated")
+        self.assert_originals(outcome, [source])
+
+    def test_search_progress_reaches_both_models_and_allows_recorded_radii(self):
+        answer = "The search radius expanded from 1 km to 5 km. You can ask about a clinic's reviews."
+        complete = ScriptedCompletion({"answer": answer, "assessments": [], "citations": []},
+                                      {"accepted": True, "issues": []})
+        outcome = self.answer(complete, metadata={"retrieval_execution_status": "complete",
+                            "search_attempted_radii_km": [1, 2, 5], "search_radius_expanded": True})
+        self.assertEqual(outcome.text, answer)
+        search = json.loads(complete.calls[1]["messages"][1]["content"])["search"]
+        self.assertEqual(search["search_progress"]["attempted_radii_km"], [1, 2, 5])
+        self.assertTrue(search["search_progress"]["radius_expanded"])
+        self.assertEqual(search["search_progress"]["displayed_original_count"], 1)
+
+    def test_translation_failure_cause_is_internal_and_original_survives(self):
+        source = review("간호사는 친절했어요.")
+        with patch("review_presentation.requests.post", side_effect=requests.Timeout()):
+            outcome = self.answer(None, [card([source])], translation_key="fixture")
+        self.assertEqual(outcome.trace["translation"]["reason"], "provider_timeout")
+        self.assert_originals(outcome, [source])
+        self.assertNotIn("provider_timeout", json.dumps(outcome.cards))
+
     def test_response_language_does_not_change_original_identity(self):
         for language in ("English", "Korean"):
             with self.subTest(language=language):
@@ -485,11 +527,11 @@ class AnswerReliabilityTests(unittest.TestCase):
 
     def test_shared_deadline_prevents_verification_when_synthesis_uses_budget(self):
         complete = ScriptedCompletion(proposal())
-        with patch.object(evidence_response, "monotonic", side_effect=[0, 0, 0, 46, 46, 46]):
+        with patch.object(evidence_response, "monotonic", side_effect=[0, 0, 0, 91, 91, 91]):
             outcome = self.answer(complete)
         self.assertEqual(len(complete.calls), 1)
         self.assertEqual(outcome.trace["reason"], "answer_deadline_exhausted")
-        self.assertLessEqual(complete.calls[0]["timeout_seconds"], 30)
+        self.assertLessEqual(complete.calls[0]["timeout_seconds"], 45)
         self.assert_originals(outcome, [review()])
 
 

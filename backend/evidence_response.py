@@ -229,7 +229,11 @@ Return one JSON object with exactly answer, assessments, citations.
 answer: concise plain text in response_language. Answer the current question first,
 explain the evidence relevant to the patient's decision, state specific unknowns,
 and give one useful next action. Do not repeat a question already answered, including
-a routine visit reason. A proposed radius expansion is optional, never already done.
+a routine visit reason. Report a radius expansion as completed only when search_progress
+records it. Otherwise ask permission to widen the area while preserving specialty.
+Use search_progress and available_next_actions to give a specific refinement. If review
+retrieval failed, offer to retry the same search; a narrower area does not repair a failed
+service. Do not use the generic sentence "Part of the search did not finish."
 Use [1], [2] citation markers for patient-report claims. Do not write review quotations
 into the answer; the server displays original excerpts separately. No Markdown formatting.
 assessments: array of {place_id, requirement, status, basis, staff_role, evidence_ids,
@@ -276,7 +280,7 @@ unless explicitly verified service facts are provided. An unconfirmed service is
 proof the service is absent. Distinguish partial retrieval from missing evidence.
 If context_limited is true, reject claims of exhaustive review or no concerns.
 Check the requested language, named clinic, visit reason, measurements and proposal to
-expand a radius without claiming it has already changed. A cautious but irrelevant
+expand a radius. A completed expansion must match search_progress. A cautious but irrelevant
 template does not pass. Do not rewrite the answer. On acceptance issues must be empty.
 """
 
@@ -402,6 +406,15 @@ def _answer_context(question, state, cards, metadata, language):
                 "retrieval_roles": item.get("retrieval_roles", []),
             })
     execution = metadata.get("retrieval_execution_status", "not_run")
+    next_actions = []
+    if execution in {"partial", "failed"}:
+        next_actions.append("retry the same search with the current specialty and location")
+    if not (state.disease_terms or state.visit_reason):
+        next_actions.append("ask what the patient needs the doctor to help with")
+    if cards:
+        next_actions.append("ask about a particular clinic or requirement in its reviews")
+    if not state.is_citywide_search:
+        next_actions.append("offer a different radius, with patient agreement, while preserving specialty")
     return {
         "question": question,
         "response_language": language,
@@ -414,6 +427,12 @@ def _answer_context(question, state, cards, metadata, language):
                 "negative_hard_keywords", "required_hours", "gender_terms",
             )
         },
+        "search_progress": {
+            "attempted_radii_km": metadata.get("search_attempted_radii_km", []),
+            "radius_expanded": metadata.get("search_radius_expanded", False),
+            "displayed_original_count": sum(len(card["retrieval_evidence"]) for card in cards),
+        },
+        "available_next_actions": next_actions,
         "retrieval_execution": execution,
         "retrieval_reasons": metadata.get("retrieval_reason_codes", []),
         "context_limited": context_limited,
@@ -458,6 +477,7 @@ def _validate_proposal(proposal, context):
     # Source numbers are admissible only for later semantic attachment checks.
     numeric_context = json.dumps({
         "state": context["active_state"],
+        "progress": context["search_progress"],
         "facts": [{key: value for key, value in card.items() if key != "place_id"}
                   for card in context["facilities"]],
         "reviews": [source["original_text"] for source in context["evidence"]],
@@ -485,7 +505,8 @@ def _validate_proposal(proposal, context):
                 )
                 if proposal and 0 < value <= 100:
                     allowed_numbers.add(float(match.group(1)))
-                elif value != context["active_state"]["max_distance_km"]:
+                elif value not in [context["active_state"]["max_distance_km"],
+                                   *context["search_progress"]["attempted_radii_km"]]:
                     raise ValueError("radius_mismatch")
             else:
                 raise ValueError("ambiguous_measurement_owner")
@@ -539,11 +560,20 @@ def _fallback(cards, state, metadata, language, reason):
                 if korean else
                 "I couldn't verify a review comparison. No usable original reviews were returned for these candidates."
             ))
+    attempted_radii = metadata.get("search_attempted_radii_km", [])
+    if metadata.get("search_radius_expanded") and len(attempted_radii) >= 2:
+        first, last = attempted_radii[0], attempted_radii[-1]
+        specialty = _specialty_label(state, korean) or ("요청하신 진료과" if korean else "the requested specialty")
+        paragraphs.append(
+            f"{first:g} km 이내에 해당 진료과 후보가 없어 {last:g} km까지 넓혔습니다. {specialty} 조건은 유지했습니다."
+            if korean else
+            f"No eligible specialist was found within the initial {first:g} km radius, so I widened it to {last:g} km while keeping {specialty}."
+        )
     if metadata.get("retrieval_execution_status") in {"partial", "failed"}:
         paragraphs.append(
-            "검색 일부가 완료되지 않았습니다. 확인된 후보와 후기를 표시하며 요청 조건은 유지했습니다."
+            "후기 검색을 끝까지 완료하지 못해 비교에 필요한 후기가 빠져 있을 수 있습니다. 같은 진료과와 위치로 다시 검색해 달라고 요청해 주세요. 이미 반환된 후기는 아래에서 확인할 수 있습니다."
             if korean else
-            "Part of the search did not finish. These are the candidates and reviews retrieved within your current constraints."
+            "Review retrieval was incomplete, so relevant patient experiences may be missing. Ask me to retry with the same specialty and location to look for those reviews. Any reviews already returned remain available below."
         )
     if not cards:
         return "\n\n".join(paragraphs)
@@ -560,7 +590,7 @@ def _fallback(cards, state, metadata, language, reason):
             if korean else
             "English consultations are unconfirmed. Ask the clinic whether an English consultation is available before booking."
         )
-    else:
+    elif metadata.get("retrieval_execution_status") not in {"partial", "failed"}:
         paragraphs.append(_follow_up(state, korean))
     return "\n\n".join(paragraphs)
 
@@ -573,7 +603,7 @@ def answer_search(
     """Return one verified answer while preserving independent source cards."""
     prepared, quarantined = _prepare_cards(cards)
     trace = {"status": "fallback", "quarantined": quarantined, "calls": []}
-    deadline = monotonic() + 45.0
+    deadline = monotonic() + 90.0
     reason = "no_candidates" if not prepared else "answer_model_unavailable"
     text = ""
     if prepared and complete is not None:
@@ -599,7 +629,7 @@ def answer_search(
                             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                         ],
                         max_completion_tokens=token_limit,
-                        timeout_seconds=min(30.0, remaining),
+                        timeout_seconds=min(45.0 if stage == "synthesis" else 30.0, remaining),
                     )
                 finally:
                     call_trace["duration_ms"] = round((monotonic() - started) * 1000, 2)
@@ -638,8 +668,8 @@ def answer_search(
         text = _fallback(prepared, state, metadata, language, reason)
     for card in prepared:
         card["answer_status"] = trace["status"]
-    prepare_review_presentations(
+    trace["translation"] = prepare_review_presentations(
         prepared, language,
-        translation_api_key=translation_api_key if deadline - monotonic() > 7 else "",
+        translation_api_key=translation_api_key,
     )
     return AnswerOutcome(text=text, cards=prepared, trace=trace)

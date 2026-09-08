@@ -63,8 +63,22 @@ class EvidenceResponseTests(unittest.TestCase):
         for cards in ([], [self.card()]):
             complete, _ = fallback_response(cards, {"retrieval_execution_status": "complete"}, "English")
             failed, _ = fallback_response(cards, {"retrieval_execution_status": "failed"}, "English")
-            self.assertNotIn("search did not finish", complete)
-            self.assertIn("search did not finish", failed)
+            self.assertNotIn("Review retrieval was incomplete", complete)
+            self.assertIn("Review retrieval was incomplete", failed)
+
+    def test_partial_search_gives_retry_without_unrelated_radius_refinement(self):
+        reply, _ = fallback_response([self.card()], {"retrieval_execution_status": "partial"},
+                                     "English", state=self.state())
+        self.assertIn("retry with the same specialty and location", reply)
+        self.assertNotIn("Part of the search did not finish", reply)
+        self.assertNotIn("narrow", reply)
+
+    def test_completed_expansion_is_disclosed_without_changing_specialty(self):
+        reply, _ = fallback_response([self.card()], {"search_attempted_radii_km": [1, 2, 5],
+                                     "search_radius_expanded": True}, "English", state=self.state())
+        self.assertIn("initial 1 km radius", reply)
+        self.assertIn("widened it to 5 km", reply)
+        self.assertIn("keeping orthopedics", reply)
 
     def test_known_concern_or_visit_reason_is_not_requested_again(self):
         for state in (self.state(disease_terms=["wrist pain"]), self.state(visit_reason="routine checkup")):
