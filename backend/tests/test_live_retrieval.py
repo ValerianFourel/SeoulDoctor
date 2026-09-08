@@ -304,6 +304,7 @@ class ReverseEvidenceReranker:
             True,
             "ok",
             "test-model",
+            tuple((hit.evidence_id, float(rank)) for rank, hit in enumerate(values)),
         )
 
 
