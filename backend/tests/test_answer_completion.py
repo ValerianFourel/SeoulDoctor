@@ -1,0 +1,68 @@
+"""The answer boundary makes one request and rejects partial provider output."""
+
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+import unittest
+from unittest.mock import Mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from llm_client import request_answer_completion
+
+
+class AnswerCompletionTests(unittest.TestCase):
+    def client(self, *, content='{"answer":"safe"}', finish_reason="stop", choices=True):
+        client = Mock()
+        message = SimpleNamespace(content=content)
+        completion = SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason=finish_reason)] if choices else [])
+        client.with_options.return_value.chat.completions.create.return_value = completion
+        return client
+
+    def request(self, client):
+        return request_answer_completion(
+            client, model="synthetic-answer-model",
+            messages=[{"role": "user", "content": "synthetic request"}],
+            max_completion_tokens=3072, timeout_seconds=17.5,
+        )
+
+    def test_valid_json_uses_explicit_timeout_and_disables_provider_retries(self):
+        client = self.client()
+        value, _ = self.request(client)
+        self.assertEqual(value, {"answer": "safe"})
+        client.with_options.assert_called_once_with(max_retries=0, timeout=17.5)
+        create = client.with_options.return_value.chat.completions.create
+        create.assert_called_once()
+        self.assertEqual(create.call_args.kwargs["max_completion_tokens"], 3072)
+        self.assertEqual(create.call_args.kwargs["temperature"], 0.0)
+
+    def test_complete_json_with_nonstop_finish_reason_is_rejected_without_retry(self):
+        for reason in ("length", "content_filter", "tool_calls", None):
+            with self.subTest(reason=reason):
+                client = self.client(finish_reason=reason)
+                with self.assertRaisesRegex(ValueError, "answer_completion_incomplete"):
+                    self.request(client)
+                client.with_options.return_value.chat.completions.create.assert_called_once()
+
+    def test_empty_and_malformed_completions_never_become_answers(self):
+        for content in (None, "", " ", "{", "[]", '{"answer":'):
+            with self.subTest(content=content):
+                client = self.client(content=content)
+                with self.assertRaises(ValueError):
+                    self.request(client)
+                client.with_options.return_value.chat.completions.create.assert_called_once()
+
+    def test_no_choices_and_transport_timeout_are_not_retried(self):
+        client = self.client(choices=False)
+        with self.assertRaisesRegex(ValueError, "answer_completion_incomplete"):
+            self.request(client)
+        client.with_options.return_value.chat.completions.create.assert_called_once()
+        client = self.client()
+        client.with_options.return_value.chat.completions.create.side_effect = TimeoutError("synthetic timeout")
+        with self.assertRaises(TimeoutError):
+            self.request(client)
+        client.with_options.return_value.chat.completions.create.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()
