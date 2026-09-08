@@ -1,5 +1,6 @@
 """Prepare selected reviews for display without changing source evidence."""
 
+from decimal import Decimal
 from html import unescape
 from itertools import zip_longest
 import re
@@ -52,49 +53,71 @@ def _symbols(text):
             or char in {'\u200d', '\ufe0f', '\u20e3'}]
 
 
-_TIME_NUMBERS = {
+_NUMBER_WORDS = {
     word: number for number, word in enumerate((
         "zero", "one", "two", "three", "four", "five", "six", "seven",
         "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
         "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
     ))
 }
-_TIME_NUMBERS.update({"a": 1, "an": 1})
+_NUMBER_WORDS.update({"a": 1, "an": 1, "single": 1})
 for tens, english, korean in (
     (20, "twenty", "스물"), (30, "thirty", "서른"), (40, "forty", "마흔"),
     (50, "fifty", "쉰"), (60, "sixty", "예순"), (70, "seventy", "일흔"),
     (80, "eighty", "여든"), (90, "ninety", "아흔"),
 ):
-    _TIME_NUMBERS[english] = tens
+    _NUMBER_WORDS[english] = tens
     for units, word in enumerate(("", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")):
         if units:
-            _TIME_NUMBERS[f"{english} {word}"] = tens + units
-            _TIME_NUMBERS[f"{english}-{word}"] = tens + units
+            _NUMBER_WORDS[f"{english} {word}"] = tens + units
+            _NUMBER_WORDS[f"{english}-{word}"] = tens + units
     for units, word in enumerate(("", "한", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉")):
-        _TIME_NUMBERS[korean + word] = tens + units
+        _NUMBER_WORDS[korean + word] = tens + units
 for units, word in enumerate(("영", "한", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉")):
-    _TIME_NUMBERS[word] = units
+    _NUMBER_WORDS[word] = units
     if units:
-        _TIME_NUMBERS["열" + word] = 10 + units
-_TIME_NUMBERS.update({"열": 10, "스무": 20, "하나": 1, "둘": 2, "셋": 3, "넷": 4})
+        _NUMBER_WORDS["열" + word] = 10 + units
+_NUMBER_WORDS.update({"열": 10, "스무": 20, "하나": 1, "둘": 2, "셋": 3, "넷": 4})
 for tens, prefix in enumerate(("", "십", "이십", "삼십", "사십", "오십", "육십", "칠십", "팔십", "구십")):
     for units, word in enumerate(("", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구")):
         if tens or units:
-            _TIME_NUMBERS[prefix + word] = tens * 10 + units
+            _NUMBER_WORDS[prefix + word] = tens * 10 + units
 _TIME_NUMBER_PATTERN = re.compile(
-    r"(?<![A-Za-z가-힣])(" + "|".join(re.escape(word) for word in sorted(_TIME_NUMBERS, key=len, reverse=True))
-    + r")\s*(?=(?:hours?|minutes?|days?|weeks?|months?|years?)\b|시간|분|일|주|개월|달|년)",
+    r"(?<![A-Za-z가-힣])(" + "|".join(re.escape(word) for word in sorted(_NUMBER_WORDS, key=len, reverse=True))
+    + r")\s*(?=(?:hours?|minutes?|days?|weeks?|months?|years?|people|persons?|tests?|sessions?|visits?|times?)\b|시간|분|일|주|개월|달|년|명|회|번|개|천|만|원)",
+    re.IGNORECASE,
+)
+
+
+_CARDINAL_WORD_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(word) for word in sorted(_NUMBER_WORDS, key=len, reverse=True)
+                       if word.isascii() and word not in {"a", "an", "single"})
+    + r")\b|(?<![가-힣])(하나|둘|셋|넷)(?![가-힣])",
+    re.IGNORECASE,
+)
+_WON_PATTERN = re.compile(
+    r"(?P<value>\d+(?:\.\d+)?)\s*(?P<scale>천|만)?\s*(?:원|won\b|KRW\b)",
     re.IGNORECASE,
 )
 
 
 def _numbers(text):
     normalized = _TIME_NUMBER_PATTERN.sub(
-        lambda match: str(_TIME_NUMBERS[match.group(1).lower()]) + " ", text,
+        lambda match: str(_NUMBER_WORDS[match.group(1).lower()]) + " ", text,
+    )
+    normalized = _CARDINAL_WORD_PATTERN.sub(
+        lambda match: str(_NUMBER_WORDS[(match.group(1) or match.group(2)).lower()]), normalized,
     )
     normalized = re.sub(r"(?<!\d)\d{1,3}(?:,\d{3})+(?!\d)",
                         lambda match: match.group().replace(",", ""), normalized)
-    return re.findall(r"\d+(?:[.,]\d+)*", normalized)
+    normalized = re.sub(r"\bper (session|visit|treatment)\b", r"1 \1", normalized, flags=re.IGNORECASE)
+    amounts = []
+    def take_amount(match):
+        amount = Decimal(match["value"]) * {None: 1, "천": 1000, "만": 10000}[match["scale"]]
+        amounts.append("KRW:" + format(amount.normalize(), "f"))
+        return " "
+    normalized = _WON_PATTERN.sub(take_amount, normalized)
+    return [*re.findall(r"\d+(?:[.,]\d+)*", normalized), *sorted(amounts)]
 
 
 def prepare_review_presentations(cards, language, *, translation_api_key=""):

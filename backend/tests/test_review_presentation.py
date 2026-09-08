@@ -188,6 +188,41 @@ class TranslationTests(unittest.TestCase):
                 self.assertEqual(items[0]["presentation"]["status"], "unavailable")
                 self.assertEqual(items[0]["text"], source)
 
+    def test_people_counts_and_unqualified_english_cardinals_match(self):
+        source = "두분이 안내했고 발목은 90도였어요."
+        items, _ = self.prepare([source], ["Two of them guided me and my ankle was at 90 degrees."])
+        self.assertEqual(items[0]["presentation"]["status"], "translated")
+        changed, _ = self.prepare([source], ["Three of them guided me and my ankle was at 90 degrees."])
+        self.assertEqual(changed[0]["presentation"]["status"], "unavailable")
+        self.assertEqual(changed[0]["text"], source)
+
+    def test_won_units_and_per_session_do_not_change_the_amount(self):
+        examples = (
+            ("테스트 하나 없이 1회에 22만원 냈어요.", "There wasn't a single test and I paid 220,000 won per session."),
+            ("한 회에 2천원 냈어요.", "I paid 2000 won per session."),
+            ("1회에 1.5만원 냈어요.", "I paid 15,000 won per session."),
+        )
+        for source, translation in examples:
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+                self.assertEqual(items[0]["text"], source)
+                reverse, _ = self.prepare([translation], [source], language="Korean")
+                self.assertEqual(reverse[0]["presentation"]["status"], "translated")
+
+    def test_currency_and_session_counts_still_reject_changed_values(self):
+        source = "1회에 22만원 냈어요."
+        for translation in (
+            "I paid 22,000 won per session.",
+            "I paid 220,000 won for two sessions.",
+            "I paid 220,000 dollars per session.",
+            "I paid 220,000 won.",
+        ):
+            with self.subTest(translation=translation):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+                self.assertEqual(items[0]["text"], source)
+
     def test_provider_elapsed_time_is_retained_on_success_and_failure(self):
         from unittest.mock import patch
         import requests
