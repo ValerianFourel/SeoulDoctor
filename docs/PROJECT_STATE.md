@@ -1,11 +1,11 @@
 # SeoulDoc project state
 
-## NCS answer reliability implemented locally, 2026-09-08
+## NCS answer reliability pushed; deployment blocked, 2026-09-08
 
 Root integrated the state, evidence, answer and UI repairs in
 `/tmp/seouldoc-answer-reliability`, branch
 `local/ncs-answer-reliability-20260908`. Application checkpoint:
-`b7ed376679c530243eda41b42f420964090f429f`. The base is current `origin/ncs`
+`b7ed376679c530243eda41b42f420964090f429f`. The starting NCS base is
 `9036fbc4f00888fe4e9d746b69b419272408aebe`; fetched `origin/main` remains
 `e6b40d5782e04abe97383d459c4aff6eec40a287`. The unrelated root checkout and its
 dirty files were preserved. This update supersedes the implementation-next
@@ -62,9 +62,19 @@ The original Space remained
 `8909ff673d2e1b5e7df97010f9e309f6a9dc4c7b`. Publication/deployment attempts and
 the final observed remote state belong in `planning/hf-deployment.md`.
 
-Next action: publish the checked NCS commit and inspect its existing deployment
-workflow, then verify the exact runtime before running any newly authorized live
-gate. Private checkpoint upload needs the approved `HF_TOKEN` environment value.
+Publication succeeded at `67f17dc213e4acedde80940b56df39bf52a45bf0` on remote
+`ncs`. Actions run `34237945900` executed and failed at `Sync application`.
+Its public annotations expose only exit code 1; unauthenticated job-log access
+returned 403. The remote cause is therefore not confirmed. At 14:38 UTC,
+public checks confirmed the same old NCS source/runtime and original-Space
+revision above. This implementation is not deployed. The local environment
+still lacks both credentials, so direct deployment and checkpoint upload are
+blocked as well. See `planning/hf-deployment.md` for the workflow link.
+
+Next action: inject `HF_TOKEN` into the approved deployment process and deploy
+the verified NCS revision, then verify runtime/readiness and visible originals.
+Only after the fresh evaluation authorization and `OPENROUTER_API_KEY` are
+available, run unchanged fixed replay followed by the gated adaptive batch.
 
 ## NCS answer reliability implementation ownership, 2026-09-08
 

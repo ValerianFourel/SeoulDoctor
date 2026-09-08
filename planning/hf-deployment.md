@@ -1,33 +1,39 @@
 # Combined ncs GPU deployment
 
-## NCS reliability publication checkpoint, 2026-09-08
+## NCS reliability pushed; deployment failed, 2026-09-08
 
 The reliability implementation is committed at
 `b7ed376679c530243eda41b42f420964090f429f` on isolated fix branch
-`local/ncs-answer-reliability-20260908`, based on current `origin/ncs`
+`local/ncs-answer-reliability-20260908`, based on the starting NCS revision
 `9036fbc4f00888fe4e9d746b69b419272408aebe`. Local checks passed: 360 backend
 tests, 36 required evaluator tests, frontend production build and 58/58 desktop
 and mobile browser assertions. Browser/API checks use synthetic fixtures;
 unchanged live replay and adaptive evaluation are still pending.
 
-The authorized publication uses an explicit `HEAD:refs/heads/ncs` push to
-`github.com/ValerianFourel/SeoulDoctor.git`. The accompanying `[deploy ncs]`
-commit requests the existing workflow, whose only application target is
-`ValerianFourel/SeoulDoctor-ncs-retriever`. It uploads the committed revision
-with the Space parent-revision guard and `HF_TOKEN` from the workflow process.
-No deployment configuration or hardware change is included.
+The explicit `HEAD:refs/heads/ncs` push to the verified repository
+`github.com/ValerianFourel/SeoulDoctor.git` succeeded at
+`67f17dc213e4acedde80940b56df39bf52a45bf0`. Its `[deploy ncs]` title triggered
+the existing workflow for `ValerianFourel/SeoulDoctor-ncs-retriever`.
+[Actions run 34237945900](https://github.com/ValerianFourel/SeoulDoctor/actions/runs/34237945900)
+failed at `Sync application` after checkout and dependency setup passed. Public
+annotations show only exit code 1. The unauthenticated job-log endpoint returned
+403, so the specific remote failure cause was not confirmed. No deployment
+configuration or hardware change was included.
 
 At the preflight, the NCS Space source/runtime remained
 `b13d2bdb6eb12153a23453382244630e3746f240`, source marker
 `d7587caeb0539ac0a2e282982f95f16e96fb137b`, running on its existing T4 Medium.
 The original Space remained
-`8909ff673d2e1b5e7df97010f9e309f6a9dc4c7b`. No new deployment is claimed by
-this checkpoint. Inspect the resulting Actions run and exact Space revision.
+`8909ff673d2e1b5e7df97010f9e309f6a9dc4c7b`. Post-push public checks at 14:38 UTC
+confirmed these same source/runtime revisions and healthy old NCS counts. The
+reliability implementation is not live. No post-deployment chat, GPU readiness
+or browser proof for this implementation is claimed.
 
 Local `HF_TOKEN` and `OPENROUTER_API_KEY` process variables are absent. The
 historical dotenv exception below is superseded by the current user instruction:
-approved process variables only. If the workflow secret is absent, deployment
-and private checkpoint upload remain blocked until that credential is supplied.
+approved process variables only. Direct deployment and private checkpoint upload
+remain blocked until that credential is supplied. This does not establish that
+the workflow's secret was absent; that remote detail is unverified.
 No expired evaluation budget or historical temporary-resource allowance renews.
 
 ## Current deployment checkpoint, 2026-09-08

@@ -14,6 +14,14 @@ before resuming. The implementation checkpoint is `b7ed376679c530243eda41b42f420
 `local/ncs-answer-reliability-20260908`. Local verification passed; no fresh live
 patient gate is claimed. The previous failed adaptive records remain intact.
 
+The NCS push reached `67f17dc213e4acedde80940b56df39bf52a45bf0`. Deployment
+workflow run `34237945900` failed at `Sync application`; public annotations show
+exit code 1 and the job-log endpoint returned 403. The specific remote cause is
+unconfirmed. At 14:38 UTC, NCS still ran
+`b13d2bdb6eb12153a23453382244630e3746f240`, with the old source marker. Direct
+deployment is blocked by absent local `HF_TOKEN`. Do not evaluate the old
+runtime as though it contains this implementation.
+
 Use `HF_TOKEN` and `OPENROUTER_API_KEY` only from approved process environment
 variables. Both were absent in this task; no `.env` was read. The existing NCS
 Actions workflow can supply its repository `HF_TOKEN` secret to its process if
