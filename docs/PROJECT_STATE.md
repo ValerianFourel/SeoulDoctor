@@ -597,3 +597,25 @@ hardware were preserved. No NCS deployment or branch changes occurred.
 The user explicitly authorized private credential loading from backend/.env;
 no credential values or live response contents were printed or committed.
 Next action: refresh the app and start a new search using the deployed UI.
+
+## Website HF routing, 2026-09-08
+
+Owner: root. Branch `local/website-hf-failover-20260908`, based on
+`e6b40d5782e04abe97383d459c4aff6eec40a287`. Owns `frontend/lib/api.ts`,
+`scripts/test_frontend_api.cjs`, website routing documentation, and this entry.
+The user requests seouldoc.io use NCS first and the original Space on failure.
+Vercel production currently follows main and embeds the obsolete Render API.
+Both public HF APIs respond to health and website-origin preflight requests.
+HF preflight omits credential permission, so cross-origin requests must omit
+cookies. Conversation state and cookie consent already travel in JSON and a
+header. No backend deployment or new compute is needed for this routing change.
+
+Implementation verified locally: 17 routing tests and all 218 backend tests
+passed. Frontend production build passed on the host after a sandbox webpack
+failure and a corrected TypeScript iterator compatibility error. API attempts
+are sequential and bounded to 90 seconds each. Website browser verification
+and Vercel publication remain pending. See [routing policy](WEBSITE_API_ROUTING.md).
+
+Live browser prepublication check: POST /set_travel_preference from
+https://www.seouldoc.io to each public Space returned 200 and preserved Nearby.
+The build includes both HF domains; no credentials were used.
