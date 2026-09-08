@@ -11,10 +11,26 @@ The fixed NCS Space, NCS-only branch restriction, explicit deployment marker,
 pinned source revision, and existing hardware remain unchanged. Main stays
 separate at `e6b40d5782e04abe97383d459c4aff6eec40a287`.
 
-The next action is to push the credential-reference correction with the explicit
-deployment marker, verify the new running Space revision, and run the four-call
-API regression plus a browser check. The previous failed deployment and live
-before-test remain recorded below; they are not evidence of the new deployment.
+The correction was pushed as `d7587caeb0539ac0a2e282982f95f16e96fb137b`.
+The workflow configuration check and 43 focused deployment/evaluator tests
+passed. Actions run `34215299377` reached the sync step but again received no
+`HF_TOKEN`, failing before Hugging Face client initialization or upload.
+The token is also absent from the local process environment.
+
+A clean direct-deployment checkout is ready at `/tmp/seouldoc-hf-token-deploy`,
+on `ncs` at that same commit. The committed-file manifest dry run passed.
+The prepared launcher `/tmp/seouldoc_deploy_with_env_token_20260908.py` verifies
+the exact branch/revision before loading only `HF_TOKEN` into its process and
+running the fixed-target sync. It has been syntax checked but not executed.
+The user was asked for a specific exception to the current AGENTS prohibition
+on reading `.env` files; no credential file has been read while that answer is
+pending. Fresh inspection records are under the root checkout's
+`.audit/response-polish-20260908-hf-token/`.
+
+The next action is to resolve that credential-source permission or receive a
+process-injected token, execute the reviewed deployment, verify its running
+Space revision, and run the four-call API regression plus a browser check.
+The failed deployments and live before-test are not evidence of a deployed fix.
 
 ## NCS response deployment and API regressions, 2026-09-08
 

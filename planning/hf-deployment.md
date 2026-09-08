@@ -13,8 +13,12 @@ deployment marker described below. Actions run `34214729943` executed but
 failed before any upload because `NCS_HF_TOKEN` supplied no process credential.
 The user subsequently specified the existing `HF_TOKEN` secret for deployment;
 the workflow reference has been corrected to use it. A new explicit deployment
-push is required. Until its running revision is verified, the response changes
-must not be described as live.
+push `d7587caeb0539ac0a2e282982f95f16e96fb137b` launched Actions run `34215299377`,
+which also received no token and failed before upload. A clean `ncs` checkout
+for direct deployment passed its manifest dry run. Loading the local token from
+`backend/.env` requires a specific exception to the current AGENTS prohibition;
+that question is pending. Until the new running revision is verified, the
+response changes must not be described as live.
 
 For the already public target, run the following from a clean, committed `ncs`
 checkout with an approved `HF_TOKEN` in the process environment:
