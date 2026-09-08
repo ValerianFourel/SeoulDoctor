@@ -185,6 +185,7 @@ class SearchRepairRunnerTests(unittest.TestCase):
 
     @staticmethod
     def _gate_runs(runner, directory):
+        runner.fixed_gate["grading_protocol_sha256"] = runner.record["grading_protocol_sha256"]
         for phase in ("fixed", "fixtures"):
             cases = [{"id": case["id"], "status": "complete"}
                      for case in expand_fixed(runner.manifest["fixed"])
@@ -192,7 +193,8 @@ class SearchRepairRunnerTests(unittest.TestCase):
             path = directory / (phase + ".json")
             path.write_text(json.dumps({"phase": phase, "status": "complete", "cases": cases,
                 "application_revision": runner.record["application_revision"],
-                "manifest_sha256": runner.record["manifest_sha256"]}))
+                "manifest_sha256": runner.record["manifest_sha256"],
+                "grading_protocol_sha256": runner.record["grading_protocol_sha256"]}))
             runner.fixed_gate["evidence_paths"].append(str(path))
 
     def test_missing_identity_cannot_pass_ownership_by_equal_nulls(self):
@@ -214,9 +216,22 @@ class SearchRepairRunnerTests(unittest.TestCase):
             runner = Runner("http://localhost", Path(directory) / "run", suite(), "adaptive", "fixture",
                             actor_key="fixture", get=lambda *args, **kwargs: self.fail("unreviewed network"))
             runner.fixed_gate = {"passed": True, "reviewer": "root GPT-6", "application_revision": "fixture",
-                "manifest_sha256": runner.record["manifest_sha256"], "evidence_paths": [str(evidence)]}
+                "manifest_sha256": runner.record["manifest_sha256"], "evidence_paths": [str(evidence)],
+                "grading_protocol_sha256": runner.record["grading_protocol_sha256"]}
             self.assertEqual(runner.run(), 1)
             self.assertIn("fixed and fixture runs", runner.record["error_reason"])
+
+    def test_adaptive_gate_cannot_reuse_another_grading_protocol(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = Runner("http://localhost", Path(directory) / "run", suite(), "adaptive", "fixture",
+                            actor_key="fixture", get=lambda *args, **kwargs: self.fail("stale gate used network"))
+            runner.fixed_gate = {"passed": True, "reviewer": "root GPT-6", "application_revision": "fixture",
+                                 "manifest_sha256": runner.record["manifest_sha256"], "evidence_paths": []}
+            self._gate_runs(runner, Path(directory))
+            runner.fixed_gate["grading_protocol_sha256"] = "older-protocol"
+            self.assertEqual(runner.run(), 1)
+            self.assertEqual(runner.record["status"], "preflight_failed")
+            self.assertEqual(runner.budget.actor_calls, 0)
 
 
 if __name__ == "__main__":

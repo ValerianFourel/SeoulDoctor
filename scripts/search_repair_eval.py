@@ -210,8 +210,13 @@ class Runner:
         self.cases = []
         self.manifest = manifest
         write_json(self.directory / "manifest.json", manifest)
+        grading_protocol = json.loads(Path(__file__).with_name("search_repair_grading_v2.json").read_text())
+        self.grading_protocol = grading_protocol
+        write_json(self.directory / "grading-protocol.json", grading_protocol)
         self.record = {"phase": phase, "application_revision": revision, "base_url": self.base_url,
                        "manifest_sha256": sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest(),
+                       "grading_protocol_id": grading_protocol["protocol_id"],
+                       "grading_protocol_sha256": sha256(json.dumps(grading_protocol, sort_keys=True).encode()).hexdigest(),
                        "actor_model": ACTOR_MODEL, "actor_slug": ACTOR_SLUG, "actor_provider": ACTOR_PROVIDER,
                        "actor_prompt_sha256": sha256(ACTOR_PROMPT.encode()).hexdigest(),
                        "started_at": time.time(), "duration_limit_seconds": 10800,
@@ -227,6 +232,7 @@ class Runner:
         if (gate.get("passed") is not True or gate.get("reviewer") != "root GPT-6"
                 or gate.get("application_revision") != self.record["application_revision"]
                 or gate.get("manifest_sha256") != self.record["manifest_sha256"]
+                or gate.get("grading_protocol_sha256") != self.record["grading_protocol_sha256"]
                 or not gate.get("evidence_paths")):
             raise ValueError("adaptive phase requires a matching fixed gate reviewed by root GPT-6")
         if not all(Path(path).is_file() for path in gate["evidence_paths"]):
@@ -245,7 +251,8 @@ class Runner:
             completed = {case["id"] for case in run.get("cases", []) if case["status"] == "complete"}
             if (run.get("status") != "complete" or completed != eligible
                     or run.get("application_revision") != self.record["application_revision"]
-                    or run.get("manifest_sha256") != self.record["manifest_sha256"]):
+                    or run.get("manifest_sha256") != self.record["manifest_sha256"]
+                    or run.get("grading_protocol_sha256") != self.record["grading_protocol_sha256"]):
                 raise ValueError("adaptive phase requires complete matching fixed and fixture runs")
         if not self.actor_key:
             raise ValueError("OPENROUTER_API_KEY is absent")
@@ -407,8 +414,9 @@ class Runner:
             case["status"] = "complete"
         write_json(self.directory / (case["id"] + ".judge.json"), {
             "case": case, "patient": patient, "grading": self.manifest["grading"],
+            "grading_protocol": self.grading_protocol,
             "judge": "root GPT-6", "quality_pass": False,
-            "instruction": "Grade only completed conversations. Give evidence for each 1-5 score. Unsupported dimensions remain unscored; incomplete, failed, or unscored output never passes.",
+            "instruction": "Grade only completed conversations using the frozen diagnostic grading protocol. Give evidence for each 1-5 score. Every null requires a predefined applicability reason and never counts as a passed score. Unexpected missing evidence, incomplete conversations and failed checks never pass.",
         })
         self.checkpoint()
 

@@ -1,0 +1,22 @@
+{
+  "protocol_id": "search-repair-diagnostic-grading-v2",
+  "classification": "synthetic_diagnostic_not_sealed_holdout",
+  "change": "Correct applicability for intentionally absent observations before fresh scored runs. Preserve all v1 artifacts as incomplete; never relabel them as v2 passes.",
+  "unchanged": ["scenario messages", "scenario oracles", "1-to-5 scale", "minimum 4 per applicable dimension", "all deterministic assertions", "source and constraint publication blockers"],
+  "null_exceptions": {
+    "fixed-05-ambiguous-foot": {"dimensions": ["review_relevance", "translation_faithfulness"], "reason": "expected_focused_clarification", "condition": "The permitted focused clarification passes intent, location and guidance checks."},
+    "fixed-08-hard-radius": {"dimensions": ["review_relevance", "translation_faithfulness"], "reason": "verified_empty_hard_scope", "condition": "The controlled source proves every eligible specialist lies outside the explicit hard radius; retrieval/filter failure cannot qualify."},
+    "fixed-12-translation-failure-v1": {"dimensions": ["translation_faithfulness"], "reason": "declared_synthetic_translation_fault"},
+    "fixed-12-translation-failure-v2": {"dimensions": ["translation_faithfulness"], "reason": "declared_synthetic_translation_fault"},
+    "fixed-12-translation-failure-v3": {"dimensions": ["translation_faithfulness"], "reason": "declared_synthetic_translation_fault"},
+    "fixed-12-translation-failure-v4": {"dimensions": ["translation_faithfulness"], "reason": "declared_synthetic_translation_fault"}
+  },
+  "native_language_exception": {"dimension": "translation_faithfulness", "reason": "independently_verified_same_language_originals", "condition": "Inspect source text and requested response language. Every relevant displayed original must already use that language. Application translation status alone is not evidence."},
+  "fault_requirements": "Original text, ownership, explicit unavailable status and bounded failure handling must pass even when translation faithfulness is null.",
+  "no_exception_for": ["incomplete conversations", "unexpected missing reviews", "missing source coverage", "unexpected untranslated reviews", "application or evaluator errors"],
+  "translation_coverage_cases": ["fixed-01-reported-conversation", "fixed-02-myeongdong-spellings-v1", "fixed-02-myeongdong-spellings-v2", "fixed-02-myeongdong-spellings-v3", "fixed-02-myeongdong-spellings-v4", "fixed-03-preserve-myeonmok", "fixed-04-ankle-pain-languages-v1", "fixed-04-ankle-pain-languages-v3", "fixed-06-explicit-specialty"],
+  "translation_coverage_requirement": "Each predefined case must supply at least two real translated original reviews and score at least 4/5. Every required translation on the first page must be present and faithful. Synthetic translations cannot supply this coverage.",
+  "adaptive_admission": "Both fixed and fixture phases complete; all assertions and source checks pass; every applicable fixed-case dimension is at least 4/5; predefined real translation coverage passes; root attests to the matching application, manifest and protocol hashes.",
+  "final_gate": "All adaptive cases complete; every applicable dimension is at least 4/5; all source and constraint checks pass; required translation coverage is satisfied. Report nulls separately, never as passed scores or an average.",
+  "reporting": ["functional assertions", "applicable Likert scores with denominators", "each null and its predefined reason", "real translation coverage", "v1 gate remains incomplete"]
+}

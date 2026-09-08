@@ -9,6 +9,21 @@ process-environment-only restrictions below. Work on fix-inference from the
 NCS repair checkpoint. Run real inference scenarios before publication, using
 existing resources and indexes. No new paid infrastructure is authorized.
 
+The fresh synthetic diagnostic run uses scripts/search_repair_grading_v2.json,
+frozen before its scored execution. It corrects applicability for predefined
+clarification, empty hard-scope, injected translation-fault and independently
+verified same-language cases. Null grades remain null and never count as passed
+scores. All applicable dimensions still require 4/5, every original assertion
+and publication blocker stays in force, and all nine predefined English live
+cases must demonstrate real translation coverage. The old v1 gate stays
+incomplete. Scenario messages/oracles and sealed holdout rules are unchanged.
+The runner pins the new grading protocol hash separately from the manifest and
+rejects an adaptive gate with a different protocol. Root grades fixed cases
+before admitting the twelve adaptive conversations. Bounds: three hours per
+phase, at most 80 app and 70 actor calls per phase, actor charges at most USD2,
+sequential turns, app concurrency at most2, no new compute. Application and
+translation charges are recorded separately from actor costs.
+
 
 ## Current NCS implementation handoff, 2026-09-08
 
