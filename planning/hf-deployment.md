@@ -8,6 +8,13 @@ application remains separate. PR #4 merged the response changes into `ncs` at
 `0bb08702bb07f3dc5ddbed943acfa2460c1db170`, but Actions run `34212865685`
 skipped the disabled automatic sync. The response changes are not live yet.
 
+The followup push `67dce71fab57f0a0ba61fff15fd590f1640e6779` used the explicit
+deployment marker described below. Actions run `34214729943` executed but
+failed before any upload because `NCS_HF_TOKEN` supplied no process credential.
+Configure that Actions secret for this repository and rerun the failed job,
+or supply an approved process `HF_TOKEN` for direct sync. The Space remains
+on the earlier revision; a GitHub push is not proof of a Hugging Face update.
+
 For the already public target, run the following from a clean, committed `ncs`
 checkout with an approved `HF_TOKEN` in the process environment:
 

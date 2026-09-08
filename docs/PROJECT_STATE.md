@@ -50,8 +50,24 @@ The public Space's 89 managed files match its recorded NCS source commit
 `66022eabf25ee0dde0ebeab4276aef78d7e6ef0b`; no unrecorded live fixes were found.
 The next deployment also includes the existing committed `ReviewEvidence.tsx`
 refactor `1807fa81`, along with the three response-polish runtime files.
-The next action is to complete these checks, then deploy with an approved
-process credential and verify the running revision and Jonggak conversation.
+Publication checkpoint: `ncs` was pushed at
+`67dce71fab57f0a0ba61fff15fd590f1640e6779`; `main` remains
+`e6b40d5782e04abe97383d459c4aff6eec40a287`. Actions run
+`34214729943` honored the explicit deployment request and reached the sync
+step, then failed with `HF_TOKEN must be injected through the process environment`.
+The configured `NCS_HF_TOKEN` reference supplied no credential to that step.
+The failure occurred before creating the Hugging Face client or uploading files.
+The response change is published to NCS but has not been deployed to the Space.
+No credential file was read and no hardware or visibility was changed.
+Final public inspection at `2026-09-08T10:18:58Z` confirmed both Spaces retain
+their earlier source/runtime revisions and hardware, and both health checks
+returned `ok`. Publication, before-test, and final-inspection records are in
+the root checkout's `.audit/response-polish-20260908-deploy/`; remote Dataset
+upload remains unavailable without an approved credential.
+
+One next action is to make `NCS_HF_TOKEN` available to that workflow and rerun
+its failed job, or inject an approved process `HF_TOKEN` for the direct sync.
+Then verify the new running Space revision and rerun the same API/browser checks.
 
 ## NCS response polish ownership, 2026-09-08
 
