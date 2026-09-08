@@ -181,7 +181,7 @@ def provider_usage(records):
                 prior["conflicts"].append(key)
                 errors.append({"code": "provider_capture_conflict", "id": identity, "field": key, "origin": origin})
     known = [call for call in calls.values() if call["cost_usd"] is not None and not call["conflicts"]]
-    return {"scope": "run actor responses and every file in the supplied capture directories; capture files may include calls outside these runs",
+    return {"scope": "run actor and translation responses and every file in the supplied capture directories; capture files may include calls outside these runs",
             "unique_completions": len(calls), "duplicate_records": duplicates,
             "known_cost_usd": sum(call["cost_usd"] for call in known),
             "unknown_or_conflicting_cost_count": len(calls) - len(known),
@@ -244,6 +244,12 @@ def prepare(run_paths, index_root, capture_dirs=()):
                         if turn.get("actor", {}).get("body"):
                             provider_records.append((f'{path}/{case.get("id")}/{turn.get("index")}/actor', turn["actor"]["body"]))
                         body = response_body(turn)
+                        if isinstance(body, dict):
+                            translation = body.get("state", {}).get("last_retrieval_metadata", {}).get("answer", {}).get("translation", {})
+                            if translation.get("completion_id"):
+                                provider_records.append((f'{path}/{case.get("id")}/{turn.get("index")}/translation', {
+                                    "id": translation["completion_id"], "model": translation.get("actual_model"),
+                                    "provider": translation.get("actual_provider"), "usage": translation.get("usage")}))
                         for card in body.get("results", []) if isinstance(body, dict) else []:
                             identities.update(record["evidence_id"] for _, record in review_records(card)
                                               if isinstance(record.get("evidence_id"), str) and record["evidence_id"])
@@ -293,7 +299,7 @@ def prepare(run_paths, index_root, capture_dirs=()):
                 cases.append({"id": case.get("id") if isinstance(case, dict) else case_index,
                               "status": "report_preparation_failed", "error": failure,
                               "turns": [], "assertion_failures": [], "source_errors": []})
-        summaries.append({"path": path, **{key: run.get(key) for key in ("phase", "status", "application_revision", "manifest_sha256", "budget")},
+        summaries.append({"path": path, **{key: run.get(key) for key in ("phase", "status", "application_revision", "manifest_sha256", "grading_protocol_id", "grading_protocol_sha256", "budget")},
                           "errors": error_fields(run), "cases": cases})
     usage = provider_usage(provider_records)
     errors.extend(usage["errors"])

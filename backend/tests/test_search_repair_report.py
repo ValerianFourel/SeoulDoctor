@@ -105,6 +105,26 @@ class ProviderUsageTests(unittest.TestCase):
         self.assertEqual(result["unique_completions"], 1)
         self.assertEqual(result["duplicate_records"], 1)
 
+    def test_translation_cost_in_reused_state_and_capture_counts_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            translation = {"completion_id": "translation-1", "actual_model": "translator",
+                           "actual_provider": "provider", "usage": {"cost": 0.02, "prompt_tokens": 200}}
+            turn = {"response": {"body": {"state": {"last_retrieval_metadata": {"answer": {"translation": translation}}}}}}
+            run = root / "run.json"
+            run.write_text(json.dumps({"grading_protocol_id": "v2", "grading_protocol_sha256": "pinned",
+                                       "cases": [{"id": "reused", "turns": [turn, turn]}]}))
+            captures = root / "captures"
+            captures.mkdir()
+            (captures / "translation.json").write_text(json.dumps({"id": "translation-1", "model": "translator",
+                "provider": "provider", "usage": translation["usage"]}))
+            report = prepare([run], root / "missing-index", [captures])
+            self.assertEqual(report["provider_usage"]["known_cost_usd"], 0.02)
+            self.assertEqual(report["provider_usage"]["unique_completions"], 1)
+            self.assertEqual(report["provider_usage"]["duplicate_records"], 2)
+            self.assertEqual(report["runs"][0]["grading_protocol_sha256"], "pinned")
+            self.assertEqual(report["index"]["status"], "failed")
+
     def test_missing_and_conflicting_costs_cannot_become_zero_cost_successes(self):
         result = provider_usage([
             ("first", {"id": "one", "usage": {"cost": 0.01}}),
