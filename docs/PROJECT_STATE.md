@@ -1411,3 +1411,24 @@ original-only fallback, full-original expansion and repeated citation reopening.
 Independent correctness and comment review found no blocking issue. This change
 is for ncs; no main or Hugging Face deployment is part of this task.
 Next action: inspect the ncs branch's translation-first review cards.
+
+## Translation-first NCS deployment, 2026-09-09
+
+The user explicitly requested deployment. Root deployed source
+5a9167e6e2c47452035915234c8946265cffb9fd to the existing public Space
+ValerianFourel/SeoulDoctor-ncs-retriever at Space revision
+a358796dba5fadcc0256a039d1604a0ac9fdd64e. Source comparison including LFS
+hashes showed only ReviewEvidence.tsx and ncs-source.json changed. The upload
+was parent-pinned to 3368bfa787be50426979bdb0e8fd56548eb4d0e9. Existing
+T4 Medium hardware, secrets and other managed sources were preserved. The
+authorized HF token was used only inside the deployment process. Rebuild and
+exact-runtime/browser verification are in progress.
+
+Deployment verified: Hugging Face reports RUNNING at exact source/runtime
+a358796dba5fadcc0256a039d1604a0ac9fdd64e. The public Space serves the new
+review bundle. Live browser replay of the recorded NCS response passed across
+five clinic panels: 14 translations visible by default, all 14 original toggles
+opened and closed correctly, and one untranslated original remained visible.
+The temporary replay was removed after verification. Source application commit
+is 5a9167e6e2c47452035915234c8946265cffb9fd. No website/main deployment ran.
+Next action: refresh the NCS Space and start a new search.
