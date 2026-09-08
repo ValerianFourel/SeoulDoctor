@@ -996,7 +996,10 @@ def select_evidence_groups(
         ]
         selected: list[ScoredEvidence] = []
         covered: set[str] = set()
-        unused = list(candidates)
+        unused = [
+            item for item in candidates
+            if item.hit.is_verbatim and item.hit.source_type == "verbatim_review"
+        ]
         warnings = sorted(
             (item for item in unused if "risk" in item.roles),
             key=lambda item: (-item.selection_score, item.hit.ordinal),
