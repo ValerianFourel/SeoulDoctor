@@ -150,6 +150,59 @@ class TranslationTests(unittest.TestCase):
         self.assertEqual(items[0]["presentation"]["status"], "unavailable")
         self.assertEqual(items[0]["text"], source)
 
+    def test_korean_and_english_written_durations_keep_the_same_count(self):
+        examples = (
+            ("두 시간 기다렸어요", "I waited two hours."),
+            ("한시간 넘게 걸렸어요", "It took over an hour."),
+            ("삼십 분 기다렸어요", "I waited thirty minutes."),
+            ("스물한 시간 걸렸어요", "It took twenty-one hours."),
+            ("일주일 기다렸어요", "I waited one week."),
+        )
+        for source, translation in examples:
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+                self.assertEqual(items[0]["text"], source)
+                reverse, _ = self.prepare([translation], [source], language="Korean")
+                self.assertEqual(reverse[0]["presentation"]["status"], "translated")
+
+    def test_written_durations_still_reject_changed_added_and_removed_counts(self):
+        for source, translation in (
+            ("두 시간 기다렸어요", "I waited three hours."),
+            ("삼십 분 기다렸어요", "I waited thirteen minutes."),
+            ("기다렸어요", "I waited an hour."),
+            ("한시간 기다렸어요", "I waited."),
+        ):
+            with self.subTest(source=source, translation=translation):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+                self.assertEqual(items[0]["text"], source)
+
+    def test_thousands_separators_do_not_change_amount_but_digits_do(self):
+        source = "1,000원 냈어요"
+        items, _ = self.prepare([source], ["I paid 1000 won."])
+        self.assertEqual(items[0]["presentation"]["status"], "translated")
+        for translation in ("I paid 100 won.", "I paid 10000 won.", "I paid 1.000 won."):
+            with self.subTest(translation=translation):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+                self.assertEqual(items[0]["text"], source)
+
+    def test_provider_elapsed_time_is_retained_on_success_and_failure(self):
+        from unittest.mock import patch
+        import requests
+        from review_presentation import prepare_review_presentations
+        for error, reason in ((None, None), (requests.Timeout(), "provider_timeout")):
+            cards = [{"retrieval_evidence": [review("두 시간 기다렸어요")]}]
+            with patch("review_presentation.monotonic", side_effect=[4.0, 4.25]), patch("review_presentation.requests.post") as post:
+                post.side_effect = error
+                post.return_value.json.return_value = {"data": {"translations": [
+                    {"translatedText": "I waited two hours."}]}}
+                trace = prepare_review_presentations(cards, "English", translation_api_key="fixture")
+            self.assertEqual(trace["duration_ms"], 250.0)
+            self.assertEqual(trace["reason"], reason)
+        self.assertEqual(prepare_review_presentations([], "English")["duration_ms"], 0.0)
+
     def test_comment_heavy_cards_use_one_bounded_deduplicated_batch(self):
         from review_presentation import MAX_TRANSLATION_REVIEWS
         sources = [f"간호사가 설명을 해주었어요 {index}" for index in range(MAX_TRANSLATION_REVIEWS + 1)]

@@ -3,6 +3,7 @@
 from html import unescape
 from itertools import zip_longest
 import re
+from time import monotonic
 import unicodedata
 
 import requests
@@ -51,21 +52,55 @@ def _symbols(text):
             or char in {'\u200d', '\ufe0f', '\u20e3'}]
 
 
+_TIME_NUMBERS = {
+    word: number for number, word in enumerate((
+        "zero", "one", "two", "three", "four", "five", "six", "seven",
+        "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+        "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+    ))
+}
+_TIME_NUMBERS.update({"a": 1, "an": 1})
+for tens, english, korean in (
+    (20, "twenty", "스물"), (30, "thirty", "서른"), (40, "forty", "마흔"),
+    (50, "fifty", "쉰"), (60, "sixty", "예순"), (70, "seventy", "일흔"),
+    (80, "eighty", "여든"), (90, "ninety", "아흔"),
+):
+    _TIME_NUMBERS[english] = tens
+    for units, word in enumerate(("", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")):
+        if units:
+            _TIME_NUMBERS[f"{english} {word}"] = tens + units
+            _TIME_NUMBERS[f"{english}-{word}"] = tens + units
+    for units, word in enumerate(("", "한", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉")):
+        _TIME_NUMBERS[korean + word] = tens + units
+for units, word in enumerate(("영", "한", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉")):
+    _TIME_NUMBERS[word] = units
+    if units:
+        _TIME_NUMBERS["열" + word] = 10 + units
+_TIME_NUMBERS.update({"열": 10, "스무": 20, "하나": 1, "둘": 2, "셋": 3, "넷": 4})
+for tens, prefix in enumerate(("", "십", "이십", "삼십", "사십", "오십", "육십", "칠십", "팔십", "구십")):
+    for units, word in enumerate(("", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구")):
+        if tens or units:
+            _TIME_NUMBERS[prefix + word] = tens * 10 + units
+_TIME_NUMBER_PATTERN = re.compile(
+    r"(?<![A-Za-z가-힣])(" + "|".join(re.escape(word) for word in sorted(_TIME_NUMBERS, key=len, reverse=True))
+    + r")\s*(?=(?:hours?|minutes?|days?|weeks?|months?|years?)\b|시간|분|일|주|개월|달|년)",
+    re.IGNORECASE,
+)
+
+
 def _numbers(text):
-    time_counts = {word: str(number) for number, word in enumerate(
-        ("zero", "one", "two", "three", "four", "five", "six", "seven",
-         "eight", "nine", "ten", "eleven", "twelve"))}
-    normalized = re.sub(
-        r"\b(" + "|".join(time_counts) + r")\s+(?=(?:hours?|minutes?|days?|weeks?|months?|years?)\b)",
-        lambda match: time_counts[match.group(1).lower()] + " ", text, flags=re.IGNORECASE,
+    normalized = _TIME_NUMBER_PATTERN.sub(
+        lambda match: str(_TIME_NUMBERS[match.group(1).lower()]) + " ", text,
     )
+    normalized = re.sub(r"(?<!\d)\d{1,3}(?:,\d{3})+(?!\d)",
+                        lambda match: match.group().replace(",", ""), normalized)
     return re.findall(r"\d+(?:[.,]\d+)*", normalized)
 
 
 def prepare_review_presentations(cards, language, *, translation_api_key=""):
     pending = {}
     characters = 0
-    trace = {"reason": None, "requested": 0, "translated": 0, "capacity_skipped": 0, "rejected": 0}
+    trace = {"reason": None, "requested": 0, "translated": 0, "capacity_skipped": 0, "rejected": 0, "duration_ms": 0.0}
     for card in cards:
         card["review_language"] = language
     for row in zip_longest(*(card.get("retrieval_evidence", []) for card in cards)):
@@ -97,6 +132,7 @@ def prepare_review_presentations(cards, language, *, translation_api_key=""):
         return trace
     originals = list(pending)
     trace["requested"] = len(originals)
+    started = monotonic()
     try:
         response = requests.post(
             TRANSLATION_URL,
@@ -138,6 +174,8 @@ def prepare_review_presentations(cards, language, *, translation_api_key=""):
         trace["reason"] = "provider_error"
     except (ValueError, KeyError, TypeError):
         trace["reason"] = "invalid_response"
+    finally:
+        trace["duration_ms"] = round((monotonic() - started) * 1000, 2)
     if trace["reason"] is None and trace["rejected"]:
         trace["reason"] = "translation_rejected"
     return trace
