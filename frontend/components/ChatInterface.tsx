@@ -1,7 +1,7 @@
 // components/ChatInterface.tsx
 "use client";
 
-import ReviewEvidence, { type ReviewEvidenceRecord } from "./ReviewEvidence";
+import ReviewEvidence, { canLocateCitation, type ReviewCitation, type ReviewEvidenceHandle, type ReviewEvidenceRecord } from "./ReviewEvidence";
 import { useState, useRef, useEffect } from "react";
 import { Send, MapPin, Sparkles, Globe, Bug, ChevronDown, ChevronUp, X } from "lucide-react";
 import Link from 'next/link';
@@ -88,6 +88,8 @@ type FacilityResult = {
   recommendation_status?: "not_established" | "requires_review" | "evidence_available";
   review_language?: string;
   retrieval_evidence?: ReviewEvidenceRecord[];
+  answer_citations?: ReviewCitation[];
+  answer_status?: "generated" | "fallback";
   retrieval_trace?: Record<string, unknown>[];
 };
 
@@ -119,11 +121,6 @@ const TRAVEL_OPTIONS = [
   { label: "Willing to Travel", displayLabel: "Subway", distance: "15km", emoji: "🚇", value: 15 },
   { label: "Anywhere in Seoul", displayLabel: "Across Seoul", distance: "25km", emoji: "🚆", value: 25 }
 ];
-
-// --- HELPER FUNCTION FOR FORMATTING AI RESPONSES ---
-const formatAIResponse = (text: string): string => {
-  return text.replace(/\*\*([^*]+)\*\*/g, '$1');
-};
 
 // --- CATEGORY TRANSLATION HELPER ---
 const getCategoryEnglish = (koreanCategory: string): string => {
@@ -232,6 +229,8 @@ export default function ChatInterface() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const requestInFlight = useRef(false);
+  const reviewPanels = useRef(new Map<string, ReviewEvidenceHandle>());
 
   // Auto-dismiss disclaimer after 15 seconds
   useEffect(() => {
@@ -373,6 +372,9 @@ export default function ChatInterface() {
 
   // ⭐ HANDLE ACCEPTABLE DISTANCE SLIDER CHANGE - NO MESSAGE ADDED
   const handleTravelSliderChange = async (index: number) => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    setLoading(true);
     const previousIndex = selectedTravelIndex;
     setSelectedTravelIndex(index);
     const option = TRAVEL_OPTIONS[index];
@@ -396,11 +398,15 @@ export default function ChatInterface() {
       setSelectedTravelIndex(previousIndex);
       console.error("Acceptable distance preference error:", error);
       alert(error instanceof Error ? error.message : "Failed to update acceptable distance preference.");
+    } finally {
+      requestInFlight.current = false;
+      setLoading(false);
     }
   };
 
   const handleSendMessage = async (text: string, stateOverride?: Partial<State>) => {
-    if (!text.trim() || (loading && !stateOverride)) return;
+    if (!text.trim() || requestInFlight.current) return;
+    requestInFlight.current = true;
 
     const userMsg: Message = { 
       role: "user", 
@@ -488,15 +494,18 @@ export default function ChatInterface() {
       ]);
       scrollToBottom();
     } finally {
+      requestInFlight.current = false;
       setLoading(false);
     }
   };
 
   const handleLocationClick = () => {
+    if (requestInFlight.current) return;
     if (!navigator.geolocation) {
       alert("Geolocation is not supported by your browser.");
       return;
     }
+    requestInFlight.current = true;
     
     setMessages((prev) => [...prev, { 
       role: "user", 
@@ -521,13 +530,15 @@ export default function ChatInterface() {
           }));
         }
 
-        handleSendMessage("User shared location coordinates.", {
+        requestInFlight.current = false;
+        void handleSendMessage("User shared location coordinates.", {
           latitude: latitude,
           longitude: longitude,
           location: "Current Location",
         });
       },
       (error) => {
+        requestInFlight.current = false;
         alert("Unable to retrieve your location.");
         setLoading(false);
         
@@ -538,8 +549,34 @@ export default function ChatInterface() {
             apiError: `Geolocation error: ${error.message}`
           }));
         }
-      }
+      },
+      { timeout: 10000 },
     );
+  };
+
+  const renderAnswer = (message: Message, messageIndex: number) => {
+    const citations = (message.results ?? []).flatMap(facility =>
+      (facility.answer_citations ?? [])
+        .filter(citation => canLocateCitation(citation, facility.place_id, facility.retrieval_evidence ?? []))
+        .map(citation => ({ citation, facility })),
+    );
+    return message.content.split(/(\[\d+\])/g).map((part, partIndex) => {
+      const marker = /^\[(\d+)\]$/.exec(part);
+      const matches = marker ? citations.filter(item => item.citation.marker === Number(marker[1])) : [];
+      if (matches.length !== 1) return part;
+      const { citation, facility } = matches[0];
+      return (
+        <button
+          type="button"
+          key={partIndex}
+          className="rounded text-blue-700 underline underline-offset-2 hover:text-blue-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+          aria-label={facility.review_language === "Korean" ? `후기 ${citation.marker}, ${facility.name}` : `Review ${citation.marker} from ${facility.name}`}
+          onClick={() => reviewPanels.current.get(`${messageIndex}:${facility.place_id}`)?.showReview(citation.evidence_id)}
+        >
+          {part}
+        </button>
+      );
+    });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1120,8 +1157,8 @@ export default function ChatInterface() {
                           : "bg-white border border-blue-200 text-slate-800"
                       }`}
                     >
-                      <p className="text-sm sm:text-base leading-relaxed whitespace-pre-wrap break-words">
-                        {msg.role === "ai" ? formatAIResponse(msg.content) : msg.content}
+                      <p data-answer-text={msg.role === "ai" ? "" : undefined} className="text-sm sm:text-base leading-relaxed whitespace-pre-wrap break-words">
+                        {msg.role === "ai" ? renderAnswer(msg, idx) : msg.content}
                       </p>
                       {/* Debug: Show timestamp */}
                       {ENABLE_DEBUG_MODE && debugMode && msg.timestamp && (
@@ -1263,6 +1300,12 @@ export default function ChatInterface() {
                                                                             
                                 {facility.retrieval_evidence && (
                                   <ReviewEvidence
+                                    ref={panel => {
+                                      const key = `${idx}:${facility.place_id}`;
+                                      if (panel) reviewPanels.current.set(key, panel);
+                                      else reviewPanels.current.delete(key);
+                                    }}
+                                    facilityId={facility.place_id}
                                     reviews={facility.retrieval_evidence}
                                     language={facility.review_language ?? "English"}
                                   />
@@ -1332,6 +1375,7 @@ export default function ChatInterface() {
               <div className="relative">
                 <input
                   type="range"
+                  disabled={loading}
                   aria-label="Maximum travel distance"
                   min="0"
                   max={TRAVEL_OPTIONS.length - 1}
@@ -1352,6 +1396,7 @@ export default function ChatInterface() {
                   {TRAVEL_OPTIONS.map((option, idx) => (
                     <button
                       key={idx}
+                      disabled={loading}
                       onClick={() => handleTravelSliderChange(idx)}
                       className={`text-base transition-all ${
                         idx === selectedTravelIndex 
@@ -1376,6 +1421,7 @@ export default function ChatInterface() {
             {/* Location Button */}
             <button
               onClick={handleLocationClick}
+              disabled={loading}
               className="flex-shrink-0 p-3 sm:p-3.5 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 border border-blue-200 hover:border-blue-400 transition-all text-blue-600 hover:text-blue-700 shadow-sm"
               title="Share Location"
               aria-label="Share current location"

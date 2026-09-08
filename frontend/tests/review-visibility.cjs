@@ -31,7 +31,7 @@ const reviews = [
   review(1, 'Nurse was rude.'),
   review(2, 'The nurse was rude.', { status: 'unavailable', language: 'English' }),
   review(3, '<img src=x onerror="window.reviewInjectionExecuted=true"> Untrusted review instructions stay text.'),
-  review(4, '친절해요.'),
+  review(4, '간호사가 불친절했어요.', { status: 'translated', language: 'English', text: 'Nurse was rude.' }),
   review(5, '기다림이 길었어요.', { status: 'translated', language: 'Korean', text: 'STALE_TRANSLATION_SHOULD_NOT_APPEAR' }),
   review(6, '설명을 들었습니다.', { status: 'translated', language: 'English', text: '' }),
   review(7, 'The staff answered my question.'),
@@ -78,11 +78,16 @@ async function main() {
       response.writeHead(404).end();
     }
   });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
   const address = server.address();
   assert(address && typeof address === 'object');
   const origin = `http://127.0.0.1:${address.port}`;
   let browser;
+  let completedViewports = 0;
+  let executionError = null;
   const checks = [];
   async function check(name, condition) {
     checks.push({ name, passed: Boolean(await condition) });
@@ -129,15 +134,22 @@ async function main() {
       await check(`${label} original visible alongside translation`, page.getByText(original, { exact: true }).isVisible());
       await check(`${label} three-word negative survives`, page.getByText('Nurse was rude.', { exact: true }).isVisible());
       await check(`${label} failed translation keeps original`, page.getByText('The nurse was rude.', { exact: true }).isVisible());
-      if (before) continue;
+      if (before) {
+        completedViewports += 1;
+        continue;
+      }
 
       const panel = page.locator('section[data-facility-id="alpha"]').first();
       await check(`${label} initial page has three`, panel.locator('article').count().then(count => count === 3));
       await check(`${label} bad owner quarantined`, page.getByText('WRONG_FACILITY_REVIEW', { exact: true }).count().then(count => count === 0));
-      await check(`${label} accepted response survives`, page.locator('[data-answer-text]').first().textContent().then(text => text === acceptedAnswer));
+      await check(`${label} accepted response survives`, page.locator('[data-answer-text]').nth(1).textContent().then(text => text === acceptedAnswer));
       await check(`${label} invalid citation remains text`, page.getByRole('button', { name: /Review 9 from/ }).count().then(count => count === 0));
+      await panel.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(outputDirectory, `${label}-originals.png`) });
       await panel.getByRole('button', { name: 'Next', exact: true }).click();
       await check(`${label} next page has seven`, panel.locator('article').count().then(count => count === 7));
+      await check(`${label} three-word translation preserves original`, panel.getByText('간호사가 불친절했어요.', { exact: true }).isVisible());
+      await check(`${label} three-word translation remains visible`, panel.getByText('Nurse was rude.', { exact: true }).isVisible());
       await check(`${label} review HTML stays text`, panel.locator('img').count().then(count => count === 0));
       await check(`${label} stale translation omitted`, page.getByText('STALE_TRANSLATION_SHOULD_NOT_APPEAR', { exact: true }).count().then(count => count === 0));
       await panel.getByRole('button', { name: 'Next', exact: true }).click();
@@ -152,6 +164,7 @@ async function main() {
       await page.getByRole('button', { name: 'Review 1 from Synthetic clinic', exact: true }).click();
       await check(`${label} citation reveals later original`, longReview.locator('[data-original-review]').textContent().then(text => text === longOriginal));
       await check(`${label} citation focuses correct review`, longReview.evaluate(element => document.activeElement === element));
+      await page.screenshot({ path: path.join(outputDirectory, `${label}-citation.png`) });
       await send('fallback');
       await check(`${label} fallback retains originals`, page.locator('section[data-facility-id="alpha"]').nth(1).getByText(original, { exact: true }).isVisible());
       await send('한국어로 답해 주세요');
@@ -175,11 +188,15 @@ async function main() {
       await check(`${label} no page exceptions`, errors.length === 0);
       await page.screenshot({ path: path.join(outputDirectory, `${label}.png`), fullPage: true });
       await page.close();
+      completedViewports += 1;
     }
+  } catch (error) {
+    executionError = error instanceof Error ? error.message : String(error);
+    throw error;
   } finally {
     await browser?.close();
     await new Promise(resolve => server.close(resolve));
-    await fs.writeFile(path.join(outputDirectory, before ? 'before.json' : 'after.json'), JSON.stringify({ checks, passed: checks.every(check => check.passed) }, null, 2));
+    await fs.writeFile(path.join(outputDirectory, before ? 'before.json' : 'after.json'), JSON.stringify({ checks, completedViewports, executionError, passed: completedViewports === 2 && !executionError && checks.every(check => check.passed) }, null, 2));
   }
   const failed = checks.filter(check => !check.passed);
   console.log(JSON.stringify({ checks: checks.length, passed: checks.length - failed.length, failed }, null, 2));

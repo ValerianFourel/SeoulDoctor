@@ -1,24 +1,19 @@
 "use client";
 
-import { useId, useState } from "react";
+import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
-const LETTER = new RegExp("\\p{L}", "u");
 const FIRST_PAGE_SIZE = 3;
 const NEXT_PAGE_SIZE = 7;
-
-function isShortEnglish(text: string, language?: string) {
-  const english = language === "English" || language === "en"
-    || (!language && /[a-z]/i.test(text) && !LETTER.test(text.replace(/[a-z]/gi, "")));
-  return english && /[a-z]/i.test(text) && (text.match(/[a-z0-9]+(?:['’][a-z0-9]+)*/gi) ?? []).length <= 3;
-}
+const ORIGINAL_PREVIEW_LENGTH = 480;
 
 type Presentation =
   | { status: "hidden" | "original" | "unavailable"; language: string }
   | { status: "translated"; language: string; text: string };
 
 export type ReviewEvidenceRecord = {
-  evidence_id?: string;
+  evidence_id: string;
+  place_id: string;
   text: string;
   source_type: string;
   source_field?: string;
@@ -29,25 +24,82 @@ export type ReviewEvidenceRecord = {
   matched_terms?: string[];
   is_verbatim?: boolean;
   presentation?: Presentation;
+  review_source_sha256?: string;
+  source_locator?: string;
+  retrieval_roles?: string[];
 };
 
-export default function ReviewEvidence({ reviews, language }: {
+export type ReviewCitation = {
+  marker: number;
+  place_id: string;
+  evidence_id: string;
+  original_excerpt: string;
+  review_source_sha256?: string;
+};
+
+export type ReviewEvidenceHandle = {
+  showReview: (evidenceId: string) => void;
+};
+
+function isOwnedOriginal(review: ReviewEvidenceRecord, facilityId: string) {
+  return review !== null && typeof review === "object"
+    && review.place_id === facilityId
+    && typeof review.evidence_id === "string" && review.evidence_id.length > 0
+    && review.source_type === "verbatim_review" && review.is_verbatim === true
+    && typeof review.text === "string" && review.text.trim().length > 0;
+}
+
+export function canLocateCitation(citation: ReviewCitation, facilityId: string, reviews: ReviewEvidenceRecord[]) {
+  return citation !== null && typeof citation === "object"
+    && Number.isSafeInteger(citation.marker) && citation.marker > 0
+    && citation.place_id === facilityId
+    && typeof citation.original_excerpt === "string" && citation.original_excerpt.length > 0
+    && reviews.some(review => isOwnedOriginal(review, facilityId)
+      && review.evidence_id === citation.evidence_id
+      && review.text.includes(citation.original_excerpt)
+      && (!citation.review_source_sha256 || citation.review_source_sha256 === review.review_source_sha256));
+}
+
+const ReviewEvidence = forwardRef<ReviewEvidenceHandle, {
   reviews: ReviewEvidenceRecord[];
   language: string;
-}) {
+  facilityId: string;
+}>(function ReviewEvidence({ reviews, language, facilityId }, ref) {
   const korean = language === "Korean";
   const [expanded, setExpanded] = useState(true);
   const [page, setPage] = useState(0);
+  const [fullReviewIds, setFullReviewIds] = useState<Set<string>>(new Set());
+  const [focusedReviewId, setFocusedReviewId] = useState<string | null>(null);
+  const [focusRequest, setFocusRequest] = useState(0);
+  const reviewElements = useRef(new Map<string, HTMLElement>());
   const contentId = useId();
-  const visible = reviews.flatMap(review => {
-    if (!review.is_verbatim || !LETTER.test(review.text.replace(/[\u1100-\u11ff\u3130-\u318f]/g, ""))) return [];
+  const visible = reviews.filter(review => isOwnedOriginal(review, facilityId)).map(review => {
     const presentation = review.presentation;
     const translatedText = presentation?.status === "translated"
-      && presentation.language === language && presentation.text.trim().length > 0
+      && presentation.language === language
+      && typeof presentation.text === "string" && presentation.text.trim().length > 0
       ? presentation.text : undefined;
-    if (isShortEnglish(translatedText ?? review.text, translatedText ? language : review.language)) return [];
-    return [{ review, translatedText }];
+    return { review, translatedText };
   });
+
+  useImperativeHandle(ref, () => ({
+    showReview(evidenceId) {
+      const index = visible.findIndex(item => item.review.evidence_id === evidenceId);
+      if (index < 0) return;
+      setExpanded(true);
+      setPage(index < FIRST_PAGE_SIZE ? 0 : 1 + Math.floor((index - FIRST_PAGE_SIZE) / NEXT_PAGE_SIZE));
+      setFullReviewIds(previous => new Set(previous).add(evidenceId));
+      setFocusedReviewId(evidenceId);
+      setFocusRequest(previous => previous + 1);
+    },
+  }));
+
+  useEffect(() => {
+    if (!focusedReviewId) return;
+    const element = reviewElements.current.get(focusedReviewId);
+    element?.focus({ preventScroll: true });
+    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusedReviewId, focusRequest]);
 
   const lastPage = Math.max(0, Math.ceil((visible.length - FIRST_PAGE_SIZE) / NEXT_PAGE_SIZE));
   const currentPage = Math.min(page, lastPage);
@@ -56,7 +108,7 @@ export default function ReviewEvidence({ reviews, language }: {
   const pageReviews = visible.slice(pageStart, pageEnd);
 
   return (
-    <section className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+    <section data-facility-id={facilityId} className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
       <h4 className="text-sm font-semibold text-slate-800">
         <button
           type="button"
@@ -77,35 +129,63 @@ export default function ReviewEvidence({ reviews, language }: {
           </p>
         ) : (
           <div className="space-y-3">
-            {pageReviews.map(({ review, translatedText }, index) => {
-              const unavailable = review.presentation?.status === "unavailable";
+            {pageReviews.map(({ review, translatedText }) => {
+              const unavailable = review.presentation?.status === "unavailable"
+                || (review.presentation?.status === "translated" && !translatedText);
+              const fullOriginal = fullReviewIds.has(review.evidence_id);
+              const originalPreview = Array.from(review.text).slice(0, ORIGINAL_PREVIEW_LENGTH).join("");
+              const longOriginal = originalPreview.length < review.text.length;
+              const originalId = `${contentId}-${review.evidence_id}`;
               return (
-                <article key={review.evidence_id ?? index} className="rounded-md bg-white p-3 text-sm text-slate-700">
+                <article
+                  key={review.evidence_id}
+                  data-evidence-id={review.evidence_id}
+                  tabIndex={-1}
+                  ref={element => {
+                    if (element) reviewElements.current.set(review.evidence_id, element);
+                    else reviewElements.current.delete(review.evidence_id);
+                  }}
+                  className="rounded-md bg-white p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
                   <p className="mb-1 text-xs text-slate-500">
-                    {translatedText
-                      ? (korean ? "자동 번역 · 원문 확인 가능" : "Automatic translation · original available")
-                      : unavailable
-                        ? (korean ? "번역을 제공할 수 없어 원문을 표시합니다." : "Translation unavailable. Showing the original.")
-                        : (korean ? "원문 후기" : "Original review")}
+                    {korean ? "원문 후기" : "Original review"}
                     {review.visit_date ? ` · ${review.visit_date}` : ""}
                   </p>
-                  <blockquote className="whitespace-pre-wrap break-words text-slate-900">
-                    {translatedText ?? review.text}
+                  <blockquote id={originalId} data-original-review className="whitespace-pre-wrap break-words text-slate-900">
+                    {longOriginal && !fullOriginal ? originalPreview : review.text}
                   </blockquote>
+                  {longOriginal && (
+                    <button
+                      type="button"
+                      className="mt-2 py-1 text-blue-700"
+                      aria-expanded={fullOriginal}
+                      aria-controls={originalId}
+                      onClick={() => setFullReviewIds(previous => {
+                        const next = new Set(previous);
+                        if (fullOriginal) next.delete(review.evidence_id);
+                        else next.add(review.evidence_id);
+                        return next;
+                      })}
+                    >
+                      {fullOriginal ? (korean ? "미리보기" : "Show preview") : (korean ? "원문 전체 보기" : "Read full original")}
+                    </button>
+                  )}
                   {translatedText && (
-                    <details className="mt-2">
-                      <summary className="cursor-pointer text-blue-700">
-                        {korean ? "원문 보기" : "Show original"}
-                      </summary>
-                      <blockquote className="mt-2 whitespace-pre-wrap break-words text-slate-900">
-                        {review.text}
-                      </blockquote>
-                    </details>
+                    <div className="mt-3 border-t border-slate-100 pt-2">
+                      <p className="mb-1 text-xs text-slate-500">{korean ? "자동 번역" : "Automatic translation"}</p>
+                      <p data-review-translation className="whitespace-pre-wrap break-words">{translatedText}</p>
+                    </div>
+                  )}
+                  {unavailable && (
+                    <p className="mt-2 text-xs text-slate-500">{korean ? "번역을 제공할 수 없어 원문을 표시합니다." : "Translation unavailable. Showing the original."}</p>
                   )}
                 </article>
               );
             })}
           </div>
+        )}
+        {visible.length < reviews.length && (
+          <p className="mt-2 text-xs text-slate-600">{korean ? "출처를 확인할 수 없는 일부 후기는 표시하지 않습니다." : "Some reviews could not be shown because their source could not be verified."}</p>
         )}
         {visible.length > FIRST_PAGE_SIZE && (
           <nav className="mt-3 flex items-center justify-between text-xs" aria-label={korean ? "후기 페이지" : "Review pages"}>
@@ -126,4 +206,6 @@ export default function ReviewEvidence({ reviews, language }: {
       </div>
     </section>
   );
-}
+});
+
+export default ReviewEvidence;
