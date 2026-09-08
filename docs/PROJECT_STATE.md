@@ -1,5 +1,48 @@
 # SeoulDoc project state
 
+## NCS adaptive patient evaluation prepared, 2026-09-08
+
+Root owns this record and the pending run
+`.audit/ncs-inhabited-20260908T112400Z/` in the main local checkout. Preparation
+uses the isolated NCS task worktree `/tmp/seouldoc-response-polish`, branch
+`local/ncs-response-polish-20260908`, at
+`c4fc60d26b13b2abc1cde639baadb7f67f6509fa`. No application files or runtime
+settings changed. The user requested Qwen 27B patient actors through OpenRouter
+and root GPT-6 grading against selected locations, facilities and comments.
+
+Six separate adaptive briefs cover Jonggak orthopedics, Ichon pediatrics in
+English and Korean, a City Hall dentistry to Daeheung dermatology switch,
+Nowon orthopedics, and mixed-language Nonhyeon dermatology. Public briefs and
+private oracles are separate; raw text, canonical evidence IDs and facility
+ownership were verified against the pinned release and local immutable index.
+An older holdout's `file_dong` was a scrape origin, so the Nowon request was
+corrected using the actual facility address before observing any app output.
+This is an adaptive diagnostic batch using known source targets, not an unseen
+random holdout or a sealed-suite release result.
+
+Fresh read-only checks confirmed NCS source and runtime
+`b13d2bdb6eb12153a23453382244630e3746f240`, healthy app counts, and the pinned
+BGE-M3 GPU proof on Tesla T4. The OpenRouter catalogue identifies
+`qwen/qwen3.8-27b`, canonical slug `qwen/qwen3.8-27b-20260814`.
+Thirty-six evaluator tests and eight isolated runner tests passed. The runner
+is `/tmp/seouldoc-adaptive-tools/run_adaptive_patients.py`; its tests cover
+patient-only projection, exact state carryover, predispatch checkpointing,
+no retries, JSON validation, oracle-field rejection and cumulative budgets.
+
+The proposed run allows four app turns per case, 30 Qwen calls total, an actor
+budget of USD 2 and one shared 55-minute execution deadline. Two initial cases
+form the targeted gate. Root grades patient success separately from exact
+target-evidence success; the other four remain held if the gate fails.
+No model inference or new patient /chat request has run. Both
+`OPENROUTER_API_KEY` and `HF_TOKEN` are absent from the process environment.
+Root asked for a specific extension of the earlier credential exception to
+load only those two values from `backend/.env` into this evaluation process.
+No credential file was read for this task while that answer is pending.
+
+Next action: obtain the credential-source exception or process-injected
+credentials, verify the frozen preparation hashes, then launch the two-case
+adaptive gate and grade its saved outputs. No new infrastructure is required.
+
 ## NCS response deployed and verified, 2026-09-08
 
 The user explicitly approved loading only `HF_TOKEN` from `backend/.env` into
