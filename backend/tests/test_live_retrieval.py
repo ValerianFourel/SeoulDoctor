@@ -135,14 +135,6 @@ class FakeScopedIndex:
     def __exit__(self, *_: object) -> None:
         return None
 
-    def list_original_reviews(self, *, facility_ids, limit_per_facility):
-        from dataclasses import replace
-        from hashlib import sha256
-        return [replace(evidence_hit(facility_id, index + 1, text), evidence_id="review:" +
-                        sha256(f"{facility_id}|{index + 1}|{text}".encode()).hexdigest()[:20])
-                for facility_id in facility_ids if facility_id != "charlie"
-                for index, text in enumerate(("123", "😞", "ㅋㅋ", "친절해요", "접수 직원은 불친절했어요 😞"))]
-
     def search_facilities(self, query: str, limit: int = 200) -> list[FacilityHit]:
         self.facility_queries.append(query)
         if self.escape:
@@ -336,30 +328,49 @@ class LiveRetrievalTests(unittest.TestCase):
             target_language="Korean",
         )
 
-    def test_plain_facility_search_attaches_originals_without_ranking_evidence(self):
+    def test_plain_search_ranks_owned_originals_from_current_visit_context(self):
+        from hashlib import sha256
+        from unittest.mock import patch
         from backend.tests.test_evidence_response import fallback_response
         from models import serialize_results_for_chat
-        scoped = FakeScopedIndex()
+
+        texts = ("발목 진료 설명이 자세했습니다.", "발목 치료 후 더 아프고 설명이 부족했습니다.")
+        reviews = [replace(
+            evidence_hit("alpha", index + 1, text),
+            evidence_id="review:" + sha256(f"alpha|{index + 1}|{text}".encode()).hexdigest()[:20],
+        ) for index, text in enumerate(texts)]
+
+        class VisitContextIndex(FakeScopedIndex):
+            def search_evidence_for_facilities(self, query, *, facility_ids,
+                                               limit_per_facility, source_types):
+                self.evidence_queries.append((query, source_types))
+                if "발목" not in query:
+                    return []
+                return [review for review in reviews if review.facility_id in facility_ids]
+
+        scoped = VisitContextIndex()
         adapter = CandidateRetrievalAdapter(active_index=FakeIndex(scoped), legacy_pipeline=FakePipeline())
-        result = adapter.rank(scope=self.scope, eligible=self.frame, rules=make_rules(), query=self.query())
+        query = self.query("foot ankle pain 발목")
+        result = adapter.rank(scope=self.scope, eligible=self.frame, rules=make_rules(), query=query)
         self.assertEqual(result.telemetry.status, "complete")
+        self.assertTrue(any(query.text in text for text, _ in scoped.evidence_queries))
         cards = result.dataframe.to_dict("records")
         alpha = next(card for card in cards if card["place_id"] == "alpha")
-        self.assertEqual([item["text"] for item in alpha["retrieval_evidence"]],
-                         ["친절해요", "접수 직원은 불친절했어요 😞"])
-        self.assertFalse(alpha["retrieval_evidence_groups"]["supporting"])
+        self.assertEqual({item["text"] for item in alpha["retrieval_evidence"]}, set(texts))
+        self.assertEqual(len(alpha["retrieval_evidence_groups"]["supporting"]), 2)
+        self.assertEqual(alpha["retrieval_evidence_groups"]["unverified"], [])
+        self.assertIn("review_bm25", alpha["retrieval_methods"])
         self.assertTrue(all(item["place_id"] == "alpha" for item in alpha["retrieval_evidence"]))
-        before_order = result.dataframe["place_id"].tolist()
-        from unittest.mock import patch
-        with patch.object(scoped, "list_original_reviews", return_value=[]):
-            empty = adapter.rank(scope=self.scope, eligible=self.frame, rules=make_rules(), query=self.query())
-        self.assertEqual(before_order, empty.dataframe["place_id"].tolist())
+        with patch.object(scoped, "search_evidence_for_facilities", return_value=[]):
+            empty = adapter.rank(scope=self.scope, eligible=self.frame, rules=make_rules(), query=query)
+        self.assertTrue(all(not records for records in empty.dataframe["retrieval_evidence"]))
+        self.assertEqual(empty.telemetry.status, "complete")
         _, presented = fallback_response(cards, {"retrieval_status": "complete"}, "English")
         public = serialize_results_for_chat(presented, include_debug=False)
-        original = next(card for card in public if card["place_id"] == "alpha")["retrieval_evidence"][0]
-        self.assertEqual(original["text"], "친절해요")
-        self.assertEqual(original["review_source_sha256"], "d" * 64)
-        self.assertEqual(original["presentation"]["status"], "unavailable")
+        originals = next(card for card in public if card["place_id"] == "alpha")["retrieval_evidence"]
+        self.assertEqual({item["text"] for item in originals}, set(texts))
+        self.assertTrue(all(item["review_source_sha256"] == "d" * 64 for item in originals))
+        self.assertTrue(all(item["presentation"]["status"] == "unavailable" for item in originals))
         self.assertEqual(next(card for card in public if card["place_id"] == "charlie")["retrieval_evidence"], [])
 
     def test_weighted_rrf_is_deterministic_and_keeps_channel_ranks(self) -> None:
@@ -583,7 +594,10 @@ class LiveRetrievalTests(unittest.TestCase):
                 self.assertEqual(result.telemetry.status, "complete")
                 self.assertEqual(scoped.dense_calls, 1)
                 self.assertEqual(len(scoped.facility_queries), 1)
-                self.assertEqual(len(scoped.evidence_queries), 0)
+                self.assertTrue(scoped.evidence_queries)
+                self.assertTrue(any(text in query for query, _ in scoped.evidence_queries))
+                self.assertTrue(all(sources == ("verbatim_review",)
+                                    for _, sources in scoped.evidence_queries))
 
     def test_scope_escape_falls_back_on_the_same_complete_scope(self) -> None:
         scoped = FakeScopedIndex(escape=True)
