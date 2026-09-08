@@ -161,7 +161,7 @@ class ChatAnswerFailureTests(unittest.TestCase):
         for call in self.provider.with_options.call_args_list:
             self.assertEqual(call.kwargs["max_retries"], 0)
             self.assertGreater(call.kwargs["timeout"], 0)
-            self.assertLessEqual(call.kwargs["timeout"], 30)
+            self.assertLessEqual(call.kwargs["timeout"], 45)
 
     def test_invalid_citations_do_not_hide_originals_or_reach_verification(self):
         invalid = (

@@ -95,7 +95,9 @@ class RetrievalReliabilityTests(unittest.TestCase):
             shortlisted_facility_ids=("alpha",), displayed_facility_ids=("alpha",),
         )
         self.assertTrue(scoped.source_types)
-        self.assertTrue(all("verbatim_review" in types for types in scoped.source_types))
+        self.assertIn(("verbatim_review",), scoped.source_types)
+        self.assertTrue(all(types == ("verbatim_review",) or "verbatim_review" not in types
+                            for types in scoped.source_types))
         self.assertTrue(semantic.calls)
         self.assertTrue(all(
             query.constraint_id == "attribute:english_consultation"

@@ -18,7 +18,7 @@ SPECIALTY_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
     ("치과", ("dentist", "dental", "치과")),
     ("피부과", ("dermatologist", "dermatology", "skin doctor", "피부과")),
     ("내과", ("internal medicine", "internist", "내과")),
-    ("정형외과", ("orthopedist", "orthopedic", "orthopaedic", "정형외과")),
+    ("정형외과", ("orthopedist", "orthopedic", "orthopedi", "orthopedics", "orthopaedic", "정형외과")),
     ("소아청소년과", ("pediatrician", "paediatrician", "pediatrics", "소아청소년과", "소아과")),
     ("정신건강의학과", ("psychiatrist", "psychiatry", "정신건강의학과", "정신과")),
     ("안과", ("ophthalmologist", "ophthalmology", "eye doctor", "안과")),
@@ -82,6 +82,9 @@ GENDER_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
 )
 
 DISEASE_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
+    ("foot pain", ("foot pain", "pain in my foot", "발 통증", "발이 아파")),
+    ("ankle pain", ("ankle pain", "ankle hurts", "발목 통증", "발목이 아파")),
+    ("ankle sprain", ("ankle sprain", "sprained ankle", "twisted my ankle", "발목 염좌", "발목 삐", "발목 겹질")),
     ("cheilitis", ("cheilitis", "구순염", "입술염")),
     ("endometriosis", ("endometriosis", "자궁내막증")),
     ("PCOS", ("pcos", "polycystic ovary", "다낭성 난소", "다낭성난소증후군")),
@@ -150,6 +153,10 @@ COMMENT_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
 )
 
 MULTILINGUAL_RETRIEVAL_GROUPS: Sequence[Sequence[str]] = (
+    ("foot issue", "foot problem", "발 문제", "발"),
+    ("foot pain", "pain in my foot", "발 통증", "발이 아파", "발"),
+    ("ankle pain", "ankle hurts", "발목 통증", "발목이 아파", "발목"),
+    ("ankle sprain", "sprained ankle", "twisted my ankle", "발목 염좌", "발목 삐", "발목 겹질", "발목"),
     ("female", "woman doctor", "여성", "여의사"),
     ("male", "man doctor", "남성", "남의사"),
     ("endometriosis", "자궁내막증"),
@@ -506,6 +513,8 @@ def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> D
     visit_reason = result.get("visit_reason")
     if isinstance(visit_reason, str) and visit_reason.strip() and visit_reason.casefold() in query.casefold():
         result["visit_reason"] = visit_reason.strip()
+    elif vague_foot := re.search(r"\bfoot\s+(?:issue|problem)\b|발\s*문제", query, re.I):
+        result["visit_reason"] = vague_foot.group(0)
     elif re.search(r"\broutine\s+check[- ]?up\b|정기\s*검진|일반\s*검진", query, re.I):
         result["visit_reason"] = "routine checkup"
     else:

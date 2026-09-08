@@ -610,6 +610,19 @@ def reduce_search_state(
             setattr(state, edit.field, _merge_terms(getattr(state, edit.field), (addition,)))
 
     if delta.visit_reason is not None:
+        changed_purpose = bool(current.visit_reason) and delta.visit_reason != current.visit_reason
+        purpose_clauses = [clause for clause in intent_clauses(delta.user_message)
+                           if delta.visit_reason.casefold() in clause.casefold()]
+        adding_symptom = any(
+            re.search(r"\b(?:also|additionally|as well)\b|추가로|또한", clause, re.I)
+            and not re.search(r"\b(?:instead|replace|rather)\b|대신", clause, re.I)
+            for clause in purpose_clauses
+        )
+        if changed_purpose and not adding_symptom:
+            state.disease_terms = list(delta.disease_terms)
+            if delta.specialty is None:
+                state.specialty = None
+                state.specialty_confidence = 0.0
         state.visit_reason = delta.visit_reason
     state.inquiries = list(delta.inquiries)
     state.language_pref, explicit = response_language(

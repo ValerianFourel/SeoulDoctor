@@ -694,7 +694,7 @@ Return a DELTA for this user turn, not a rewritten conversation state.
 
 **Return JSON with:**
 - operation: "refine" or "replace_context"
-- specialty: matched Korean specialty only when this turn explicitly requests or changes it; otherwise null. Never emit a generic default on a follow-up.
+- specialty: matched Korean specialty when explicitly requested, or when the stated symptoms clearly indicate a specialty. Preserve an existing specialty on location-only refinements by returning null. Do not invent a diagnosis. A vague "foot issue" could concern injury, skin, or nails: return null with low confidence and preserve the literal visit_reason so we can ask one clarification. Foot/ankle pain or a sprain can suggest orthopedics; a foot rash can suggest dermatology. Never substitute a generic default.
 - specialty_confidence: 0.0-1.0
 - location: extracted location or null (null if not mentioned)
 - distance_km: exact numeric distance or null
@@ -709,7 +709,7 @@ Return a DELTA for this user turn, not a rewritten conversation state.
 - comment_terms: qualities that should be supported by patient comments/reviews
 - required_hours: canonical availability constraints
 - remove_terms: explicitly withdrawn concepts. Waiting being acceptable withdraws a prior short-wait preference.
-- visit_reason: current visit purpose, including a routine checkup, or null when unchanged
+- visit_reason: exact substring of this message stating the symptom or visit purpose; preserve it even when the specialty is unclear. Null only when unchanged.
 - inquiries: exact current-turn clauses asking factual questions without imposing a requirement
 - term_operations: explicit changes with action add/remove/replace, field, term, optional replacement, and exact source_span
   Fields: keywords, hard_keywords, negative_keywords, negative_hard_keywords, comment_terms, gender_terms, disease_terms, required_hours.
@@ -1583,15 +1583,22 @@ def execute_search(
         }
     else:
         authoritative_rules = scope_compilation.rules
-        scope_selection = ScopeBuilder().build(
+        scope_search = ScopeBuilder().build_with_expansion(
             df_filtered,
             authoritative_rules,
+            allow_expansion=(
+                isinstance(authoritative_rules.hard.geography, DistanceRule)
+                and authoritative_rules.hard.geography.provenance.source == "default_5km"
+                and state.travel_confidence < 0.6
+            ),
             index_version=(
                 search_index_release.version
                 if search_index_release is not None
                 else LEGACY_INDEX_VERSION
             ),
         )
+        scope_selection = scope_search.scope
+        authoritative_rules = scope_search.rules
         working_df = scope_selection.restrict_dataframe(df_filtered)
         geography = authoritative_rules.hard.geography
         if isinstance(geography, DistanceRule):
@@ -1613,6 +1620,8 @@ def execute_search(
             )
         final_df = working_df.copy()
         scope_metadata = {
+            "search_attempted_radii_km": list(scope_search.attempted_radii_km),
+            "search_radius_expanded": len(scope_search.attempted_radii_km) > 1,
             "scope_digest": scope_selection.descriptor.scope_digest,
             "rules_hash": scope_selection.descriptor.rules_hash,
             "candidate_scope_count": scope_selection.descriptor.facility_count,
@@ -2206,7 +2215,7 @@ def chat_endpoint(
         # We can proceed if we have:
         # - High confidence specialty (≥0.5), OR
         # - Medium confidence specialty (≥0.3) with location/keywords, OR
-        # - No specialty but have location/keywords (general search)
+        # - General facility searches without an unresolved visit purpose
         
         has_specialty = bool(new_state.specialty)
         has_location = bool(new_state.location or new_state.latitude or new_state.district)
@@ -2218,7 +2227,10 @@ def chat_endpoint(
             or new_state.comment_terms
         )
         
-        can_proceed = (
+        unresolved_visit = bool(new_state.visit_reason or new_state.disease_terms) and (
+            not has_specialty or new_state.specialty_confidence < 0.5
+        )
+        can_proceed = not unresolved_visit and (
             # High confidence specialty alone
             (has_specialty and new_state.specialty_confidence >= 0.5) or
             # Medium confidence specialty with additional context
@@ -2265,14 +2277,19 @@ def chat_endpoint(
         # ============================================
         # STEP 8B: REQUEST SPECIALTY CLARIFICATION IF AMBIGUOUS
         # ============================================
-        elif has_specialty and new_state.specialty_confidence < 0.3:
-            # We have a specialty but confidence is too low
+        elif unresolved_visit or (has_specialty and new_state.specialty_confidence < 0.3):
             new_state.conversation_phase = "gathering"
             
             privacy_safe_log(consent, 
                 f"⚠️ Low specialty confidence ({new_state.specialty_confidence:.2f}) - requesting clarification")
             
-            response_text = ask_for_specialty_clarification(new_state)
+            new_state.ready_to_search = False
+            new_state.search_executed = False
+            response_text = (
+                "Could you describe your symptoms a little more? That will help me find the right specialist nearby."
+                if "English" in language else
+                "어떤 증상인가요? 통증이나 부상인지, 피부 문제인지 등을 알려주시면 가까운 곳에서 맞는 진료과를 찾아드릴게요."
+            )
             response_text = format_response(response_text)
             
             return {

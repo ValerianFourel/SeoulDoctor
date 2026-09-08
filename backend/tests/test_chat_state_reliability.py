@@ -78,13 +78,14 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.stack.enter_context(patch.object(self.main, "request_json_completion", side_effect=boundary))
         return boundary
 
-    def _post(self, message, state=None):
+    def _post(self, message, state=None, *, expect_results=True):
         response = self.client.post("/chat", json={
             "message": message, "current_state": state if state is not None else State().model_dump(),
         })
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
-        self.assertTrue(body["results"], body)
+        if expect_results:
+            self.assertTrue(body["results"], body)
         for card in body["results"]:
             self.assertEqual(card["retrieval_evidence"][0]["place_id"], card["place_id"])
             self.assertEqual(card["retrieval_evidence"][0]["text"], "The doctor explained clearly. The nurse was rude.")
@@ -93,6 +94,64 @@ class ChatStateReliabilityTests(unittest.TestCase):
     @staticmethod
     def _proposal(**fields):
         return {**fixtures._extraction(location=None), **fields}
+
+    def test_vague_foot_issue_clarifies_before_any_specialty_search(self):
+        self._model(["PROVIDE_INFO", "PROVIDE_INFO"], [
+            self._proposal(specialty=None, specialty_confidence=0, location="myeondong"),
+            self._proposal(specialty=None, specialty_confidence=0, location="jonggak"),
+        ])
+        first = self._post("i have a foot issue im in myeondong", expect_results=False)
+        self.assertEqual(first["results"], [])
+        self.assertEqual(first["state"]["visit_reason"], "foot issue")
+        self.assertFalse(first["state"]["ready_to_search"])
+        self.assertIn("Could you describe your symptoms", first["response"])
+        self.assertEqual(self.retrieval_calls, [])
+        second = self._post("i need a orthopedi doctor next to jonggak", first["state"])
+        self.assertEqual(second["state"]["specialty"], "정형외과")
+        self.assertTrue(second["results"])
+        self.assertTrue(all(c["category"] == "정형외과" for c in second["results"]))
+
+    def test_changed_symptom_does_not_reuse_previous_specialty(self):
+        self._model(["PROVIDE_INFO"], [
+            self._proposal(specialty=None, specialty_confidence=0, visit_reason="foot issue"),
+        ])
+        previous = State(specialty="피부과", specialty_confidence=0.95,
+                         visit_reason="acne", disease_terms=["acne"], location="Jonggak", turn_count=1)
+        body = self._post("Instead I need help with a foot issue. Also move the search to Jonggak.", previous.model_dump(), expect_results=False)
+        self.assertEqual(body["results"], [])
+        self.assertIsNone(body["state"]["specialty"])
+        self.assertNotIn("acne", body["state"]["disease_terms"])
+        self.assertEqual(self.retrieval_calls, [])
+
+    def test_first_symptom_detail_preserves_explicit_specialty(self):
+        self._model(["PROVIDE_INFO"], [
+            self._proposal(specialty=None, specialty_confidence=0, visit_reason="ankle hurts"),
+        ])
+        previous = State(specialty="정형외과", specialty_confidence=0.95,
+                         location="Jonggak", latitude=fixtures.ORIGIN_LAT,
+                         longitude=fixtures.ORIGIN_LON, turn_count=1)
+        body = self._post("My ankle hurts", previous.model_dump())
+        self.assertEqual(body["state"]["specialty"], "정형외과")
+        self.assertIn("ankle pain", body["state"]["disease_terms"])
+
+    def test_api_expands_default_radius_without_changing_specialty(self):
+        self.catalog["lat"] = fixtures.ORIGIN_LAT + 0.063
+        self.catalog["lon"] = fixtures.ORIGIN_LON
+        self.catalog.loc[self.catalog.index[0], "category"] = "피부과"
+        self.catalog.loc[self.catalog.index[0], "lat"] = fixtures.ORIGIN_LAT
+        self._model(["PROVIDE_INFO", "CHANGE_CRITERIA"], [
+            self._proposal(specialty="정형외과", specialty_confidence=0.95, location="Jonggak"),
+            self._proposal(specialty=None, location=None, distance_km=1),
+        ])
+        first = self._post("Find an orthopedic doctor near Jonggak")
+        self.assertEqual(first["state"]["max_distance_km"], 10)
+        self.assertTrue(all(c["category"] == "정형외과" for c in first["results"]))
+        self.assertEqual(self.retrieval_calls[0]["rules"].hard.geography.max_km, 10)
+        self.assertIn("10", first["response"])
+        second = self._post("Only within 1 km", first["state"], expect_results=False)
+        self.assertEqual(second["results"], [])
+        self.assertEqual(second["state"]["max_distance_km"], 1)
+        self.assertEqual(second["state"]["specialty"], "정형외과")
 
     def test_ichon_care_preferences_survive_four_real_chat_turns(self):
         self.catalog["category"] = "소아청소년과"

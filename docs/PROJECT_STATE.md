@@ -1453,3 +1453,55 @@ search/evidence_retrieval.py and evidence retrieval tests. Answer worker owns
 evidence_response.py, review_presentation.py and their focused tests. Each uses
 a separate worktree. No push before fixed API cases, adaptive scenarios, and
 independent review. Existing NCS resources only; user authorizes more time.
+
+### Search repair integration checkpoint, 2026-09-09
+
+Root integration branch: local/ncs-search-repair-20260909, worktree
+.worktrees/ncs-translation-first. Last integrated commit ee044500 contains the
+bounded API evaluator. Root additionally owns query_facets.py and the chat/state
+regressions. Location, evidence, answer and radius worker changes are integrated.
+
+Implemented: canonical Myeongdong geocoding with provider identity checks;
+query-ranked originals for searches without evidence preferences; independent
+translation timeout and per-card priority; actionable incomplete-retrieval text;
+strict-specialty default-radius expansion through 10/25 km; clarification before
+an unresolved symptom search; typo and bilingual foot/ankle recall safeguards.
+Changed symptoms invalidate stale specialty/condition context, while a first
+symptom detail preserves an explicitly requested specialty.
+
+Verification checkpoint: 408 backend tests passed in 8.398 seconds before the
+last clause-scoping refinement; frontend build and all 70 browser checks passed.
+A local immutable-index smoke passed using existing vector fixtures, which does
+not establish real query encoding or GPU service readiness. The live baseline
+reproduced Myeondong resolving to Myeonmok with no specialty. It did return some
+reviews on replay; the original zero-review symptom is intermittent or dependent
+on retrieval conditions, not proven to arise solely from empty constraints.
+
+No push or deployment has run. Credentials are absent from the process; the
+latest user-supplied AGENTS.md prohibits reading .env, conflicting with earlier
+permission. Root asked to resolve that conflict before candidate API/provider and
+12 adaptive conversations. No scored live evaluation or Likert pass is claimed.
+Artifacts stay under .audit/search-repair-20260909 and /tmp/search-repair-*.
+Next action: finish original-review selection validation, rerun integrated tests,
+then run the fixed and adaptive gates once approved credentials are available.
+
+Further source investigation reproduced non-verbatim medical-info records taking
+patient-review presentation slots. Fix c05744dd restricts those slots to originals;
+7e998cf0 reserves lexical quota for reviews separately from medical facts without
+increasing the per-cell candidate budget. Supporting facts remain available for
+assessment. The actual-index probe must filter/resolve only original evidence;
+its first two attempts failed on the non-verbatim presentation records and are
+retained as diagnostic failures. The final source probe and suite are pending.
+
+Final local checks: 411 backend tests passed in 9.964 seconds. Frontend build
+and all 70 browser checks passed. Independent review found no remaining blocker
+in the reviewed state/scope/evaluator changes. The actual local index probe
+validated six exact owned original reviews across two of five nearby orthopedic
+clinics; the other three had no lexical matches. This is not proof of missing
+source comments and is not a live semantic-retrieval pass. Source snapshot:
+0e8c6f4ff09b75becf7821ba08bf8b19b6533b824a26ca4e7c6451277dfbfafa,
+index 2026-09-02-v1. Full live fixed/adaptive evaluation, translation-provider
+verification, root candidate Likert grading and private checkpoint sync remain
+unrun pending credential authorization. No push/deployment. Next action: use
+approved process credentials to launch the isolated candidate and run the fixed
+gate before the 12 adaptive conversations.

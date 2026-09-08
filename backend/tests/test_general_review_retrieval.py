@@ -97,6 +97,15 @@ class GeneralReviewRetrievalTests(unittest.TestCase):
         self.assertIn("reranker_request_failed", result.reason_codes)
         self.assertEqual(result.finish_status, "complete")
 
+    def test_english_ankle_symptoms_recall_korean_originals_without_semantic_service(self):
+        result = ConstraintEvidenceRetriever().collect(
+            scoped_index=GeneralReviewIndex(self.reviews), rules=self.rules,
+            shortlisted_facility_ids=("alpha",), displayed_facility_ids=("alpha",),
+            review_query="ankle pain",
+        )
+        self.assertEqual({item.hit.evidence_id for item in result.by_facility["alpha"].presented},
+                         {"ankle-positive", "ankle-negative"})
+
     def test_real_immutable_index_returns_bilingual_owned_originals(self):
         from backend.tests import test_search_indexes
 
