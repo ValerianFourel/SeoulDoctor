@@ -709,7 +709,7 @@ Return a DELTA for this user turn, not a rewritten conversation state.
 - comment_terms: qualities that should be supported by patient comments/reviews
 - required_hours: canonical availability constraints
 - remove_terms: explicitly withdrawn concepts. Waiting being acceptable withdraws a prior short-wait preference.
-- visit_reason: exact substring of this message stating the symptom or visit purpose; preserve it even when the specialty is unclear. Null only when unchanged.
+- visit_reason: exact substring stating the medical symptom or reason for care; preserve it even when the specialty is unclear. A request to find a doctor, change location, name a specialty, or translate reviews is not a medical reason. Return null when no new medical reason is stated.
 - inquiries: exact current-turn clauses asking factual questions without imposing a requirement
 - term_operations: explicit changes with action add/remove/replace, field, term, optional replacement, and exact source_span
   Fields: keywords, hard_keywords, negative_keywords, negative_hard_keywords, comment_terms, gender_terms, disease_terms, required_hours.

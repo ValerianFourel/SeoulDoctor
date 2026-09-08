@@ -111,6 +111,19 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertTrue(second["results"])
         self.assertTrue(all(c["category"] == "정형외과" for c in second["results"]))
 
+    def test_specialty_refinement_does_not_replace_symptom_with_provider_request(self):
+        self._model(["PROVIDE_INFO", "PROVIDE_INFO"], [
+            self._proposal(specialty=None, specialty_confidence=0, location="myeondong",
+                           visit_reason="i have a foot issue"),
+            self._proposal(specialty="정형외과", location="jonggak",
+                           visit_reason="i need a orthopedi doctor"),
+        ])
+        first = self._post("i have a foot issue im in myeondong", expect_results=False)
+        second = self._post("i need a orthopedi doctor next to jonggak", first["state"])
+        self.assertEqual(second["state"]["visit_reason"], "i have a foot issue")
+        self.assertIn("foot issue", second["state"]["disease_terms"])
+        self.assertIn("foot", self.retrieval_calls[-1]["query"].text)
+
     def test_changed_symptom_does_not_reuse_previous_specialty(self):
         self._model(["PROVIDE_INFO"], [
             self._proposal(specialty=None, specialty_confidence=0, visit_reason="foot issue"),

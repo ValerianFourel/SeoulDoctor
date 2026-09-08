@@ -450,6 +450,22 @@ def may_relax_distance_constraint(travel_confidence: float | None) -> bool:
     return float(travel_confidence or 0.0) < 0.6
 
 
+def _facility_request_only(text: str, location: Any) -> bool:
+    remaining = text.casefold()
+    if isinstance(location, str) and location:
+        remaining = remaining.replace(location.casefold(), " ")
+    providers = [alias for _, aliases in SPECIALTY_ALIASES for alias in aliases
+                 if alias != "surgery"] + list(GENERIC_FACILITY_NOUNS) + ["specialist"]
+    found = False
+    for provider in sorted(providers, key=len, reverse=True):
+        pattern = rf"\b{re.escape(provider)}\b" if provider.isascii() else re.escape(provider)
+        remaining, count = re.subn(pattern, " ", remaining)
+        found = found or bool(count)
+    words = set(re.findall(r"[a-z가-힣]+", remaining))
+    request_words = set("i me my need want find looking for a an the please doctor near next to around in recommend show can you am im some 의사 의원 병원 찾아주세요 찾아 줘 추천 해주세요 근처 에 에서 를 을".split())
+    return found and words <= request_words
+
+
 def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> Dict[str, Any]:
     """Merge model output with conservative bilingual literal safeguards."""
     result = dict(payload or {})
@@ -518,7 +534,9 @@ def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> D
         result["negative_hard_keywords"].append("English-speaking")
     result["inquiries"] = [clause for clause in intent_clauses(query) if is_inquiry(clause)][:6]
     visit_reason = result.get("visit_reason")
-    if isinstance(visit_reason, str) and visit_reason.strip() and visit_reason.casefold() in query.casefold():
+    if (isinstance(visit_reason, str) and visit_reason.strip()
+            and visit_reason.casefold() in query.casefold()
+            and not _facility_request_only(visit_reason, result.get("location"))):
         result["visit_reason"] = visit_reason.strip()
     elif vague_foot := re.search(r"\bfoot\s+(?:issue|problem)\b|발\s*문제", query, re.I):
         result["visit_reason"] = vague_foot.group(0)
