@@ -1,6 +1,7 @@
 """Run frozen search-repair conversations and retain evidence for independent grading."""
 
 import argparse
+from contextlib import nullcontext
 from dataclasses import dataclass
 from hashlib import sha256
 import json
@@ -107,6 +108,8 @@ def check_turn(body, oracle, turn_index, final_turn=False):
     specialty = expected.get("korean_specialty")
     if final_turn and expected.get("final_specialty"):
         specialty = SPECIALTIES.get(expected["final_specialty"])
+        if expected.get("resolved_specialty_mandatory"):
+            check("resolved_final_specialty", specialty is not None and state.get("specialty") == specialty)
     if not specialty and state.get("specialty") in SPECIALTIES.values():
         specialty = state["specialty"]
     if specialty and cards:
@@ -132,9 +135,11 @@ def check_turn(body, oracle, turn_index, final_turn=False):
     for index, card in enumerate(cards):
         reviews = card.get("retrieval_evidence", [])
         evidence_count += len(reviews)
+        check(f"card_{index}_owner_present", isinstance(card.get("place_id"), str) and bool(card["place_id"].strip()))
         check(f"card_{index}_review_ids_unique", len({review.get("evidence_id") for review in reviews}) == len(reviews))
         for review_index, review in enumerate(reviews):
             prefix = f"card_{index}_review_{review_index}"
+            check(prefix + "_identity", isinstance(review.get("evidence_id"), str) and bool(review["evidence_id"].strip()))
             check(prefix + "_owner", review.get("place_id") == card.get("place_id"))
             check(prefix + "_original", review.get("is_verbatim") is True
                   and isinstance(review.get("text"), str) and bool(review["text"].strip()))
@@ -146,6 +151,18 @@ def check_turn(body, oracle, turn_index, final_turn=False):
                      "location_identity", "translation_meaning", "useful_guidance"])
     return {"checks": checks, "failures": failures, "unscored": list(dict.fromkeys(unscored)),
             "review_count": evidence_count, "quality_pass": False}
+
+
+def turn_measurements(body):
+    metadata = body.get("state", {}).get("last_retrieval_metadata", {})
+    answer = metadata.get("answer", {})
+    return {"retrieval_execution_status": metadata.get("retrieval_execution_status"),
+            "retrieval_elapsed_ms": metadata.get("elapsed_ms"),
+            "attempted_radii_km": metadata.get("search_attempted_radii_km"),
+            "answer_status": answer.get("status"), "answer_reason": answer.get("reason"),
+            "answer_model_calls": answer.get("calls", []),
+            "translation": answer.get("translation", {}),
+            "private_trace_available": bool(metadata)}
 
 
 @dataclass
@@ -212,6 +229,22 @@ class Runner:
             raise ValueError("adaptive phase requires a matching fixed gate reviewed by root GPT-6")
         if not all(Path(path).is_file() for path in gate["evidence_paths"]):
             raise ValueError("fixed gate evidence is missing")
+        phase_runs = {}
+        for path in gate["evidence_paths"]:
+            if Path(path).suffix != ".json":
+                continue
+            candidate = json.loads(Path(path).read_text())
+            if candidate.get("phase") in {"fixed", "fixtures"}:
+                phase_runs[candidate["phase"]] = candidate
+        for phase in ("fixed", "fixtures"):
+            run = phase_runs.get(phase, {})
+            eligible = {case["id"] for case in expand_fixed(self.manifest["fixed"])
+                        if bool(case.get("execution", {}).get("fixture")) == (phase == "fixtures")}
+            completed = {case["id"] for case in run.get("cases", []) if case["status"] == "complete"}
+            if (run.get("status") != "complete" or completed != eligible
+                    or run.get("application_revision") != self.record["application_revision"]
+                    or run.get("manifest_sha256") != self.record["manifest_sha256"]):
+                raise ValueError("adaptive phase requires complete matching fixed and fixture runs")
         if not self.actor_key:
             raise ValueError("OPENROUTER_API_KEY is absent")
         write_json(self.directory / "fixed-gate.json", gate)
@@ -230,7 +263,7 @@ class Runner:
         self.record["actor_preflight"] = "passed"
         self.checkpoint()
 
-    def request(self, kind, payload, turn):
+    def request(self, kind, payload, turn, *, post=None):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise ValueError("run deadline exhausted")
@@ -244,7 +277,7 @@ class Runner:
             if kind == "actor":
                 headers["Authorization"] = "Bearer " + self.actor_key
             started = time.monotonic()
-            response = self.post(url, json=payload, headers=headers, timeout=min(240 if kind == "app" else 60, remaining))
+            response = (post or self.post)(url, json=payload, headers=headers, timeout=min(240 if kind == "app" else 60, remaining))
             record.update(http_status=response.status_code, raw_text=response.text,
                           duration_seconds=time.monotonic() - started)
             self.checkpoint()
@@ -274,83 +307,114 @@ class Runner:
                     self.record["error_reason"] = str(error)
                 self.checkpoint()
                 return 1
-        scenarios = expand_fixed(self.manifest["fixed"]) if self.phase == "fixed" else self.manifest["adaptive"]
+        scenarios = self.manifest["adaptive"] if self.phase == "adaptive" else expand_fixed(self.manifest["fixed"])
         blocked = False
         for scenario in scenarios:
             case = {"id": scenario["id"], "status": "pending", "turns": [], "oracle": scenario["oracle"]}
             self.cases.append(case)
-            if blocked or scenario.get("execution", {}).get("fixture"):
-                case.update(status="not_run", reason="earlier_failure" if blocked else "fixture_adapter_required")
+            fixture = bool(scenario.get("execution", {}).get("fixture"))
+            if self.phase != "adaptive" and fixture != (self.phase == "fixtures"):
+                case.update(status="not_applicable", reason="covered_by_fixtures_phase" if fixture else "covered_by_fixed_phase")
                 self.checkpoint()
                 continue
-            state = {}
-            patient = scenario["patient"]
-            total = len(patient["messages"]) if self.phase == "fixed" else patient["turns"]
-            case["status"] = "running"
-            for index in range(total):
-                turn = {"index": index, "status": "running"}
-                case["turns"].append(turn)
+            if blocked:
+                case.update(status="not_run", reason="earlier_failure")
                 self.checkpoint()
-                kind = "actor" if self.phase == "adaptive" else "app"
-                try:
-                    if self.phase == "adaptive":
-                        if not self.actor_key:
-                            raise ValueError("OPENROUTER_API_KEY is absent")
-                        payload = actor_payload(patient, case["turns"][:-1], index)
-                        message = parse_actor(self.request("actor", payload, turn))
+                continue
+            try:
+                if fixture:
+                    if __package__:
+                        from .search_repair_fixtures import FixtureApp
                     else:
-                        message = patient["messages"][index]
-                    turn["message"] = message
-                    kind = "app"
-                    body = self.request("app", {"message": message, "current_state": state}, turn)
-                    if not isinstance(body.get("response"), str) or not isinstance(body.get("state"), dict):
-                        raise ValueError("invalid application response/state")
-                    if not isinstance(body.get("results", []), list):
-                        raise ValueError("invalid results")
-                    for card in body.get("results", []):
-                        if not isinstance(card, dict) or not isinstance(card.get("retrieval_evidence", []), list):
-                            raise ValueError("invalid card")
-                        if not all(isinstance(review, dict) for review in card.get("retrieval_evidence", [])):
-                            raise ValueError("invalid review")
-                    turn["response"] = {"body": body}
-                    kind = "evaluator"
-                    turn["assessment"] = check_turn(body, scenario["oracle"], index, index == total - 1)
-                    turn["status"] = "failed" if turn["assessment"]["failures"] else "complete"
-                    state = body["state"]
-                    if turn["status"] == "failed":
-                        case.update(status="failed", error_category="application_assertion")
-                        blocked = self.phase == "fixed"
-                        break
-                except Exception as error:
-                    turn.update(status="failed", error_type=type(error).__name__)
-                    if isinstance(error, ValueError):
-                        turn["error_reason"] = str(error)
-                    category = {"actor": "patient_actor", "app": "application", "evaluator": "evaluator"}[kind]
-                    case.update(status="failed", error_category=category)
-                    blocked = self.phase == "fixed"
-                    break
-                finally:
-                    self.checkpoint()
-            if case["status"] == "running":
-                case["status"] = "complete"
-            write_json(self.directory / (case["id"] + ".judge.json"), {
-                "case": case, "patient": patient, "grading": self.manifest["grading"],
-                "judge": "root GPT-6", "quality_pass": False,
-                "instruction": "Grade only completed conversations. Give evidence for each 1-5 score. Unsupported dimensions remain unscored; incomplete, failed, or unscored output never passes.",
-            })
-            self.checkpoint()
-        completed = sum(case["status"] == "complete" for case in self.cases)
-        self.record.update(status="complete" if completed == len(self.cases) else "incomplete_or_failed",
-                           completed=completed, finished_at=time.time(), grading_status="pending_root_judgment")
+                        from search_repair_fixtures import FixtureApp
+                    context = FixtureApp(scenario)
+                else:
+                    context = nullcontext(None)
+                with context as adapter:
+                    self.run_case(scenario, case, adapter)
+            except Exception as error:
+                case.update(status="failed", error_category="evaluator", error_type=type(error).__name__)
+                self.checkpoint()
+            if case["status"] == "failed":
+                blocked = self.phase != "adaptive"
+        applicable = [case for case in self.cases if case["status"] != "not_applicable"]
+        completed = sum(case["status"] == "complete" for case in applicable)
+        self.record.update(status="complete" if completed == len(applicable) else "incomplete_or_failed",
+                           completed=completed, applicable=len(applicable), not_applicable=len(self.cases) - len(applicable),
+                           finished_at=time.time(), grading_status="pending_root_judgment")
         self.checkpoint()
-        return 0 if completed == len(self.cases) else 1
+        return 0 if completed == len(applicable) else 1
 
+    def run_case(self, scenario, case, adapter):
+        state = adapter.initial_state() if adapter else {}
+        if adapter:
+            case["fixture"] = adapter.provenance()
+        patient = scenario["patient"]
+        total = patient["turns"] if self.phase == "adaptive" else len(patient["messages"])
+        case["status"] = "running"
+        for index in range(total):
+            turn = {"index": index, "status": "running"}
+            case["turns"].append(turn)
+            self.checkpoint()
+            kind = "actor" if self.phase == "adaptive" else "app"
+            try:
+                if self.phase == "adaptive":
+                    if not self.actor_key:
+                        raise ValueError("OPENROUTER_API_KEY is absent")
+                    payload = actor_payload(patient, case["turns"][:-1], index)
+                    message = parse_actor(self.request("actor", payload, turn))
+                else:
+                    message = patient["messages"][index]
+                turn["message"] = message
+                kind = "app"
+                body = self.request("app", {"message": message, "current_state": state}, turn,
+                                    post=adapter.post if adapter else None)
+                if not isinstance(body.get("response"), str) or not isinstance(body.get("state"), dict):
+                    raise ValueError("invalid application response/state")
+                if not isinstance(body.get("results", []), list):
+                    raise ValueError("invalid results")
+                for card in body.get("results", []):
+                    if not isinstance(card, dict) or not isinstance(card.get("retrieval_evidence", []), list):
+                        raise ValueError("invalid card")
+                    if not all(isinstance(review, dict) for review in card.get("retrieval_evidence", [])):
+                        raise ValueError("invalid review")
+                turn["response"] = {"body": body}
+                turn["measurements"] = turn_measurements(body)
+                kind = "evaluator"
+                turn["assessment"] = check_turn(body, scenario["oracle"], index, index == total - 1)
+                if adapter:
+                    fixture_checks = adapter.assess(body)
+                    turn["fixture_assessment"] = fixture_checks
+                    turn["assessment"]["checks"].extend(fixture_checks["checks"])
+                    turn["assessment"]["failures"].extend(fixture_checks["failures"])
+                turn["status"] = "failed" if turn["assessment"]["failures"] else "complete"
+                state = body["state"]
+                if turn["status"] == "failed":
+                    case.update(status="failed", error_category="application_assertion")
+                    break
+            except Exception as error:
+                turn.update(status="failed", error_type=type(error).__name__)
+                if isinstance(error, ValueError):
+                    turn["error_reason"] = str(error)
+                category = {"actor": "patient_actor", "app": "application", "evaluator": "evaluator"}[kind]
+                case.update(status="failed", error_category=category)
+                break
+            finally:
+                self.checkpoint()
+        if case["status"] == "running":
+            case["status"] = "complete"
+        write_json(self.directory / (case["id"] + ".judge.json"), {
+            "case": case, "patient": patient, "grading": self.manifest["grading"],
+            "judge": "root GPT-6", "quality_pass": False,
+            "instruction": "Grade only completed conversations. Give evidence for each 1-5 score. Unsupported dimensions remain unscored; incomplete, failed, or unscored output never passes.",
+        })
+        self.checkpoint()
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--run-dir", type=Path, required=True)
-    parser.add_argument("--phase", choices=("fixed", "adaptive"), required=True)
+    parser.add_argument("--phase", choices=("fixed", "fixtures", "adaptive"), required=True)
     parser.add_argument("--application-revision", required=True)
     parser.add_argument("--scenarios", type=Path, default=Path(__file__).with_name("search_repair_scenarios.json"))
     parser.add_argument("--fixed-gate", type=Path, help="Required for adaptive runs. Root-reviewed fixed gate JSON.")

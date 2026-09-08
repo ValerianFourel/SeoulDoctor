@@ -105,8 +105,10 @@ class SearchRepairRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runner = Runner("https://example.hf.space", Path(directory) / "run", manifest,
                             "fixed", "fixture-commit", post=forbidden)
-            self.assertEqual(runner.run(), 1)
-            self.assertEqual(runner.cases[0]["reason"], "fixture_adapter_required")
+            self.assertEqual(runner.run(), 0)
+            self.assertEqual(runner.cases[0]["status"], "not_applicable")
+            self.assertEqual(runner.cases[0]["reason"], "covered_by_fixtures_phase")
+            self.assertFalse(runner.record["quality_pass"])
 
     def test_run_directory_cannot_be_replayed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -166,9 +168,45 @@ class SearchRepairRunnerTests(unittest.TestCase):
                                           "pricing": {"prompt": "0.1", "completion": "0.1"}}]}}))
             runner.fixed_gate = {"passed": True, "reviewer": "root GPT-6", "application_revision": "fixture",
                                  "manifest_sha256": runner.record["manifest_sha256"], "evidence_paths": [str(evidence)]}
+            self._gate_runs(runner, Path(directory))
             self.assertEqual(runner.run(), 1)
             self.assertIn("price ceiling", runner.record["error_reason"])
             self.assertEqual(runner.budget.actor_calls, 0)
+
+    @staticmethod
+    def _gate_runs(runner, directory):
+        for phase in ("fixed", "fixtures"):
+            cases = [{"id": case["id"], "status": "complete"}
+                     for case in expand_fixed(runner.manifest["fixed"])
+                     if bool(case.get("execution", {}).get("fixture")) == (phase == "fixtures")]
+            path = directory / (phase + ".json")
+            path.write_text(json.dumps({"phase": phase, "status": "complete", "cases": cases,
+                "application_revision": runner.record["application_revision"],
+                "manifest_sha256": runner.record["manifest_sha256"]}))
+            runner.fixed_gate["evidence_paths"].append(str(path))
+
+    def test_missing_identity_cannot_pass_ownership_by_equal_nulls(self):
+        response = body({"specialty": "정형외과"})
+        response["results"] = [{"category": "정형외과", "retrieval_evidence": [
+            {"text": "An original", "is_verbatim": True}]}]
+        failures = check_turn(response, {}, 0)["failures"]
+        self.assertIn("card_0_owner_present", failures)
+        self.assertIn("card_0_review_0_identity", failures)
+
+    def test_final_specialty_must_be_resolved_even_without_cards(self):
+        oracle = {"final_specialty": "orthopedics", "resolved_specialty_mandatory": True}
+        self.assertIn("resolved_final_specialty", check_turn(body(), oracle, 1, True)["failures"])
+
+    def test_adaptive_gate_rejects_missing_fixture_phase(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "review.json"
+            evidence.write_text("{}")
+            runner = Runner("http://localhost", Path(directory) / "run", suite(), "adaptive", "fixture",
+                            actor_key="fixture", get=lambda *args, **kwargs: self.fail("unreviewed network"))
+            runner.fixed_gate = {"passed": True, "reviewer": "root GPT-6", "application_revision": "fixture",
+                "manifest_sha256": runner.record["manifest_sha256"], "evidence_paths": [str(evidence)]}
+            self.assertEqual(runner.run(), 1)
+            self.assertIn("fixed and fixture runs", runner.record["error_reason"])
 
 
 if __name__ == "__main__":
