@@ -1514,3 +1514,21 @@ created. The public NCS Space has not been updated by this repair task.
 ## Fix-inference execution, 2026-09-09
 
 Root owns integration on fix-inference from bb1894490440b44cecb57140c75648a37ea9f17d, AGENTS.md, handoff/coordination records, candidate launch configuration and application fixes. User explicitly removes the .env read prohibition and authorizes real inference testing. Needed credentials may load privately into task processes. Existing artifacts/resources only. Evaluation review agents remain read-only until assigned isolated file ownership. Next action: inspect existing GPU/service readiness, launch candidate API, then fixed gate and adaptive conversations.
+
+Execution checkpoint: application 26fb5e20, fix-inference. Root integrated state
+preservation, scoped distance validation, structured answer requests and the
+independent GPT-4.1 review translator. The combined GPU prerequisite alone was
+published to the existing NCS T4 Medium Space at
+014922dcb9a6667aa3eaa0c3a7ca67ac82b5a0c8, preserving the older application source.
+Actual encoder and reranker CUDA execution, model pins, source identity and
+retrieval/rerank operations passed. No new hardware or indexes were created.
+The candidate application has not been published. Local API fixtures and browser
+checks passed; final live scenarios and judgment remain pending.
+
+Worker ownership: inference_response_audit owns review_presentation.py and its
+focused tests in .worktrees/inference-translations; inference_gpu owns the
+rerank-query correction and its regression in .worktrees/inference-gpu;
+inference_eval_audit owns scripts/search_repair_report.py and its test in
+.worktrees/inference-eval. Root integrates commits sequentially, owns all other
+application changes and records, and runs the actual candidate API. Existing
+sealed evaluation data is unchanged. Evaluation artifacts stay under .audit.
