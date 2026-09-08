@@ -134,6 +134,16 @@ class AnswerReliabilityTests(unittest.TestCase):
         self.assertEqual(citation["place_id"], "alpha")
         self.assertEqual(outcome.trace["calls"][1]["usage"]["total_tokens"], 60)
 
+    def test_generation_schema_only_allows_current_source_ids(self):
+        complete = ScriptedCompletion(proposal(), {"accepted": True, "issues": []})
+        self.answer(complete)
+        schema = complete.calls[0]["response_schema"]["$defs"]
+        self.assertEqual(schema["_Citation"]["properties"]["evidence_id"]["enum"], [review()["evidence_id"]])
+        self.assertEqual(schema["_Assessment"]["properties"]["evidence_ids"]["items"]["enum"], [review()["evidence_id"]])
+        self.assertEqual(schema["_Citation"]["properties"]["place_id"]["enum"], ["alpha"])
+        for call in complete.calls:
+            self.assertNotIn("review_source_sha256", call["messages"][1]["content"])
+
     def test_invalid_citation_is_rejected_before_verification_without_erasing_reviews(self):
         for change in (
             {"place_id": "other"}, {"evidence_id": "review:missing"},
@@ -381,6 +391,15 @@ class AnswerReliabilityTests(unittest.TestCase):
         self.assertEqual(self.answer(complete).trace["status"], "generated")
         submitted["answer"] = submitted["answer"].replace("Within 1 km", "Within 10 km")
         self.assertEqual(self.answer(ScriptedCompletion(submitted)).trace["reason"], "radius_mismatch")
+
+    def test_clinic_distance_bounds_use_the_actual_distance(self):
+        for bound in ("within 1 km", "less than 1 km", "under 1 km"):
+            with self.subTest(bound=bound):
+                submitted = proposal(answer=f"Clinic alpha is {bound} away by straight-line distance. Staff feedback is mixed. [1]")
+                complete = ScriptedCompletion(submitted, {"accepted": True, "issues": []})
+                self.assertEqual(self.answer(complete).trace["status"], "generated")
+                submitted["answer"] = submitted["answer"].replace("1 km", "0.1 km")
+                self.assertEqual(self.answer(ScriptedCompletion(submitted)).trace["reason"], "distance_owner_mismatch")
 
     def test_context_does_not_promote_legacy_language_flags_or_summary_percentages(self):
         complete = ScriptedCompletion(proposal(), {"accepted": True, "issues": []})

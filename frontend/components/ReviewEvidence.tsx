@@ -41,11 +41,12 @@ export type ReviewEvidenceHandle = {
   showReview: (evidenceId: string) => void;
 };
 
-function isOwnedOriginal(review: ReviewEvidenceRecord, facilityId: string) {
+function isDisplayableOriginal(review: ReviewEvidenceRecord, facilityId: string) {
   return review !== null && typeof review === "object"
     && review.place_id === facilityId
     && typeof review.evidence_id === "string" && review.evidence_id.length > 0
     && review.source_type === "verbatim_review" && review.is_verbatim === true
+    && review.presentation?.status !== "hidden"
     && typeof review.text === "string" && review.text.trim().length > 0;
 }
 
@@ -54,7 +55,7 @@ export function canLocateCitation(citation: ReviewCitation, facilityId: string, 
     && Number.isSafeInteger(citation.marker) && citation.marker > 0
     && citation.place_id === facilityId
     && typeof citation.original_excerpt === "string" && citation.original_excerpt.length > 0
-    && reviews.some(review => isOwnedOriginal(review, facilityId)
+    && reviews.some(review => isDisplayableOriginal(review, facilityId)
       && review.evidence_id === citation.evidence_id
       && review.text.includes(citation.original_excerpt)
       && (!citation.review_source_sha256 || citation.review_source_sha256 === review.review_source_sha256));
@@ -73,7 +74,7 @@ const ReviewEvidence = forwardRef<ReviewEvidenceHandle, {
   const [focusRequest, setFocusRequest] = useState(0);
   const reviewElements = useRef(new Map<string, HTMLElement>());
   const contentId = useId();
-  const visible = reviews.filter(review => isOwnedOriginal(review, facilityId)).map(review => {
+  const visible = reviews.filter(review => isDisplayableOriginal(review, facilityId)).map(review => {
     const presentation = review.presentation;
     const translatedText = presentation?.status === "translated"
       && presentation.language === language

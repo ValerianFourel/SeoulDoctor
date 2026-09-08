@@ -40,6 +40,7 @@ const reviews = [
   review(10, longOriginal, { status: 'translated', language: 'English', text: 'They explained everything slowly to my child.' }),
   review(11, 'I would visit again.'),
   { ...review(12, 'WRONG_FACILITY_REVIEW'), place_id: 'beta' },
+  review(13, 'SERVER_HIDDEN_REVIEW', { status: 'hidden', language: 'English' }),
 ];
 
 function facility(language = 'English') {
@@ -182,6 +183,8 @@ async function main() {
       await check(`${label} stale translation omitted`, page.getByText('STALE_TRANSLATION_SHOULD_NOT_APPEAR', { exact: true }).count().then(count => count === 0));
       await panel.getByRole('button', { name: 'Next', exact: true }).click();
       const longReview = panel.locator(`[data-evidence-id="${reviews[10].evidence_id}"]`);
+      await check(`${label} hidden reviews do not occupy a page slot`, panel.locator('article').count().then(count => count === 2));
+      await check(`${label} server-hidden review stays absent`, page.getByText('SERVER_HIDDEN_REVIEW', { exact: true }).count().then(count => count === 0));
       await longReview.getByText('Show original', { exact: true }).click();
       const preview = await longReview.locator('[data-original-review]').textContent();
       await check(`${label} long original exact preview`, preview.length < longOriginal.length && longOriginal.startsWith(preview));

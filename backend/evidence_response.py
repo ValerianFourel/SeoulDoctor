@@ -235,6 +235,9 @@ Use search_progress and available_next_actions to give a specific refinement. If
 retrieval timed out or failed temporarily, offer to retry the same search. If a required
 service is unavailable, explain the limited review comparison without promising a retry
 will fix it. A narrower area does not repair a failed service. Do not use the generic sentence "Part of the search did not finish."
+Mention unknowns only when they affect the patient's stated needs. Do not add an English-service,
+credentials, or treatment checklist when the patient did not ask about those matters. When nearby
+matches exist, suggest comparing a named clinic or narrowing the area; do not widen it by default.
 Put a matching [1], [2] marker directly after every patient-report claim in answer.
 Every citations entry must have its [marker] inside answer, and every marker must have
 a citations entry. For example: "A patient reported clear explanations [1]."
@@ -421,7 +424,8 @@ def _answer_context(question, state, cards, metadata, language):
     if cards:
         next_actions.append("ask about a particular clinic or requirement in its reviews")
     if not state.is_citywide_search:
-        next_actions.append("offer a different radius, with patient agreement, while preserving specialty")
+        direction = "narrower" if cards else "wider"
+        next_actions.append(f"offer a {direction} radius, with patient agreement, while preserving specialty")
     return {
         "question": question,
         "response_language": language,
@@ -516,7 +520,15 @@ def _validate_proposal(proposal, context):
                 allowed_numbers.add(float(match.group(1)))
             elif len(named) == 1:
                 actual = named[0]["distance_km"]
-                if actual is None or value not in {actual, *(round(actual, digits) for digits in (1, 2, 3))}:
+                upper_bound = re.search(r"(?:\bwithin|\bless than|\bunder|<)\s*$", prefix, re.I)
+                if actual is None:
+                    raise ValueError("distance_owner_mismatch")
+                if upper_bound:
+                    inclusive = upper_bound.group().strip().lower() == "within"
+                    valid = actual <= value if inclusive else actual < value
+                else:
+                    valid = value in {actual, *(round(actual, digits) for digits in (1, 2, 3))}
+                if not valid:
                     raise ValueError("distance_owner_mismatch")
             elif not named and re.search(r"radius|within|범위|이내|반경", sentence, re.I):
                 if value not in [context["active_state"]["max_distance_km"],
@@ -535,6 +547,23 @@ def _validate_proposal(proposal, context):
         if float(number) not in allowed_numbers:
             raise ValueError("unaccounted_answer_number")
     return sources
+
+
+def _answer_schema(context):
+    schema = _AnswerProposal.model_json_schema()
+    owners = [card["place_id"] for card in context["facilities"]]
+    evidence_ids = [source["evidence_id"] for source in context["evidence"]]
+    assessment = schema["$defs"]["_Assessment"]["properties"]
+    citation = schema["$defs"]["_Citation"]["properties"]
+    for properties in (assessment, citation):
+        properties["place_id"]["enum"] = owners
+    if evidence_ids:
+        assessment["evidence_ids"]["items"]["enum"] = evidence_ids
+        citation["evidence_id"]["enum"] = evidence_ids
+    else:
+        assessment["evidence_ids"]["maxItems"] = 0
+        schema["properties"]["citations"]["maxItems"] = 0
+    return schema
 
 
 def _completion_usage(completion):
@@ -629,17 +658,21 @@ def answer_search(
     text = ""
     if prepared and complete is not None:
         context = _answer_context(question, state, prepared, metadata, language)
+        model_context = {**context, "evidence": [
+            {key: value for key, value in source.items() if key != "review_source_sha256"}
+            for source in context["evidence"]
+        ]}
         trace["context_limited"] = context["context_limited"]
         try:
             for stage, instructions, payload, token_limit in (
-                ("synthesis", _ANSWER_INSTRUCTIONS, context, 3072),
+                ("synthesis", _ANSWER_INSTRUCTIONS, model_context, 3072),
                 ("verification", _VERIFICATION_INSTRUCTIONS, None, 1536),
             ):
                 remaining = deadline - monotonic()
                 if remaining < 1:
                     raise TimeoutError("answer_deadline_exhausted")
                 if stage == "verification":
-                    payload = {"search": context, "proposal": proposal.model_dump()}
+                    payload = {"search": model_context, "proposal": proposal.model_dump()}
                 started = monotonic()
                 call_trace = {"stage": stage, "max_completion_tokens": token_limit}
                 trace["calls"].append(call_trace)
@@ -650,7 +683,7 @@ def answer_search(
                             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                         ],
                         max_completion_tokens=token_limit,
-                        response_schema=(_AnswerProposal if stage == "synthesis" else _Verification).model_json_schema(),
+                        response_schema=_answer_schema(context) if stage == "synthesis" else _Verification.model_json_schema(),
                         timeout_seconds=min(45.0 if stage == "synthesis" else 30.0, remaining),
                     )
                 finally:

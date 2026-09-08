@@ -21,6 +21,22 @@ class SearchTurnDeltaTests(unittest.TestCase):
         delta = compile_turn_delta(message, proposal)
         return reduce_search_state(current, delta)
 
+    def test_canonical_station_name_does_not_replace_medical_purpose(self):
+        prior = State(visit_reason="foot issue", disease_terms=["foot issue"],
+                      specialty="정형외과", specialty_confidence=0.95)
+        for message in ("I need an orthopedic doctor near Jonggak", "종각 근처 정형외과 찾아주세요"):
+            with self.subTest(message=message):
+                current = self.apply(message, prior, location="종각역", visit_reason=message)
+                self.assertEqual(current.visit_reason, "foot issue")
+                self.assertIn("foot issue", current.disease_terms)
+
+    def test_provider_lookup_with_medical_purpose_preserves_that_purpose(self):
+        for message in ("doctor for pain in my foot", "doctor near Jonggak for ankle pain",
+                        "발이 아파서 종각 근처 정형외과 찾아주세요"):
+            with self.subTest(message=message):
+                current = self.apply(message, location="종각역", visit_reason=message)
+                self.assertEqual(current.visit_reason, message)
+
     def test_local_station_without_distance_resets_citywide_radius_to_5km(self):
         state = State(
             location=None,

@@ -453,7 +453,9 @@ def may_relax_distance_constraint(travel_confidence: float | None) -> bool:
 def _facility_request_only(text: str, location: Any) -> bool:
     remaining = text.casefold()
     if isinstance(location, str) and location:
-        remaining = remaining.replace(location.casefold(), " ")
+        for label in (location.casefold(), location.casefold().removesuffix("역").removesuffix(" station")):
+            if label:
+                remaining = remaining.replace(label, " ")
     providers = [alias for _, aliases in SPECIALTY_ALIASES for alias in aliases
                  if alias != "surgery"] + list(GENERIC_FACILITY_NOUNS) + ["specialist"]
     found = False
@@ -461,6 +463,11 @@ def _facility_request_only(text: str, location: Any) -> bool:
         pattern = rf"\b{re.escape(provider)}\b" if provider.isascii() else re.escape(provider)
         remaining, count = re.subn(pattern, " ", remaining)
         found = found or bool(count)
+    if found:
+        remaining = re.sub(
+            r"\b(?:near|next to|around|in|at)\s+[^,.!?;]+?(?=\s+(?:for|because|with|but|and|to treat)\b|[,.;!?]|$)",
+            " ", remaining,
+        )
     words = set(re.findall(r"[a-z가-힣]+", remaining))
     request_words = set("i me my need want find looking for a an the please doctor near next to around in recommend show can you am im some 의사 의원 병원 찾아주세요 찾아 줘 추천 해주세요 근처 에 에서 를 을".split())
     return found and words <= request_words
