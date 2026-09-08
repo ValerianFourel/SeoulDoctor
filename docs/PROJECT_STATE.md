@@ -1,5 +1,63 @@
 # SeoulDoc project state
 
+## NCS response polish ownership, 2026-09-08
+
+Owner: root response-polish session. Branch:
+`local/ncs-response-polish-20260908`, based on NCS
+`2b986b950c62bca1949c9bbfcc2fda2a55fbd8cd`. Isolated worktree:
+`/tmp/seouldoc-response-polish`. One implementation delegate will own
+`backend/evidence_response.py`, its focused tests, and response wiring in
+`backend/main.py`. Root owns this record and response verification artifacts.
+No other active task owns these files in this new worktree.
+
+The current user requests inference on both existing Spaces and a polished
+response that helps patients refine their request. Prior conversation
+`01a07940-c681-7910-8054-9f0d737d4123` requires main to remain separate from NCS
+and keeps review panels off main. The reported generic sentence comes from
+NCS's final response function, which overwrites generated text for every
+nonempty card set. Live baseline and design comparison are in progress.
+Existing main and NCS worktrees and their uncommitted changes are preserved.
+No deployment or hardware change has occurred in this task.
+
+Verified implementation is `55d477ed8faa493919a6b80e125b5a05c83b32b7`.
+Regression tests precede it in `e2273f7e`. Root reviewed the delegate's code.
+An independent read-only review and comment/suppression review found no issues.
+The response uses existing State and sanitized cards, identifies the closest
+displayed option using straight-line distance, and suggests a useful refinement.
+Incomplete, unresolved, and risk-related evidence remains qualified. Card order,
+evidence identities, original comments, and translation ownership are preserved.
+The retrieval path skips its discarded final model call. The frontend preserves
+decimal distances and server paragraph breaks, and has a clearer greeting.
+Additional owned files are `backend/tests/test_response_generation_boundary.py`,
+`frontend/components/ChatInterface.tsx`, and `planning/14-response-polish.md`.
+
+Current baseline inspection verified NCS source
+`4138eb056b80f4689fb0ef87244cf128c44280b2` on `t4-medium` and the original app
+at `8909ff673d2e1b5e7df97010f9e309f6a9dc4c7b` on `cpu-upgrade`. Both were public
+and running. Five sequential diagnostic API calls covered two Jonggak requests
+on each app and one NCS refinement to 1 km. A separate browser conversation
+reproduced the NCS introduction. The 1 km refinement preserved location and
+specialty and returned three cards within the limit. No new hardware was
+launched. Provider charges and exact model revisions were not exposed.
+
+Verification passed 35 focused/adjacent tests, 264 backend tests in 5.261 seconds,
+the frontend production build, and desktop/mobile browser replay at 1280x720
+and 390x844. The browser reply exactly matched the revised backend output,
+retained `0.9 km`, preserved card order, and had no horizontal overflow or
+JavaScript errors. Font-preload warnings remain unchanged. Sandbox backend
+testing stalled and was interrupted; the bounded host retry passed. The
+sandbox frontend build failed generically; its host retry passed.
+
+The local candidate replay preserves recorded search results and translations;
+it is not a deployed after-evaluation. Baseline recordings are under the root
+checkout's `.audit/response-polish-20260908-baseline/`, and replay outputs,
+screenshots, check logs, and the runnable replay script are under
+`.audit/response-polish-20260908-candidate/`. Dataset upload was unavailable
+because process credentials were absent. No environment file was read.
+`origin/ncs` was fetched and still matches the task base `2b986b95`.
+One next action is to review this isolated NCS change, then explicitly authorize
+deployment and rerun the same live conversation. Do not merge NCS into main.
+
 
 ## Verified simplification pass, 2026-09-06
 
