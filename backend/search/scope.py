@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 import json
 import re
@@ -22,7 +22,7 @@ from query_facets import (
 
 from .availability import has_tuesday_evening
 from .contracts import AreaRule, DistanceRule, EligibleScope, SearchRules
-from .rules import HARD_CONCEPT_ALIASES, SPECIALTY_IDS
+from .rules import HARD_CONCEPT_ALIASES, SPECIALTY_IDS, _rules_hash
 
 
 EARTH_RADIUS_KM = 6371.0
@@ -220,8 +220,55 @@ class ScopeSelection:
             raise ValueError("candidate dataframe contains facilities outside scope")
 
 
+@dataclass(frozen=True)
+class ScopeSearchResult:
+    scope: ScopeSelection
+    rules: SearchRules
+    attempted_radii_km: tuple[float, ...]
+
+
 class ScopeBuilder:
     """Apply every hard rule once over the full facility catalog."""
+
+    def build_with_expansion(
+        self,
+        facilities: pd.DataFrame,
+        rules: SearchRules,
+        *,
+        index_version: str,
+        allow_expansion: bool,
+    ) -> ScopeSearchResult:
+        scope = self.build(facilities, rules, index_version=index_version)
+        geography = rules.hard.geography
+        if not isinstance(geography, DistanceRule):
+            return ScopeSearchResult(scope, rules, ())
+        attempted = [geography.max_km]
+        if not allow_expansion or not rules.hard.specialty_ids or scope.facility_ids:
+            return ScopeSearchResult(scope, rules, tuple(attempted))
+        for radius in (1.0, 2.0, 5.0, 10.0, 25.0):
+            if radius <= geography.max_km:
+                continue
+            expanded = replace(
+                geography,
+                max_km=radius,
+                provenance=replace(
+                    geography.provenance,
+                    source="verified_context",
+                    source_span=None,
+                ),
+            )
+            hard = replace(rules.hard, geography=expanded)
+            rules = replace(
+                rules,
+                hard=hard,
+                provenance={**rules.provenance, "hard.geography": expanded.provenance},
+                rules_hash=_rules_hash(hard, rules.soft, rules.evidence),
+            )
+            scope = self.build(facilities, rules, index_version=index_version)
+            attempted.append(radius)
+            if scope.facility_ids:
+                break
+        return ScopeSearchResult(scope, rules, tuple(attempted))
 
     def build(
         self,
