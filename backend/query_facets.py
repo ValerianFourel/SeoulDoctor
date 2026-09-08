@@ -245,7 +245,7 @@ _REQUIRE = re.compile(
 )
 _WITHDRAW = re.compile(
     r"\b(?:don['’]?t|do not|no longer)\s+(?:require|need|mind|care)\b"
-    r"|\b(?:(?:not|isn['’]?t) (?:required|necessary|mandatory)|no longer (?:required|needed|important|matters)|drop|remove)\b"
+    r"|\b(?:(?:not|isn['’]?t) (?:required|necessary|mandatory)|no longer (?:required|needed|important|matters)|doesn['’]?t matter|drop|remove)\b"
     r"|필요\s*없|필수가\s*아니|상관없|더\s*이상.{0,12}중요하지", re.I,
 )
 _EXCLUSION = re.compile(
@@ -279,6 +279,20 @@ def is_withdrawal(clause: str) -> bool:
     if re.search(r"\b(?:don['’]?t|do not)\s+(?:remove|drop)\b|삭제하지|빼지", clause, re.I):
         return False
     return bool(_WITHDRAW.search(clause))
+
+
+def requests_citywide_search(query: str) -> bool:
+    """Require a geographic instruction before widening an existing local search."""
+    for clause in intent_clauses(query):
+        if is_inquiry(clause) or re.search(
+            r"\b(?:not|don['’]?t|do not|never|without)\b|말고|하지\s*마|않|아니", clause, re.I,
+        ):
+            continue
+        if clause.strip(" .!?;").casefold() in {"seoul", "seoul city", "서울", "서울시", "서울특별시"}:
+            return True
+        if re.search(r"\bcity[ -]?wide\b|\b(?:anywhere in|across|all|entire)\s+seoul\b|서울\s*(?:전역|전체)|서울시\s*전체", clause, re.I):
+            return True
+    return False
 
 
 def english_consultation_intent(query: str) -> str | None:
@@ -443,7 +457,9 @@ def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> D
     if specialties:
         result["specialty"] = specialties[0]
         result["specialty_confidence"] = 0.95
-    elif str(result.get("specialty") or "").strip().casefold() in GENERIC_FACILITY_NOUNS:
+    elif (parts := re.split(r"[,/|\s]+", str(result.get("specialty") or "").strip().casefold())) and all(
+        part in GENERIC_FACILITY_NOUNS for part in parts
+    ):
         result["specialty"] = None
     if not result.get("location") and places:
         result["location"] = places[0]
@@ -454,9 +470,9 @@ def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> D
         result["travel_label"] = None
     elif inferred_travel_label:
         result["travel_label"] = inferred_travel_label
-    elif not has_explicit_travel_preference(query):
+    else:
         result["travel_label"] = None
-    elif result.get("travel_label") not in DISTANCE_MAPPING:
+    if result.get("travel_label") == "Anywhere in Seoul" and not requests_citywide_search(query):
         result["travel_label"] = None
     result.setdefault("hard_keywords", [])
     result.setdefault("soft_keywords", [])

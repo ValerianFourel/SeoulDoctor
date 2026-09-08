@@ -122,6 +122,7 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertEqual(len(self.retrieval_calls), 4)
         self.assertIn("short wait", self.retrieval_calls[2]["query"].exact_terms)
         self.assertFalse(any("wait" in term or "대기" in term for term in self.retrieval_calls[3]["query"].exact_terms))
+        self.assertNotRegex(self.retrieval_calls[3]["query"].text, r"(?i)wait|대기")
         self.assertFalse(any("wait" in preference.concept_id for preference in self.retrieval_calls[3]["rules"].soft))
         self.assertEqual([call["query"].max_distance_km for call in self.retrieval_calls[1:]], [1, 1, 1])
 
@@ -130,7 +131,8 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.catalog.at[closest, "medical_info_parsed"] = {"English consultation": True}
         self._model(["PROVIDE_INFO", "CHANGE_CRITERIA", "CHANGE_CRITERIA"], [
             self._proposal(specialty="정형외과", specialty_confidence=0.95, location="Jonggak", distance_km=1, disease_terms=["wrist pain"]),
-            self._proposal(hard_keywords=["English-speaking"], soft_keywords=["direct"]),
+            self._proposal(hard_keywords=["English-speaking"], soft_keywords=["direct"],
+                           specialty="병원,의원", distance_km=5, travel_label="Moderate"),
             self._proposal(hard_keywords=["English-speaking"]),
         ])
         first = self._post("I need orthopedics within 1 km of Jonggak for wrist pain.")
@@ -139,6 +141,8 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertNotIn("direct", second["state"]["keywords"])
         self.assertTrue(second["state"]["inquiries"])
         self.assertIn("wrist pain", second["state"]["disease_terms"])
+        self.assertEqual(second["state"]["specialty"], "정형외과")
+        self.assertEqual(second["state"]["max_distance_km"], 1)
         self.assertFalse(self.retrieval_calls[1]["rules"].hard.required_attributes)
         third = self._post("English consultation is mandatory for me.", second["state"])
         self.assertIn("English-speaking", third["state"]["hard_keywords"])
@@ -180,8 +184,8 @@ class ChatStateReliabilityTests(unittest.TestCase):
         replacement = "Move to Ichon and replace short wait with thorough care."
         self._model(["PROVIDE_INFO", "CHANGE_CRITERIA"], [
             self._proposal(specialty="정형외과", specialty_confidence=0.95, location="Jonggak", distance_km=1,
-                           soft_keywords=["short wait"], comment_terms=["clear explanations", "short wait"]),
-            self._proposal(location="Ichon", term_operations=[{
+                           place_terms=["Jonggak"], soft_keywords=["short wait"], comment_terms=["clear explanations", "short wait"]),
+            self._proposal(location="Ichon", place_terms=["Ichon"], term_operations=[{
                 "action": "replace", "field": "comment_terms", "term": "short wait",
                 "replacement": "thorough", "source_span": replacement,
             }]),
@@ -193,6 +197,8 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertEqual(set(second["state"]["comment_terms"]), {"clear explanations", "thorough"})
         self.assertNotIn("short wait", second["state"]["keywords"])
         self.assertNotIn("short wait", self.retrieval_calls[1]["query"].exact_terms)
+        self.assertEqual(second["state"]["place_terms"], ["Ichon"])
+        self.assertNotIn("Jonggak", self.retrieval_calls[1]["query"].text)
 
     def test_negated_correction_still_passes_through_the_reducer(self):
         self._model(["PROVIDE_INFO", "CHANGE_CRITERIA"], [
@@ -229,6 +235,78 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertEqual(second["state"]["location"], "Ichon")
         self.assertEqual(second["state"]["max_distance_km"], 1)
         self.assertIn("clear explanations", second["state"]["comment_terms"])
+
+    def test_wait_indifference_is_not_a_citywide_geographic_instruction(self):
+        messages = ("Waiting doesn't matter to me.", "대기는 상관없어요.")
+        self._model(["PROVIDE_INFO", "CHANGE_CRITERIA"] * len(messages), [
+            proposal
+            for _ in messages
+            for proposal in (
+                self._proposal(specialty="정형외과", specialty_confidence=0.95,
+                               location="Ichon", distance_km=1, soft_keywords=["short wait"]),
+                self._proposal(location="Seoul", is_citywide_search=True, travel_label="Anywhere in Seoul"),
+            )
+        ])
+        for message in messages:
+            with self.subTest(message=message):
+                first = self._post("Find orthopedics within 1 km of Ichon with a short wait.")
+                second = self._post(message, first["state"])
+                self.assertEqual(second["state"]["location"], "Ichon")
+                self.assertEqual(second["state"]["max_distance_km"], 1)
+                self.assertFalse(second["state"]["is_citywide_search"])
+                self.assertNotIn("short wait", second["state"]["keywords"])
+                self.assertNotIn("short wait", second["state"]["comment_terms"])
+                self.assertNotIn("short wait", self.retrieval_calls[-1]["query"].exact_terms)
+                self.assertNotRegex(self.retrieval_calls[-1]["query"].text, r"(?i)wait|대기")
+                self.assertEqual(self.retrieval_calls[-1]["query"].max_distance_km, 1)
+
+    def test_geocoding_failure_retains_requested_scope_without_broadening(self):
+        self._model(["PROVIDE_INFO", "CHANGE_CRITERIA"], [
+            self._proposal(specialty="정형외과", specialty_confidence=0.95, location="Jonggak", distance_km=1),
+            self._proposal(location="Ichon"),
+        ])
+        first = self._post("Find orthopedics within 1 km of Jonggak.")
+        self.geocoder.side_effect = None
+        self.geocoder.return_value = None
+        with patch("utils.verify_and_standardize_address", return_value=None):
+            response = self.client.post("/chat", json={
+                "message": "Move the search to Ichon.", "current_state": first["state"],
+            })
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["results"], [])
+        self.assertEqual(body["state"]["location"], "Ichon")
+        self.assertEqual(body["state"]["max_distance_km"], 1)
+        self.assertFalse(body["state"]["is_citywide_search"])
+        self.assertIsNone(body["state"]["latitude"])
+        self.assertEqual(len(self.retrieval_calls), 1)
+
+    def test_confirmation_route_cannot_skip_a_compound_preference_refinement(self):
+        self._model(["PROVIDE_INFO", "CONFIRMATION"], [
+            self._proposal(specialty="정형외과", specialty_confidence=0.95,
+                           location="Ichon", distance_km=1, soft_keywords=["short wait"],
+                           comment_terms=["clear explanations"]),
+            self._proposal(),
+        ])
+        first = self._post("Find orthopedics within 1 km of Ichon with clear explanations and a short wait.")
+        second = self._post("Yes, some waiting is fine; keep Ichon within 1 km.", first["state"])
+        self.assertEqual(second["state"]["specialty"], "정형외과")
+        self.assertEqual(second["state"]["location"], "Ichon")
+        self.assertEqual(second["state"]["max_distance_km"], 1)
+        self.assertIn("clear explanations", second["state"]["comment_terms"])
+        self.assertNotIn("short wait", second["state"]["keywords"])
+        self.assertNotRegex(self.retrieval_calls[-1]["query"].text, r"(?i)wait|대기")
+
+    def test_explicit_new_search_resets_the_patient_context(self):
+        self._model(["PROVIDE_INFO", "NEW_SEARCH"], [
+            self._proposal(specialty="정형외과", specialty_confidence=0.95, location="Ichon",
+                           comment_terms=["clear explanations"]),
+        ])
+        first = self._post("Find orthopedics near Ichon with clear explanations.")
+        response = self.client.post("/chat", json={"message": "new search", "current_state": first["state"]})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["state"]["comment_terms"], [])
+        self.assertIsNone(response.json()["state"]["specialty"])
 
 
 if __name__ == "__main__":

@@ -38,6 +38,8 @@ class StateReliabilityTests(unittest.TestCase):
             "Some waiting is fine — that's not a dealbreaker for me. Kind treatment of children matters more.",
             "I don't mind waiting; I prefer kind treatment of children.",
             "Waiting time no longer matters to me.",
+            "Waiting doesn't matter to me.",
+            "대기는 상관없어요.",
             "I'm willing to wait if the doctor is kind with children.",
             "대기 시간이 좀 길어도 괜찮아요. 아이에게 친절한 곳이면 좋겠어요.",
             "짧은 대기는 더 이상 중요하지 않아요.",
@@ -86,6 +88,15 @@ class StateReliabilityTests(unittest.TestCase):
         self.assertEqual(moved.max_distance_km, 1)
         self.assertIsNone(moved.latitude)
 
+    def test_changed_anchor_replaces_its_place_projection(self):
+        state = State(location="Jonggak", place_terms=["Jonggak"],
+                      comment_terms=["clear explanations"])
+        moved = self.apply("Move to Ichon.", state, location="Ichon", place_terms=["Ichon"])
+        self.assertEqual(moved.place_terms, ["Ichon"])
+        self.assertEqual(moved.comment_terms, state.comment_terms)
+        citywide = self.apply("Search anywhere in Seoul.", moved)
+        self.assertNotIn("Ichon", citywide.place_terms)
+
     def test_search_request_with_question_mark_still_carries_preferences(self):
         result = self.apply("Could you search for clinics with clear explanations and restrained prescribing?")
         self.assertEqual(set(result.comment_terms), {"clear explanations", "no overprescribing"})
@@ -110,6 +121,18 @@ class StateReliabilityTests(unittest.TestCase):
         )
         self.assertIn("English-speaking", result.hard_keywords)
         self.assertTrue(result.inquiries)
+
+    def test_model_defaults_cannot_replace_untouched_specialty_or_radius(self):
+        state = State(specialty="정형외과", specialty_confidence=0.95, location="Ichon",
+                      max_distance_km=1, travel_confidence=1, travel_label="Nearby")
+        for specialty in ("병원,의원", "병원 / 의원", "hospital, clinic"):
+            with self.subTest(specialty=specialty):
+                result = self.apply("Can you confirm English consultations?", state,
+                                    specialty=specialty, distance_km=5, travel_label="Moderate")
+                self.assertEqual(result.specialty, "정형외과")
+                self.assertEqual(result.max_distance_km, 1)
+        unchanged = self.apply("Keep the same radius.", state, distance_km=5, travel_label="Moderate")
+        self.assertEqual(unchanged.max_distance_km, 1)
 
     def test_english_withdrawal_does_not_negate_explanation_preference(self):
         state = State(hard_keywords=["English-speaking"], comment_terms=["clear explanations"])
@@ -166,6 +189,28 @@ class StateReliabilityTests(unittest.TestCase):
         )
         self.assertEqual(result.comment_terms, ["clear explanations"])
         self.assertEqual(result.hard_keywords, ["parking"])
+
+    def test_citywide_state_needs_an_explicit_nonnegated_geographic_request(self):
+        state = State(location="Ichon", latitude=37.5224, longitude=126.9735,
+                      max_distance_km=1, keywords=["short wait"])
+        for message in ("Waiting doesn't matter to me.", "대기는 상관없어요.", "Don't search anywhere in Seoul."):
+            with self.subTest(message=message):
+                result = self.apply(message, state, location="Seoul", is_citywide_search=True, travel_label="Anywhere in Seoul")
+                self.assertEqual(result.location, "Ichon")
+                self.assertEqual(result.max_distance_km, 1)
+                self.assertFalse(result.is_citywide_search)
+        broadened = self.apply("Search anywhere in Seoul.", state)
+        self.assertTrue(broadened.is_citywide_search)
+        self.assertIsNone(broadened.location)
+
+    def test_explicit_resets_work_and_denials_do_not_reset(self):
+        state = State(location="Ichon", comment_terms=["clear explanations"])
+        for message in ("reset", "restart", "new search", "Please reset the search.", "새로 시작해 주세요.", "처음부터"):
+            with self.subTest(message=message):
+                self.assertEqual(self.apply(message, state).comment_terms, [])
+        for message in ("Don't reset the search.", "This isn't a new search.", "새로 시작하지 마세요.", "How can I reset the search?"):
+            with self.subTest(message=message):
+                self.assertEqual(self.apply(message, state, operation="replace_context").comment_terms, ["clear explanations"])
 
     def test_explicit_term_replacement_only_changes_named_preference(self):
         state = State(comment_terms=["short wait", "clear explanations"], keywords=["short wait"])

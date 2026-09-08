@@ -11,7 +11,7 @@ from config import DISTANCE_MAPPING
 from models import State
 from query_facets import (
     DISTANCE_PATTERN, augment_extracted_facets, english_consultation_intent,
-    intent_clauses, is_exclusion, is_inquiry, is_withdrawal, term_in_clause,
+    intent_clauses, is_exclusion, is_inquiry, is_withdrawal, requests_citywide_search, term_in_clause,
 )
 from review_presentation import response_language
 
@@ -32,7 +32,10 @@ _SEOUL_ALIASES = {
 _REPLACE_PATTERNS = (
     re.compile(r"\b(?:change|replace)\s+(?:the request|my request)\b", re.I),
     re.compile(r"\bstart\s+over\b", re.I),
+    re.compile(r"^(?:please\s+)?(?:reset|restart|new\s+search)[.!?\s]*$", re.I),
+    re.compile(r"\b(?:reset|restart|start)\s+(?:(?:the|my|this|a new)\s+)?(?:search|request|conversation)\b", re.I),
     re.compile(r"요청(?:을|를)?\s*(?:바꿀|바꿔|변경)"),
+    re.compile(r"새로\s*시작|처음부터\s*(?:(?:다시\s*)?(?:시작|검색)|(?:요)?[.!?\s]*$)"),
 )
 
 _REMOVAL_PATTERNS: Mapping[str, tuple[re.Pattern[str], ...]] = {
@@ -245,7 +248,7 @@ def _travel_label_for_distance(distance_km: float) -> str:
 
 def _detect_operation(message: str, proposal: Mapping[str, Any]) -> TurnOperation:
     for clause in intent_clauses(message):
-        if re.search(r"\b(?:don['’]?t|do not|never)\b|바꾸지|변경하지", clause, re.I):
+        if is_inquiry(clause) or re.search(r"\b(?:not|don['’]?t|do not|never|isn['’]?t)\b|바꾸지|변경하지|시작하지|말고", clause, re.I):
             continue
         if any(pattern.search(clause) for pattern in _REPLACE_PATTERNS):
             return "replace_context"
@@ -401,17 +404,11 @@ def compile_turn_delta(message: str, proposal: Mapping[str, Any] | None) -> Sear
     raw = dict(proposal or {})
     augmented = augment_extracted_facets(message, raw)
     distance_km = _explicit_distance_km(message)
-    if distance_km is None:
-        proposed_distance = _optional_float(raw.get("distance_km"))
-        if proposed_distance is not None and 0.0 < proposed_distance <= 100.0:
-            distance_km = proposed_distance
 
     location = _optional_text(augmented.get("location"))
     normalized_location = _normalize(location) if location else None
-    proposed_citywide = raw.get("is_citywide_search")
-    citywide = proposed_citywide if isinstance(proposed_citywide, bool) else None
+    citywide = True if requests_citywide_search(message) else None
     if normalized_location in _SEOUL_ALIASES:
-        citywide = True
         location = None
     elif location is not None:
         citywide = False
@@ -526,6 +523,7 @@ def reduce_search_state(
         state.location is None or _normalize(delta.location) != _normalize(state.location)
     )
     if delta.citywide is True:
+        state.place_terms = []
         state.location = None
         state.latitude = None
         state.longitude = None
@@ -538,6 +536,8 @@ def reduce_search_state(
         state.travel_label = "Anywhere in Seoul"
         state.travel_confidence = 1.0
     elif delta.location is not None:
+        if location_changed:
+            state.place_terms = []
         state.location = delta.location
         state.is_citywide_search = False
         for field in ("latitude", "longitude", "address_korean", "district", "dong"):
