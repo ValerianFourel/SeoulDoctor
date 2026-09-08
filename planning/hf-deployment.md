@@ -1,5 +1,35 @@
 # Combined ncs GPU deployment
 
+## NCS reliability publication checkpoint, 2026-09-08
+
+The reliability implementation is committed at
+`b7ed376679c530243eda41b42f420964090f429f` on isolated fix branch
+`local/ncs-answer-reliability-20260908`, based on current `origin/ncs`
+`9036fbc4f00888fe4e9d746b69b419272408aebe`. Local checks passed: 360 backend
+tests, 36 required evaluator tests, frontend production build and 58/58 desktop
+and mobile browser assertions. Browser/API checks use synthetic fixtures;
+unchanged live replay and adaptive evaluation are still pending.
+
+The authorized publication uses an explicit `HEAD:refs/heads/ncs` push to
+`github.com/ValerianFourel/SeoulDoctor.git`. The accompanying `[deploy ncs]`
+commit requests the existing workflow, whose only application target is
+`ValerianFourel/SeoulDoctor-ncs-retriever`. It uploads the committed revision
+with the Space parent-revision guard and `HF_TOKEN` from the workflow process.
+No deployment configuration or hardware change is included.
+
+At the preflight, the NCS Space source/runtime remained
+`b13d2bdb6eb12153a23453382244630e3746f240`, source marker
+`d7587caeb0539ac0a2e282982f95f16e96fb137b`, running on its existing T4 Medium.
+The original Space remained
+`8909ff673d2e1b5e7df97010f9e309f6a9dc4c7b`. No new deployment is claimed by
+this checkpoint. Inspect the resulting Actions run and exact Space revision.
+
+Local `HF_TOKEN` and `OPENROUTER_API_KEY` process variables are absent. The
+historical dotenv exception below is superseded by the current user instruction:
+approved process variables only. If the workflow secret is absent, deployment
+and private checkpoint upload remain blocked until that credential is supplied.
+No expired evaluation budget or historical temporary-resource allowance renews.
+
 ## Current deployment checkpoint, 2026-09-08
 
 The user approved process-only loading of the local `HF_TOKEN`. Direct upload

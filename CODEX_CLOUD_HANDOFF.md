@@ -1,5 +1,41 @@
 # Codex Cloud handoff: SeoulDoc live evaluation
 
+## Current NCS implementation handoff, 2026-09-08
+
+For this task, the latest user instruction overrides the historical branch,
+original-Space target and credential exceptions below. Integration is `ncs`;
+the only deployment target is `ValerianFourel/SeoulDoctor-ncs-retriever`.
+Never modify application `main` or deploy `ValerianFourel/SeoulDoctor`.
+The separate NCS Space repository may use its own `main` deployment branch.
+
+Read the latest `docs/PROJECT_STATE.md` and `planning/hf-deployment.md` updates
+before resuming. The implementation checkpoint is `b7ed376679c530243eda41b42f420964090f429f` in
+`/tmp/seouldoc-answer-reliability`, branch
+`local/ncs-answer-reliability-20260908`. Local verification passed; no fresh live
+patient gate is claimed. The previous failed adaptive records remain intact.
+
+Use `HF_TOKEN` and `OPENROUTER_API_KEY` only from approved process environment
+variables. Both were absent in this task; no `.env` was read. The existing NCS
+Actions workflow can supply its repository `HF_TOKEN` secret to its process if
+configured, but publication does not prove that secret or deployment succeeded.
+
+The expired adaptive budget does not renew. A proposed fresh limit of 31 actor
+calls, USD 2 actor charges, 60 application calls and 60 minutes remains pending
+user authorization; app model costs are separate and unmeasured. No new paid
+hardware or storage is authorized. Reuse existing resources only after checking
+their current state. Stop on a failed targeted gate unless a fresh exception
+explicitly permits diagnostic continuation.
+
+Prepared offline tools and frozen settings are documented in
+`/tmp/seouldoc-reliability-implementation/EVAL_PREFLIGHT.md`; the v3 runner is in
+`/tmp/seouldoc-adaptive-tools-v3`. It is not enabled for live dispatch. Pin the
+actual application/runtime revision and fresh absolute deadline before use.
+Keep original-review visibility, actor completion, patient success and exact
+target-evidence success as separate gates. The frozen mean >=4, every dimension
+>=3 and hard gates remain unchanged. Upload authorized redacted checkpoints to
+`ValerianFourel/seouldoc-eval-handoff` only when its process credential is
+available; keep uploads off the app response path.
+
 ## Goal
 
 Resume the checkpointed bilingual SeoulDoc release evaluation from a Codex

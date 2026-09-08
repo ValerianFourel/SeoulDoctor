@@ -1,5 +1,71 @@
 # SeoulDoc project state
 
+## NCS answer reliability implemented locally, 2026-09-08
+
+Root integrated the state, evidence, answer and UI repairs in
+`/tmp/seouldoc-answer-reliability`, branch
+`local/ncs-answer-reliability-20260908`. Application checkpoint:
+`b7ed376679c530243eda41b42f420964090f429f`. The base is current `origin/ncs`
+`9036fbc4f00888fe4e9d746b69b419272408aebe`; fetched `origin/main` remains
+`e6b40d5782e04abe97383d459c4aff6eec40a287`. The unrelated root checkout and its
+dirty files were preserved. This update supersedes the implementation-next
+action immediately below; historical evaluations retain their original status.
+
+Root owned shared orchestration, answer composition, integration and records.
+Delegates owned state/facet code, evidence retrieval contracts and review UI in
+separate worktrees. File ownership was coordinated before shared model edits.
+The delegates then reviewed the other owners' integrated paths read-only.
+
+Normal searches now use one state transition and one answer-composition path.
+Accepted answers survive serialization and display. Original reviews are
+prepared before generation, validated for ownership and rendered independently;
+translations supplement the original. Generation/verification/translation
+failure retains correctly owned cards and originals. Long text, three-then-seven
+pagination and later-page citation navigation remain accessible on desktop and
+mobile. The bounded model context is separate from the review collection.
+
+Location updates preserve unrelated preferences. Explicit withdrawals leave
+active state and ranking inputs. Routine checkups, consultation-language
+questions, mandatory requirements and response language are distinct.
+Confirmation and substantive-reset requests use the same reducer. Failed
+geocoding preserves unresolved scope instead of silently broadening it.
+Source-type vocabulary, multi-role evidence, execution status and final-card
+coverage are corrected. Unverified English flags and stored summary percentages
+no longer support answer claims. A separate semantic verifier checks meaning;
+its decisions remain model output, not a proof of faithfulness.
+
+Local verification: `360` backend tests passed; 36 required
+evaluator tests passed; the frontend production build passed; 58/58 integrated
+Chromium assertions passed at desktop and mobile widths. API regressions use
+synthetic provider/retrieval boundaries and actual FastAPI requests. Browser
+checks use synthetic intercepted API responses. Neither substitutes for a live
+patient gate. Retrieval service code did not change, so its suite was not rerun.
+
+The local decision trail, test logs, screenshots and independent reviews are in
+`/tmp/seouldoc-reliability-implementation/`; its `REPORT.md` separates reproduced
+defects from historical inferences and unmeasured behavior. No private transcript,
+index, cache or generated result bundle is committed. The earlier adaptive run
+directories remain intact, and their targeted gate remains failed.
+
+The offline v3 evaluation tools are in `/tmp/seouldoc-adaptive-tools-v3` (26 tests
+and six measurement self-checks passed). They prepare unchanged sequential replay
+with three repeats, then separately gated Qwen patients and supplemental cases.
+No fresh live replay, adaptive run, latency comparison or cost result is claimed.
+`HF_TOKEN` and `OPENROUTER_API_KEY` are absent from the approved process environment;
+no credential file was read. A fresh evaluation cap is pending authorization.
+No paid infrastructure, storage or embeddings were created.
+
+At the public preflight, NCS source/runtime remained
+`b13d2bdb6eb12153a23453382244630e3746f240`, with source marker
+`d7587caeb0539ac0a2e282982f95f16e96fb137b`, on its existing T4 Medium.
+The original Space remained
+`8909ff673d2e1b5e7df97010f9e309f6a9dc4c7b`. Publication/deployment attempts and
+the final observed remote state belong in `planning/hf-deployment.md`.
+
+Next action: publish the checked NCS commit and inspect its existing deployment
+workflow, then verify the exact runtime before running any newly authorized live
+gate. Private checkpoint upload needs the approved `HF_TOKEN` environment value.
+
 ## NCS answer reliability implementation ownership, 2026-09-08
 
 Root owns integration on `local/ncs-answer-reliability-20260908` in
