@@ -308,6 +308,21 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertEqual(response.json()["state"]["comment_terms"], [])
         self.assertIsNone(response.json()["state"]["specialty"])
 
+    def test_substantive_reset_applies_the_attached_new_search(self):
+        self._model(["PROVIDE_INFO", "NEW_SEARCH"], [
+            self._proposal(specialty="정형외과", specialty_confidence=0.95, location="Jonggak",
+                           comment_terms=["clear explanations"]),
+            self._proposal(specialty="정형외과", specialty_confidence=0.95, location="Ichon", distance_km=1),
+        ])
+        first = self._post("Find orthopedics near Jonggak with clear explanations.")
+        second = self._post("Start over. Find orthopedics within 1 km of Ichon.", first["state"])
+        self.assertEqual(second["state"]["comment_terms"], [])
+        self.assertEqual(second["state"]["specialty"], "정형외과")
+        self.assertEqual(second["state"]["location"], "Ichon")
+        self.assertEqual(second["state"]["max_distance_km"], 1)
+        self.assertNotIn("far", [card["place_id"] for card in second["results"]])
+        self.assertNotIn("clear explanations", self.retrieval_calls[-1]["query"].exact_terms)
+
 
 if __name__ == "__main__":
     unittest.main()
