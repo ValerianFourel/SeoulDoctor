@@ -1432,3 +1432,24 @@ opened and closed correctly, and one untranslated original remained visible.
 The temporary replay was removed after verification. Source application commit
 is 5a9167e6e2c47452035915234c8946265cffb9fd. No website/main deployment ran.
 Next action: refresh the NCS Space and start a new search.
+
+## Search correction planning, 2026-09-09
+
+Root owns docs/NCS_SEARCH_FIX_PLAN_2026-09-09.md and this coordination entry.
+The user reports wrong Myeongdong location, mixed specialties, missing reviews,
+missing translations and unhelpful incomplete-search language. Read-only code
+inspection and an independent agent identified concrete interpretation, empty
+constraint evidence, radius-loop and shared-deadline paths. No application code
+changed, no API scenarios ran, and no push occurred during planning.
+Next action: reproduce the exact two-turn request through the API and freeze
+scenario expectations before implementation.
+
+## Search repair implementation, 2026-09-09
+
+Root applies the approved search plan. Root owns main.py, state/rules/scope/
+turn-delta integration, evaluation tools and coordination docs. Location worker
+owns location.py and location regression tests. Evidence worker owns
+search/evidence_retrieval.py and evidence retrieval tests. Answer worker owns
+evidence_response.py, review_presentation.py and their focused tests. Each uses
+a separate worktree. No push before fixed API cases, adaptive scenarios, and
+independent review. Existing NCS resources only; user authorizes more time.
