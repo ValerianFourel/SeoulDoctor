@@ -651,3 +651,14 @@ actual API routing instead. Local setup examples use the renamed local override.
 Final local validation passed: 17 routing tests, 218 backend tests, production
 build, and a scan of every generated JavaScript chunk proving no onrender.com
 string, even with the legacy Vercel environment value supplied to the build.
+
+Final live verification, 2026-09-09: Vercel Production successfully deployed
+`0e4a4ce8ab0cd56a3e78e993df983c0e1035ff43`. Fresh HTML and every directly
+loaded JavaScript bundle on https://www.seouldoc.io were checked: both HF
+API domains are present and no onrender.com endpoint remains. Primary chat,
+browser-simulated primary failure with real fallback, identical request state,
+and clinic-card rendering were verified during this routing release.
+No token was used or embedded. No infrastructure was provisioned or removed.
+The temporary test-browser outage simulation and local dependency symlink
+were removed. Existing retrieval degradation remains separate from routing.
+Next action: use the live website; retrieval readiness remains a separate task.
