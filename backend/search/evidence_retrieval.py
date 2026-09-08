@@ -687,12 +687,20 @@ class ConstraintEvidenceRetriever:
                         text=query,
                     ))
                 lexical_started = perf_counter()
-                hits = scoped_index.search_evidence_for_facilities(
-                    query,
-                    facility_ids=tuple(facility_ids),
-                    limit_per_facility=limit,
-                    source_types=constraint.source_types,
-                )
+                source_limits = ((constraint.source_types, limit),)
+                if "verbatim_review" in constraint.source_types and len(constraint.source_types) > 1:
+                    review_limit = min(limit, max(2, (limit + 1) // 2))
+                    other_types = tuple(source for source in constraint.source_types if source != "verbatim_review")
+                    source_limits = ((("verbatim_review",), review_limit), (other_types, limit - review_limit))
+                hits = []
+                for source_types, source_limit in source_limits:
+                    if source_limit:
+                        hits.extend(scoped_index.search_evidence_for_facilities(
+                            query,
+                            facility_ids=tuple(facility_ids),
+                            limit_per_facility=source_limit,
+                            source_types=source_types,
+                        ))
                 logger.info(
                     "Evidence recall phase=lexical constraint=%s language=%s "
                     "facilities=%d hits=%d elapsed_ms=%.1f",

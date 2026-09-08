@@ -5,8 +5,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.tests.test_evidence_retrieval import hit
-from search.evidence_retrieval import ScoredEvidence, select_evidence_groups
+from backend.tests.test_evidence_retrieval import hit, rules
+from search.evidence_retrieval import ConstraintEvidenceRetriever, ScoredEvidence, select_evidence_groups
 
 
 def scored(identity, ordinal, *, source_type="verbatim_review", verbatim=True, role="disease"):
@@ -40,6 +40,36 @@ class OriginalReviewSelectionTests(unittest.TestCase):
         groups = select_evidence_groups(("alpha",), values, (), limit=3)["alpha"]
         self.assertEqual(groups.presented, ())
         self.assertEqual(len(groups.supporting), 2)
+
+    def test_mixed_source_recall_reserves_originals_before_candidate_selection(self):
+        facts = tuple(scored(f"fact-{index}", index, source_type="medical_info", verbatim=False).hit
+                      for index in range(1, 8))
+        reviews = (scored("review-positive", 8).hit, scored("review-negative", 9).hit)
+
+        class FactHeavyIndex:
+            def __init__(self):
+                self.calls = []
+
+            def search_evidence_for_facilities(self, query, *, facility_ids,
+                                               limit_per_facility, source_types):
+                self.calls.append((source_types, limit_per_facility))
+                values = reviews if source_types == ("verbatim_review",) else facts
+                return values[:limit_per_facility]
+
+        original_rules = rules()
+        requirement = replace(original_rules.evidence[0], terms_en=("ankle",), terms_ko=(),
+                              source_types=frozenset({"medical_info", "verbatim_review"}))
+        index = FactHeavyIndex()
+        result = ConstraintEvidenceRetriever().collect(
+            scoped_index=index, rules=replace(original_rules, evidence=(requirement,)),
+            shortlisted_facility_ids=("alpha",), displayed_facility_ids=("alpha",),
+        )
+        self.assertEqual({item.hit.evidence_id for item in result.by_facility["alpha"].presented},
+                         {"review-positive", "review-negative"})
+        self.assertTrue(any(item.hit.source_type == "medical_info" for item in result.evidence))
+        self.assertEqual({types for types, _ in index.calls},
+                         {("verbatim_review",), ("medical_info",)})
+        self.assertLessEqual(sum(limit for _, limit in index.calls), 5)
 
 
 if __name__ == "__main__":
