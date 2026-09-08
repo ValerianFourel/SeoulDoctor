@@ -65,7 +65,7 @@ _NUMBER_WORDS = {
         "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
     ))
 }
-_NUMBER_WORDS.update({"a": 1, "an": 1, "single": 1})
+_NUMBER_WORDS.update({"a": 1, "an": 1, "single": 1, "첫": 1})
 for tens, english, korean in (
     (20, "twenty", "스물"), (30, "thirty", "서른"), (40, "forty", "마흔"),
     (50, "fifty", "쉰"), (60, "sixty", "예순"), (70, "seventy", "일흔"),
@@ -89,7 +89,7 @@ for tens, prefix in enumerate(("", "십", "이십", "삼십", "사십", "오십"
             _NUMBER_WORDS[prefix + word] = tens * 10 + units
 _TIME_NUMBER_PATTERN = re.compile(
     r"(?<![A-Za-z가-힣])(" + "|".join(re.escape(word) for word in sorted(_NUMBER_WORDS, key=len, reverse=True))
-    + r")\s*(?=(?:hours?|minutes?|days?|weeks?|months?|years?|people|persons?|tests?|sessions?|visits?|times?)\b|시간|분|일|주|개월|달|년|명|회|번|개|천|만|원)",
+    + r")(?P<spacing>\s*)(?=(?:hours?|minutes?|days?|weeks?|months?|years?|people|persons?|tests?|sessions?|visits?|times?)\b|시간|분|일|주|개월|달|년|명|회|번|번째|개|천|만|원)",
     re.IGNORECASE,
 )
 
@@ -100,6 +100,20 @@ _CARDINAL_WORD_PATTERN = re.compile(
     + r")\b|(?<![가-힣])(하나|둘|셋|넷)(?![가-힣])",
     re.IGNORECASE,
 )
+
+_ORDINAL_WORDS = {word: number for number, word in enumerate((
+    "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth",
+    "ninth", "tenth", "eleventh", "twelfth",
+), start=1)}
+_ORDINAL_PATTERN = re.compile(
+    r"\b(" + "|".join(_ORDINAL_WORDS) + r")\b(?=[ -]+(?:opinions?|visits?|appointments?|"
+    r"sessions?|treatments?|rounds?|floors?|times?|days?|weeks?|months?|years?)\b)", re.I,
+)
+_VISIT_COUNT_PATTERN = re.compile(
+    r"(?:병원|의원|클리닉|치과)\s*(?P<korean>\d+)\s*번"
+    r"|\b(?P<english>\d+|a|single|the)\s+(?:hospital|clinic|doctor(?:['’]s)?)\s+visits?\b"
+    r"|(?P<implicit>\b(?:to\s+go|going)\s+to\s+(?:the|a)\s+(?:hospital|clinic)\b)", re.I,
+)
 _WON_PATTERN = re.compile(
     r"(?P<value>\d+(?:\.\d+)?)\s*(?P<scale>천|만)?\s*(?:원|won\b|KRW\b)",
     re.IGNORECASE,
@@ -107,22 +121,40 @@ _WON_PATTERN = re.compile(
 
 
 def _numbers(text):
-    normalized = _TIME_NUMBER_PATTERN.sub(
-        lambda match: str(_NUMBER_WORDS[match.group(1).lower()]) + " ", text,
-    )
+    def counted_number(match):
+        word = match.group(1).lower()
+        if word in "일이삼사오육칠팔구" and not match["spacing"] and text[match.end():].startswith("분"):
+            return match.group()
+        return str(_NUMBER_WORDS[word]) + " "
+    normalized = _TIME_NUMBER_PATTERN.sub(counted_number, text)
+    normalized = _ORDINAL_PATTERN.sub(lambda match: str(_ORDINAL_WORDS[match.group(1).lower()]), normalized)
     normalized = _CARDINAL_WORD_PATTERN.sub(
         lambda match: str(_NUMBER_WORDS[(match.group(1) or match.group(2)).lower()]), normalized,
     )
     normalized = re.sub(r"(?<!\d)\d{1,3}(?:,\d{3})+(?!\d)",
                         lambda match: match.group().replace(",", ""), normalized)
     normalized = re.sub(r"\bper (session|visit|treatment)\b", r"1 \1", normalized, flags=re.IGNORECASE)
+    visit_counts = []
+    def take_visit_count(match):
+        if match["implicit"]:
+            sentence = (re.split(r"[.!?]", normalized[:match.start()])[-1]
+                        + re.split(r"[.!?]", normalized[match.end():])[0])
+            if not re.search(r"\b\d+\s+(?:hours?|minutes?)\b", sentence, re.I):
+                return match.group()
+            value = 1
+        else:
+            count = match["korean"] or match["english"]
+            value = int(count) if count.isdigit() else 1
+        visit_counts.append(f"VISIT:{value}")
+        return " "
+    normalized = _VISIT_COUNT_PATTERN.sub(take_visit_count, normalized)
     amounts = []
     def take_amount(match):
         amount = Decimal(match["value"]) * {None: 1, "천": 1000, "만": 10000}[match["scale"]]
         amounts.append("KRW:" + format(amount.normalize(), "f"))
         return " "
     normalized = _WON_PATTERN.sub(take_amount, normalized)
-    return [*re.findall(r"\d+(?:[.,]\d+)*", normalized), *sorted(amounts)]
+    return [*re.findall(r"\d+(?:[.,]\d+)*", normalized), *sorted(amounts), *sorted(visit_counts)]
 
 
 OPENROUTER_TRANSLATION_URL = "https://openrouter.ai/api/v1/chat/completions"

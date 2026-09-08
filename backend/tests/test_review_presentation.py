@@ -223,6 +223,55 @@ class TranslationTests(unittest.TestCase):
                 self.assertEqual(items[0]["presentation"]["status"], "unavailable")
                 self.assertEqual(items[0]["text"], source)
 
+    def test_ordinary_korean_words_are_not_misread_as_nine_minutes(self):
+        source = "치료를 구분해서 설명했고 구분도 명확했어요."
+        items, _ = self.prepare([source], ["They explained the treatments separately and the distinction was clear."])
+        self.assertEqual(items[0]["presentation"]["status"], "translated")
+        count, _ = self.prepare(["구 분 기다렸어요."], ["I waited nine minutes."])
+        self.assertEqual(count[0]["presentation"]["status"], "translated")
+        altered, _ = self.prepare(["구 분 기다렸어요."], ["I waited ten minutes."])
+        self.assertEqual(altered[0]["presentation"]["status"], "unavailable")
+
+    def test_ordinal_opinions_and_visits_keep_their_number(self):
+        for source, translation in (("2차 의견을 들었어요.", "I got a second opinion."),
+                                    ("첫 번째 방문이었어요.", "It was my first visit."),
+                                    ("1초 기다렸어요.", "I waited one second.")):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+        altered, _ = self.prepare(["2차 의견을 들었어요."], ["I got a third opinion."])
+        self.assertEqual(altered[0]["presentation"]["status"], "unavailable")
+
+    def test_hospital_visit_count_can_follow_its_duration_in_translation(self):
+        source = "병원 한 번 가는데 2시간 걸렸어요."
+        for translation in ("Two hours just to go to the hospital.",
+                            "Going to the hospital took two hours.",
+                            "A hospital visit took two hours."):
+            with self.subTest(translation=translation):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+                self.assertEqual(items[0]["text"], source)
+        for translation in ("Three hours just to go to the hospital.",
+                            "Two hours for two hospital visits."):
+            with self.subTest(translation=translation):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+        changed, _ = self.prepare(["병원 두 번 가는데 2시간 걸렸어요."], ["Two hours just to go to the hospital."])
+        self.assertEqual(changed[0]["presentation"]["status"], "unavailable")
+
+    def test_each_wait_and_treatment_duration_survives_visit_word_order(self):
+        source = "30분 기다리라더니 한시간 넘게 걸렸고 10분 치료가 40분이 되어 두시간 뒤 나왔어요. 병원 한 번 가는데 2시간이네요."
+        translation = ("They said 30 minutes, but it took over an hour. The 10 minute treatment took 40 minutes "
+                       "and I left two hours later. Two hours just to go to the hospital.")
+        items, _ = self.prepare([source], [translation])
+        self.assertEqual(items[0]["presentation"]["status"], "translated")
+        for old, new in (("30 minutes", "20 minutes"), ("an hour", "three hours"),
+                         ("10 minute", "20 minute"), ("40 minutes", "50 minutes"),
+                         ("two hours later", "three hours later")):
+            with self.subTest(old=old):
+                changed, _ = self.prepare([source], [translation.replace(old, new)])
+                self.assertEqual(changed[0]["presentation"]["status"], "unavailable")
+
     def test_provider_elapsed_time_is_retained_on_success_and_failure(self):
         from unittest.mock import patch
         import requests
