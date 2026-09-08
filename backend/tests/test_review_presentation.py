@@ -269,16 +269,18 @@ class TranslationTests(unittest.TestCase):
 
 
 class OpenRouterTranslationTests(unittest.TestCase):
-    def prepare(self, originals, entries, *, finish_reason="stop", key="fixture-key", error=None, language="English"):
+    def prepare(self, originals, entries, *, finish_reason="stop", key="fixture-key", error=None, language="English", response_overrides=None):
         import json
         from unittest.mock import AsyncMock, patch
         from review_presentation import prepare_review_presentations
         cards = [{"place_id": f"clinic-{index}", "retrieval_evidence": [
             {**review(text, f"review:{index}"), "place_id": f"clinic-{index}"}]}
             for index, text in enumerate(originals)]
-        response = {"choices": [{"finish_reason": finish_reason, "message": {
+        response = {"id": "gen-fixture", "model": "openai/gpt-4.1", "provider": "OpenAI",
+                    "choices": [{"finish_reason": finish_reason, "message": {
             "content": json.dumps({"translations": entries})}}],
             "usage": {"prompt_tokens": 100, "completion_tokens": 30, "cost": 0.00044}}
+        response.update(response_overrides or {})
         with patch("review_presentation._request_openrouter", new_callable=AsyncMock) as request, patch("review_presentation.requests.post") as google:
             request.return_value = response
             request.side_effect = error
@@ -295,6 +297,9 @@ class OpenRouterTranslationTests(unittest.TestCase):
         ])
         self.assertEqual(trace["translated"], 2)
         self.assertEqual(trace["usage"]["cost"], 0.00044)
+        self.assertEqual(trace["actual_model"], "openai/gpt-4.1")
+        self.assertEqual(trace["actual_provider"], "OpenAI")
+        self.assertEqual(trace["completion_id"], "gen-fixture")
         for index, translation in enumerate(("The doctor is kind.", "The receptionist is unkind.")):
             item = cards[index]["retrieval_evidence"][0]
             self.assertEqual(item["presentation"]["text"], translation)
@@ -308,6 +313,28 @@ class OpenRouterTranslationTests(unittest.TestCase):
         self.assertEqual(payload["max_tokens"], 4096)
         self.assertEqual(json.loads(payload["messages"][1]["content"])["reviews"],
                          [{"index": index, "text": text} for index, text in enumerate(originals)])
+
+    def test_substituted_provider_or_missing_identity_cannot_supply_translations(self):
+        for overrides in ({"model": "openai/gpt-4.1-mini"}, {"provider": "Azure"},
+                          {"model": None}, {"provider": None}, {"id": ""}, {"id": True}):
+            with self.subTest(overrides=overrides):
+                cards, trace, _ = self.prepare(["친절한 의사"], [{"index": 0, "text": "Kind doctor"}],
+                                                response_overrides=overrides)
+                self.assertEqual(trace["reason"], "invalid_response")
+                self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["status"], "unavailable")
+                self.assertEqual(cards[0]["retrieval_evidence"][0]["text"], "친절한 의사")
+                self.assertNotIn("completion_id", trace)
+
+    def test_invalid_usage_never_enters_private_json_trace(self):
+        import json
+        for value in (True, -1, -0.01, float("nan"), float("inf"), float("-inf"), "0.01", None):
+            with self.subTest(value=value):
+                cards, trace, _ = self.prepare(["친절한 의사"], [{"index": 0, "text": "Kind doctor"}],
+                                                response_overrides={"usage": {"cost": value}})
+                self.assertEqual(trace["reason"], "invalid_response")
+                self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["status"], "unavailable")
+                self.assertNotIn("usage", trace)
+                json.dumps(trace, allow_nan=False)
 
     def test_invalid_indices_and_incomplete_generation_preserve_all_originals(self):
         originals = ["친절한 의사", "불친절한 접수 직원"]

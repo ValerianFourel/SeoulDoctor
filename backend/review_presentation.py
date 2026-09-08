@@ -5,6 +5,7 @@ from decimal import Decimal
 from html import unescape
 from itertools import zip_longest
 import json
+from math import isfinite
 import os
 import re
 from time import monotonic
@@ -183,6 +184,13 @@ def _openrouter_translations(originals, language, key, model):
         }},
     }
     payload = asyncio.run(_request_openrouter(request, key))
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_translation_response")
+    if payload.get("model") != model or payload.get("provider") != "OpenAI":
+        raise ValueError("translation_provider_mismatch")
+    completion_id = payload.get("id")
+    if not isinstance(completion_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", completion_id):
+        raise ValueError("invalid_translation_completion_id")
     if payload["choices"][0]["finish_reason"] != "stop":
         raise ValueError("incomplete_translation")
     content = json.loads(payload["choices"][0]["message"]["content"])
@@ -199,9 +207,20 @@ def _openrouter_translations(originals, language, key, model):
             raise ValueError("invalid_translation_ownership")
         translated[item["index"]] = {"translatedText": item["text"]}
     usage = payload.get("usage", {})
+    if not isinstance(usage, dict):
+        raise ValueError("invalid_translation_usage")
+    validated_usage = {}
+    for field in ("prompt_tokens", "completion_tokens", "total_tokens", "cost"):
+        if field not in usage:
+            continue
+        value = usage[field]
+        if not ((type(value) is int and value >= 0)
+                or (type(value) is float and isfinite(value) and value >= 0)):
+            raise ValueError("invalid_translation_usage")
+        validated_usage[field] = value
     return [translated[index] for index in range(len(originals))], {
-        field: usage[field] for field in ("prompt_tokens", "completion_tokens", "total_tokens", "cost")
-        if isinstance(usage, dict) and isinstance(usage.get(field), (int, float))
+        "actual_model": payload["model"], "actual_provider": payload["provider"],
+        "completion_id": completion_id, "usage": validated_usage,
     }
 
 
@@ -255,7 +274,8 @@ def prepare_review_presentations(
     started = monotonic()
     try:
         if provider == "openrouter":
-            translations, trace["usage"] = _openrouter_translations(originals, language, key, model)
+            translations, diagnostics = _openrouter_translations(originals, language, key, model)
+            trace.update(diagnostics)
         else:
             response = requests.post(
                 TRANSLATION_URL,
