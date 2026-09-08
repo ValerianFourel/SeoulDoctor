@@ -129,9 +129,10 @@ PRESERVE_TRAVEL_SCOPE_PATTERNS = (
 )
 
 COMMENT_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
-    ("clear explanations", ("clear explanation", "clear explanations", "explains well", "explained well", "설명을 잘", "설명 잘", "자세한 설명")),
+    ("clear explanations", ("clear explanation", "clear explanations", "explains well", "explained well", "explain things clearly", "설명을 잘", "설명 잘", "자세한 설명")),
     ("friendly", ("friendly", "kind", "친절", "상냥")),
     ("thorough", ("thorough", "careful", "detailed", "꼼꼼", "세심")),
+    ("no overprescribing", ("no overprescribing", "avoids overprescribing", "does not overprescribe", "don't over-prescribe", "restrained prescribing", "과잉 처방 안", "과잉처방 안", "과하게 약처방하지", "과잉 처방 없는")),
     (
         "short wait",
         (
@@ -221,6 +222,8 @@ HOUR_RETRIEVAL_TERMS: Mapping[str, Sequence[str]] = {
 }
 
 def _contains(text: str, alias: str) -> bool:
+    if alias == "친절":
+        return bool(re.search(r"(?<!불)친절", text))
     if re.fullmatch(r"[a-z0-9][a-z0-9 /-]*", alias):
         return bool(re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", text))
     return alias in text
@@ -229,6 +232,99 @@ def _contains(text: str, alias: str) -> bool:
 def _find_aliases(query: str, aliases: Sequence[Tuple[str, Sequence[str]]]) -> List[str]:
     normalized = query.casefold()
     return [canonical for canonical, variants in aliases if any(_contains(normalized, item.casefold()) for item in variants)]
+
+
+_INQUIRY = re.compile(
+    r"\?|\b(?:can you confirm|could you confirm|whether|is there|are there|"
+    r"do they|does (?:the|this)|what (?:do|does|would)|should i check|is .+ available)\b"
+    r"|가능한지|알려\s*주|인가요|있나요|어떤\s*의미", re.I,
+)
+_REQUIRE = re.compile(
+    r"\b(?:must|mandatory|required|require|need|essential|only|non-negotiable)\b"
+    r"|필수|반드시|꼭|필요", re.I,
+)
+_WITHDRAW = re.compile(
+    r"\b(?:don['’]?t|do not|no longer)\s+(?:require|need|mind|care)\b"
+    r"|\b(?:(?:not|isn['’]?t) (?:required|necessary|mandatory)|no longer (?:required|needed|important|matters)|drop|remove)\b"
+    r"|필요\s*없|필수가\s*아니|상관없|더\s*이상.{0,12}중요하지", re.I,
+)
+_EXCLUSION = re.compile(
+    r"\b(?:avoid|exclude|skip|without|don['’]?t want|do not want)\b"
+    r"|피하|피하고|제외|원하지\s*않|싫", re.I,
+)
+_RESPONSE_DIRECTIVE = re.compile(
+    r"\b(?:reply|respond|answer|write|continue)(?:\s+to\s+me)?\s+in\s+English\b"
+    r"|\bEnglish\s+please\b|영어로\s*(?:답변|대답|응답|말|해|부탁)[^,.!?;]*", re.I,
+)
+
+
+def intent_clauses(query: str) -> List[str]:
+    """Keep negation and requests attached to their own sentence or contrast."""
+    return [part.strip() for part in re.split(
+        r"(?<=[.!?;])\s+|\n|\s+(?:but|however|다만|하지만)\s+", query, flags=re.I,
+    ) if part.strip()]
+
+
+def is_inquiry(clause: str) -> bool:
+    if re.search(r"\b(?:can|could|would)\s+you\s+(?:please\s+)?(?:find|search|show|look)\b", clause, re.I):
+        return False
+    return bool(_INQUIRY.search(clause))
+
+
+def is_exclusion(clause: str) -> bool:
+    return bool(_EXCLUSION.search(clause))
+
+
+def is_withdrawal(clause: str) -> bool:
+    if re.search(r"\b(?:don['’]?t|do not)\s+(?:remove|drop)\b|삭제하지|빼지", clause, re.I):
+        return False
+    return bool(_WITHDRAW.search(clause))
+
+
+def english_consultation_intent(query: str) -> str | None:
+    """Separate an operational question from a consultation-language constraint."""
+    intents = []
+    for clause in intent_clauses(query):
+        clinical = _RESPONSE_DIRECTIVE.sub("", clause)
+        if not re.search(r"\benglish\b|영어", clinical, re.I):
+            continue
+        if is_withdrawal(clinical):
+            intents.append("withdraw")
+        elif is_exclusion(clinical):
+            intents.append("exclude")
+        elif re.search(r"\b(?:must|mandatory|required|essential|non-negotiable)\b|필수|반드시", clinical, re.I):
+            intents.append("require")
+        elif is_inquiry(clinical):
+            intents.append("inquire")
+        elif _REQUIRE.search(clinical) or re.search(r"\b(?:find|looking for|with)\b.{0,60}\benglish\b", clinical, re.I):
+            intents.append("require")
+        else:
+            intents.append("prefer")
+    # A question does not cancel an explicit requirement stated elsewhere.
+    explicit = [intent for intent in intents if intent in {"require", "withdraw", "exclude"}]
+    return explicit[-1] if explicit else (intents[-1] if intents else None)
+
+
+def is_english_consultation_term(term: str) -> bool:
+    return bool(re.search(r"\benglish\b|영어", term, re.I))
+
+
+def term_in_clause(term: str, clause: str) -> bool:
+    aliases = next((variants for canonical, variants in COMMENT_ALIASES if canonical == term), (term,))
+    reduced = re.sub(r"\s+(?:available|availability|hours)$", "", term, flags=re.I)
+    if reduced != term:
+        aliases = (*aliases, reduced)
+    return any(_contains(clause.casefold(), alias.casefold()) for alias in aliases)
+
+
+def _inquiry_only_term(query: str, term: str) -> bool:
+    clauses = [clause for clause in intent_clauses(query) if term_in_clause(term, clause)]
+    return bool(clauses) and all(is_inquiry(clause) and not is_exclusion(clause) for clause in clauses)
+
+
+def _excluded_only_term(query: str, term: str) -> bool:
+    clauses = [clause for clause in intent_clauses(query) if term_in_clause(term, clause)]
+    return bool(clauses) and all(is_exclusion(clause) for clause in clauses)
 
 
 def _clean_list(value: Any) -> List[str]:
@@ -335,11 +431,14 @@ def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> D
     genders = _find_aliases(query, GENDER_ALIASES)
     diseases = _find_aliases(query, DISEASE_ALIASES)
     comment_terms = _find_aliases(query, COMMENT_ALIASES)
+    comment_terms = [term for term in comment_terms if not _inquiry_only_term(query, term)]
 
     result["place_terms"] = _merge_terms(_clean_list(result.get("place_terms")), places)
     result["gender_terms"] = _merge_terms(_clean_list(result.get("gender_terms")), genders)
     result["disease_terms"] = _merge_terms(_clean_list(result.get("disease_terms")), diseases)
-    result["comment_terms"] = _merge_terms(_clean_list(result.get("comment_terms")), comment_terms)
+    proposed_comments = [term for term in _clean_list(result.get("comment_terms"))
+                         if not _inquiry_only_term(query, term)]
+    result["comment_terms"] = _merge_terms(proposed_comments, comment_terms)
 
     if specialties:
         result["specialty"] = specialties[0]
@@ -363,6 +462,38 @@ def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> D
     result.setdefault("soft_keywords", [])
     result.setdefault("negative_hard_keywords", [])
     result.setdefault("negative_keywords", [])
+    clinical_language_intent = english_consultation_intent(query)
+    for field in ("hard_keywords", "soft_keywords", "negative_hard_keywords", "negative_keywords", "comment_terms"):
+        terms = _clean_list(result.get(field))
+        terms = [term for term in terms if not is_english_consultation_term(term)
+                 or (clinical_language_intent == "require" and field == "hard_keywords")
+                 or (clinical_language_intent == "exclude" and field == "negative_hard_keywords")
+                 or (clinical_language_intent == "prefer" and field in {"soft_keywords", "comment_terms"})]
+        terms = [term for term in terms if not _inquiry_only_term(query, term)]
+        if field in {"soft_keywords", "comment_terms"}:
+            terms = [term for term in terms if not _excluded_only_term(query, term)]
+        if field in {"soft_keywords", "negative_keywords"}:
+            terms = [term for term in terms if term.casefold() != "direct"
+                     or re.search(r"\b(?:direct\s+(?:doctor|physician)|(?:doctor|physician)\b[^.!?]{0,24}\bdirect)\b", query, re.I)]
+        if field == "negative_keywords":
+            terms = [term for term in terms if term not in {canonical for canonical, _ in COMMENT_ALIASES} or not any(
+                term_in_clause(term, clause) and not is_inquiry(clause)
+                and not is_exclusion(clause) and not is_withdrawal(clause)
+                for clause in intent_clauses(query)
+            )]
+        result[field] = terms
+    if clinical_language_intent == "require" and not any(is_english_consultation_term(term) for term in result["hard_keywords"]):
+        result["hard_keywords"].append("English-speaking")
+    if clinical_language_intent == "exclude" and not any(is_english_consultation_term(term) for term in result["negative_hard_keywords"]):
+        result["negative_hard_keywords"].append("English-speaking")
+    result["inquiries"] = [clause for clause in intent_clauses(query) if is_inquiry(clause)][:6]
+    visit_reason = result.get("visit_reason")
+    if isinstance(visit_reason, str) and visit_reason.strip() and visit_reason.casefold() in query.casefold():
+        result["visit_reason"] = visit_reason.strip()
+    elif re.search(r"\broutine\s+check[- ]?up\b|정기\s*검진|일반\s*검진", query, re.I):
+        result["visit_reason"] = "routine checkup"
+    else:
+        result["visit_reason"] = None
     result.setdefault(
         "extraction_source",
         "gpt_oss+deterministic_safeguards" if payload else "deterministic_fallback",

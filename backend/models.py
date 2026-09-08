@@ -56,6 +56,8 @@ class State(BaseModel):
     gender_terms: List[str] = Field(default_factory=list)
     disease_terms: List[str] = Field(default_factory=list)
     comment_terms: List[str] = Field(default_factory=list)
+    visit_reason: Optional[str] = None
+    inquiries: List[str] = Field(default_factory=list)
     # Canonical availability constraints such as ``tuesday_evening``. Keep
     # these separate from review preferences: hours are facility facts.
     required_hours: List[str] = Field(default_factory=list)
@@ -136,6 +138,8 @@ PUBLIC_RESULT_FIELDS = frozenset({
     "Summaries",
     "Summaries_Korean",
     "address",
+    "answer_citations",
+    "answer_status",
     "amenities",
     "business_hours",
     "category",
@@ -167,6 +171,7 @@ PUBLIC_EVIDENCE_FIELDS = frozenset({
     "corroboration_count",
     "distinctiveness_score",
     "evidence_role",
+    "retrieval_roles",
     "matched_constraint_ids",
     "similar_review_count",
     "is_verbatim",
@@ -248,6 +253,10 @@ def serialize_results_for_chat(
                     for value in unverified
                     if isinstance(value, str)
                 ]
+            for field in ("coverage_status", "coverage_scope"):
+                value = groups.get(field)
+                if isinstance(value, str):
+                    public_result["retrieval_evidence_groups"][field] = value
         serialized_results.append(public_result)
     return serialized_results
 

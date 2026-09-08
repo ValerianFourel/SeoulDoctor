@@ -9,7 +9,11 @@ from typing import Any, Literal, Mapping
 
 from config import DISTANCE_MAPPING
 from models import State
-from query_facets import DISTANCE_PATTERN, augment_extracted_facets
+from query_facets import (
+    DISTANCE_PATTERN, augment_extracted_facets, english_consultation_intent,
+    intent_clauses, is_exclusion, is_inquiry, is_withdrawal, term_in_clause,
+)
+from review_presentation import response_language
 
 
 TurnOperation = Literal["refine", "replace_context"]
@@ -26,7 +30,7 @@ _SEOUL_ALIASES = {
 }
 
 _REPLACE_PATTERNS = (
-    re.compile(r"\b(?:change|replace)\s+(?:that|the request|my request)\b", re.I),
+    re.compile(r"\b(?:change|replace)\s+(?:the request|my request)\b", re.I),
     re.compile(r"\bstart\s+over\b", re.I),
     re.compile(r"요청(?:을|를)?\s*(?:바꿀|바꿔|변경)"),
 )
@@ -39,15 +43,6 @@ _REMOVAL_PATTERNS: Mapping[str, tuple[re.Pattern[str], ...]] = {
         ),
         re.compile(r"\b(?:remove|drop)\b.{0,20}\bparking\b", re.I),
         re.compile(r"주차.{0,20}(?:필요\s*없|빼|제외|삭제)"),
-    ),
-    "long_wait": (
-        re.compile(r"\blong\s+wait\b.{0,35}\b(?:acceptable|okay|fine)\b", re.I),
-        re.compile(r"\b(?:acceptable|okay|fine)\b.{0,35}\blong\s+wait\b", re.I),
-        re.compile(r"대기.{0,16}(?:길|긴).{0,20}(?:괜찮|상관없|제외.{0,8}(?:말|않|두지))"),
-    ),
-    "short_wait": (
-        re.compile(r"\b(?:short|no)\s+wait\b.{0,30}\bno longer important\b", re.I),
-        re.compile(r"대기.{0,12}(?:없|짧).{0,20}(?:더 이상.{0,8}중요하지|필요\s*없)"),
     ),
 }
 
@@ -68,7 +63,14 @@ _CONCEPT_ALIASES: Mapping[str, tuple[str, ...]] = {
         "대기가 없",
         "대기 시간이 짧",
     ),
+    "waiting": ("wait", "waits", "waiting", "대기"),
+    "english_consultation": ("English", "영어"),
 }
+
+_PREFERENCE_FIELDS = (
+    "hard_keywords", "keywords", "negative_hard_keywords", "negative_keywords",
+    "comment_terms", "gender_terms", "disease_terms", "required_hours",
+)
 
 _TUESDAY_EVENING_PATTERNS = (
     re.compile(r"\btuesday\b.{0,24}\b(?:evening|night|late)\b", re.I),
@@ -166,7 +168,8 @@ def _negative_terms(message: str, value: Any) -> tuple[str, ...] | None:
     detected = {
         canonical
         for canonical, patterns in _NEGATIVE_SIGNAL_PATTERNS.items()
-        if any(pattern.search(message) for pattern in patterns)
+        if any(pattern.search(clause) and is_exclusion(clause)
+               for clause in intent_clauses(message) for pattern in patterns)
     }
     if "unfriendly nurses" in detected:
         broad_fragments = {
@@ -227,11 +230,11 @@ def _travel_label_for_distance(distance_km: float) -> str:
 
 
 def _detect_operation(message: str, proposal: Mapping[str, Any]) -> TurnOperation:
-    proposed = _optional_text(proposal.get("operation"))
-    if proposed == "replace_context":
-        return "replace_context"
-    if any(pattern.search(message) for pattern in _REPLACE_PATTERNS):
-        return "replace_context"
+    for clause in intent_clauses(message):
+        if re.search(r"\b(?:don['’]?t|do not|never)\b|바꾸지|변경하지", clause, re.I):
+            continue
+        if any(pattern.search(clause) for pattern in _REPLACE_PATTERNS):
+            return "replace_context"
     return "refine"
 
 
@@ -242,15 +245,78 @@ def _detect_removed_concepts(
     found: list[str] = []
     proposed = _optional_terms(proposal.get("remove_terms")) or ()
     for value in proposed:
-        normalized = _normalize(value)
-        for concept, aliases in _CONCEPT_ALIASES.items():
-            if normalized == concept or any(alias in normalized for alias in aliases):
-                if concept not in found:
-                    found.append(concept)
-    for concept, patterns in _REMOVAL_PATTERNS.items():
-        if any(pattern.search(message) for pattern in patterns) and concept not in found:
+        concept = _concept_for_term(value)
+        if any(_term_matches_concept(clause, concept) and is_withdrawal(clause)
+               for clause in intent_clauses(message)):
             found.append(concept)
+    for concept, patterns in _REMOVAL_PATTERNS.items():
+        if any(pattern.search(clause) and is_withdrawal(clause)
+               for pattern in patterns for clause in intent_clauses(message)) and concept not in found:
+            found.append(concept)
+    if _accepts_waiting(message):
+        found.append("waiting")
+    if english_consultation_intent(message) == "withdraw":
+        found.append("english_consultation")
     return tuple(found)
+
+
+def _accepts_waiting(message: str) -> bool:
+    for clause in intent_clauses(message):
+        if not re.search(r"\bwait(?:ing|s)?\b|대기|기다", clause, re.I):
+            continue
+        if re.search(r"\bnot\s+(?:fine|okay|acceptable)|don['’]?t\s+think|do not\s+think|괜찮지\s*않", clause, re.I):
+            continue
+        if is_withdrawal(clause) or re.search(
+            r"\b(?:fine|okay|acceptable|willing to wait|can wait|not a dealbreaker)\b|괜찮|상관\s*없", clause, re.I,
+        ):
+            return True
+    return False
+
+
+def _concept_for_term(term: str) -> str:
+    normalized = _normalize(term)
+    for concept, aliases in _CONCEPT_ALIASES.items():
+        if normalized == concept or normalized in {_normalize(alias) for alias in aliases}:
+            return "waiting" if concept in {"short_wait", "long_wait"} else concept
+    return normalized
+
+
+@dataclass(frozen=True)
+class TermEdit:
+    action: Literal["add", "remove", "replace"]
+    field: str
+    term: str
+    replacement: str | None = None
+
+
+def _term_edits(message: str, proposal: Mapping[str, Any]) -> tuple[TermEdit, ...]:
+    operations = proposal.get("term_operations")
+    if not isinstance(operations, list):
+        return ()
+    edits = []
+    for item in operations[:16]:
+        if not isinstance(item, dict):
+            continue
+        action, field = item.get("action"), item.get("field")
+        if action not in {"add", "remove", "replace"} or field not in _PREFERENCE_FIELDS:
+            continue
+        term, span = _optional_text(item.get("term")), _optional_text(item.get("source_span"))
+        if term is None or span is None or span not in message:
+            continue
+        if not term_in_clause(term, span) or (is_inquiry(span) and not is_exclusion(span)):
+            continue
+        replacement = _optional_text(item.get("replacement"))
+        if action == "replace":
+            if replacement is None or not term_in_clause(replacement, span) or not re.search(r"\breplace\b|\binstead\b|대신|바꿔|변경", span, re.I):
+                continue
+        elif action == "remove" and not is_withdrawal(span):
+            continue
+        elif action == "add":
+            cleaned = augment_extracted_facets(span, {"soft_keywords" if field == "keywords" else field: [term]})
+            if term not in cleaned.get("soft_keywords" if field == "keywords" else field, []):
+                continue
+        edits.append(TermEdit(action, field, term, replacement))
+    return tuple(edits)
 
 
 def _detect_required_hours(
@@ -258,14 +324,17 @@ def _detect_required_hours(
     proposal: Mapping[str, Any],
 ) -> tuple[str, ...] | None:
     proposed = list(_optional_terms(proposal.get("required_hours")) or ())
-    hard_terms = _optional_terms(proposal.get("hard_keywords")) or ()
-    combined_text = " ".join((message, *hard_terms))
-    if any(pattern.search(combined_text) for pattern in _TUESDAY_EVENING_PATTERNS):
+    requested = any(pattern.search(clause) and not is_inquiry(clause)
+                    for pattern in _TUESDAY_EVENING_PATTERNS
+                    for clause in intent_clauses(message))
+    if requested:
         proposed.append("tuesday_evening")
     output: list[str] = []
     for value in proposed:
         normalized = _normalize(value).replace(" ", "_")
         if normalized in {"tuesday_evening", "tuesday_night", "화요일_야간", "화요일_저녁"}:
+            if not requested:
+                continue
             canonical = "tuesday_evening"
         else:
             canonical = normalized
@@ -300,7 +369,10 @@ class SearchDelta:
     comment_terms: tuple[str, ...] | None
     required_hours: tuple[str, ...] | None
     remove_concepts: tuple[str, ...]
-    response_language: Literal["English", "Korean"]
+    term_edits: tuple[TermEdit, ...]
+    visit_reason: str | None
+    inquiries: tuple[str, ...]
+    user_message: str
     extraction_source: str | None
     extraction_error: str | None
 
@@ -331,9 +403,6 @@ def compile_turn_delta(message: str, proposal: Mapping[str, Any] | None) -> Sear
         latitude = None
         longitude = None
 
-    response_language: Literal["English", "Korean"] = (
-        "Korean" if re.search(r"[가-힣ㄱ-ㅎㅏ-ㅣ]", message) else "English"
-    )
     return SearchDelta(
         operation=_detect_operation(message, raw),
         specialty=_optional_text(augmented.get("specialty")),
@@ -357,7 +426,10 @@ def compile_turn_delta(message: str, proposal: Mapping[str, Any] | None) -> Sear
         comment_terms=_canonical_comment_terms(augmented.get("comment_terms")),
         required_hours=_detect_required_hours(message, raw),
         remove_concepts=_detect_removed_concepts(message, raw),
-        response_language=response_language,
+        term_edits=_term_edits(message, raw),
+        visit_reason=_optional_text(augmented.get("visit_reason")),
+        inquiries=_optional_terms(augmented.get("inquiries")) or (),
+        user_message=message,
         extraction_source=_optional_text(augmented.get("extraction_source")),
         extraction_error=_optional_text(augmented.get("extraction_error")),
     )
@@ -366,12 +438,10 @@ def compile_turn_delta(message: str, proposal: Mapping[str, Any] | None) -> Sear
 def _merge_terms(
     existing: list[str],
     incoming: tuple[str, ...] | None,
-    *,
-    replace: bool,
 ) -> list[str]:
     if incoming is None:
         return list(existing)
-    values = list(incoming) if replace else [*existing, *incoming]
+    values = [*existing, *incoming]
     output: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -384,7 +454,10 @@ def _merge_terms(
 
 def _term_matches_concept(term: str, concept: str) -> bool:
     normalized = _normalize(term)
-    return any(_normalize(alias) in normalized for alias in _CONCEPT_ALIASES[concept])
+    aliases = _CONCEPT_ALIASES.get(concept)
+    if aliases is None:
+        return term_in_clause(concept, term)
+    return any(term_in_clause(_normalize(alias), normalized) for alias in aliases)
 
 
 def _clear_search_context(state: State) -> None:
@@ -401,6 +474,8 @@ def _clear_search_context(state: State) -> None:
     state.max_distance_km = 5.0
     state.travel_label = "Moderate"
     state.travel_confidence = 0.5
+    state.visit_reason = None
+    state.inquiries = []
     for field in (
         "hard_keywords",
         "keywords",
@@ -418,20 +493,19 @@ def _clear_search_context(state: State) -> None:
 def reduce_search_state(
     current: State,
     delta: SearchDelta,
-    *,
-    replace_keywords: bool = False,
 ) -> State:
     """Apply a compiled delta without allowing the model to rewrite old state."""
     state = current.model_copy(deep=True)
     if delta.operation == "replace_context":
         _clear_search_context(state)
-        replace_keywords = True
 
     if delta.specialty is not None:
         state.specialty = delta.specialty
         state.specialty_confidence = delta.specialty_confidence or 0.7
 
-    location_changed = delta.location is not None or delta.citywide is True
+    location_changed = delta.location is not None and (
+        state.location is None or _normalize(delta.location) != _normalize(state.location)
+    )
     if delta.citywide is True:
         state.location = None
         state.latitude = None
@@ -447,12 +521,11 @@ def reduce_search_state(
     elif delta.location is not None:
         state.location = delta.location
         state.is_citywide_search = False
-        state.latitude = delta.latitude
-        state.longitude = delta.longitude
-        state.address_korean = delta.address_korean
-        state.district = delta.district
-        state.dong = delta.dong
-        if delta.latitude is not None and delta.longitude is not None:
+        for field in ("latitude", "longitude", "address_korean", "district", "dong"):
+            value = getattr(delta, field)
+            if value is not None or location_changed:
+                setattr(state, field, value)
+        if state.latitude is not None and state.longitude is not None:
             state.search_mode = "distance"
         elif delta.location.endswith("구") or _normalize(delta.location).endswith("-gu"):
             state.search_mode = "zone"
@@ -469,9 +542,8 @@ def reduce_search_state(
             state.travel_label = delta.travel_label
             state.max_distance_km = float(DISTANCE_MAPPING[delta.travel_label])
             state.travel_confidence = 0.6
-        elif location_changed:
-            # A new local anchor must never inherit an old city-wide or unrelated
-            # radius. The product default is a five-kilometre distance search.
+        elif location_changed and current.is_citywide_search:
+            # A city-wide radius is not a local distance preference.
             state.max_distance_km = 5.0
             state.travel_label = "Moderate"
             state.travel_confidence = 0.5
@@ -494,18 +566,11 @@ def reduce_search_state(
             _merge_terms(
                 getattr(state, field),
                 incoming,
-                replace=replace_keywords,
             ),
         )
 
     for concept in delta.remove_concepts:
-        for field in (
-            "hard_keywords",
-            "keywords",
-            "negative_hard_keywords",
-            "negative_keywords",
-            "comment_terms",
-        ):
+        for field in _PREFERENCE_FIELDS:
             setattr(
                 state,
                 field,
@@ -516,7 +581,28 @@ def reduce_search_state(
                 ],
             )
 
-    state.language_pref = delta.response_language
+    for edit in delta.term_edits:
+        if edit.action in {"remove", "replace"}:
+            for field in _PREFERENCE_FIELDS:
+                setattr(state, field, [term for term in getattr(state, field)
+                                      if not _term_matches_concept(term, _concept_for_term(edit.term))])
+        addition = edit.replacement if edit.action == "replace" else edit.term if edit.action == "add" else None
+        if addition is not None:
+            setattr(state, edit.field, _merge_terms(getattr(state, edit.field), (addition,)))
+
+    if delta.visit_reason is not None:
+        state.visit_reason = delta.visit_reason
+    state.inquiries = list(delta.inquiries)
+    state.language_pref, explicit = response_language(
+        delta.user_message, current.language_pref,
+        established=bool(current.turn_count or current.explicit_response_language),
+    )
+    if explicit is not None:
+        state.explicit_response_language = explicit
+    constraint_fields = (*field_map, "specialty", "location", "latitude", "longitude",
+                         "max_distance_km", "is_citywide_search", "visit_reason", "inquiries")
+    if any(getattr(state, field) != getattr(current, field) for field in constraint_fields):
+        state.clear_retrieval_telemetry()
     state.extraction_source = delta.extraction_source or state.extraction_source
     state.extraction_error = delta.extraction_error
     return state
