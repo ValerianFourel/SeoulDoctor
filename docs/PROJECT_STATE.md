@@ -1,6 +1,61 @@
 # SeoulDoc project state
 
-## NCS deployment credential correction, 2026-09-08
+## NCS response deployed and verified, 2026-09-08
+
+The user explicitly approved loading only `HF_TOKEN` from `backend/.env` into
+the NCS deployment process without displaying it. The reviewed launcher ran
+from the clean `ncs` checkout at
+`d7587caeb0539ac0a2e282982f95f16e96fb137b`. It uploaded the fixed NCS bundle and
+created Space commit `b13d2bdb6eb12153a23453382244630e3746f240`.
+No other environment credential was loaded, and no credential value was
+displayed, stored in these records, committed, or uploaded as source.
+
+The Space source and running revision both match that commit, and `/health`
+reports the expected 8,484 facilities and 1,791,749 reviews. Independent source
+verification matched all 89 managed files to the committed NCS bundle. The GPU
+readiness proof passed on `cuda:0`, Tesla T4, with the pinned BGE-M3 revision,
+1,024 dimensions, and two nonempty sparse probes. Existing indexes were reused.
+
+All four real API requests and 36 checks passed. Two fresh Jonggak searches
+returned identical polished replies, and both 1 km refinements returned three
+clinics within that radius. Location, coordinates, specialty, card evidence
+ownership, closest-clinic distance, and followup guidance passed their checks.
+Observed request durations were 15.719, 12.214, 11.123, and 15.073 seconds.
+These are observations, not a controlled latency comparison or a new review
+faithfulness evaluation.
+
+Root sent one additional browser query. The displayed reply exactly matched
+the API reply at 1280x800 and 390x844, including `0.9 km` and paragraph breaks.
+All five cards retained their order, the new greeting appeared, neither viewport
+had horizontal overflow, and the browser reported no console errors. Screenshots
+and raw checks are in `.audit/response-polish-20260908-hf-token/` in the root
+checkout. Earlier local verification passed 270 backend tests and the frontend
+production build; the workflow correction then passed 43 focused tests.
+
+The original Space remains healthy at
+`8909ff673d2e1b5e7df97010f9e309f6a9dc4c7b`, and `main` remains
+`e6b40d5782e04abe97383d459c4aff6eec40a287`. Existing `t4-medium` NCS and
+`cpu-upgrade` original hardware are unchanged. No new compute or storage was
+purchased. Provider billing was not exposed by these responses.
+
+Thirty-four redacted JSON/JSONL artifacts, including the failed before-test and
+successful after-test, were uploaded through the runbook to the verified private
+Dataset `ValerianFourel/seouldoc-eval-handoff` at
+`82139f4d432bbf9e32d590d55bd1c8a84d7df63a`, under
+`runs/response-polish-live-20260908T105322Z`. Screenshots and the redacted startup
+log remain local because the checkpoint runbook excludes those file types.
+
+Root owns this record and `planning/hf-deployment.md` in
+`/tmp/seouldoc-response-polish`; read-only delegates verified source and API
+behavior. The requested deployment and verification are complete. One next
+action is to use the updated NCS app for further patient testing. Future GitHub
+Actions deployments still require its `HF_TOKEN` secret to be available; this
+verified deployment used the approved direct process instead.
+
+## Earlier NCS deployment credential correction, 2026-09-08
+
+This section records the preparation and failed Actions attempt before the
+approved direct deployment described above.
 
 The user explicitly instructed deployment with `HF_TOKEN` and live verification
 of the response fix. Root owns the NCS workflow and this handoff record in

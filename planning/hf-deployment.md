@@ -2,6 +2,22 @@
 
 ## Current deployment checkpoint, 2026-09-08
 
+The user approved process-only loading of the local `HF_TOKEN`. Direct upload
+of committed NCS source `d7587caeb0539ac0a2e282982f95f16e96fb137b` succeeded,
+creating Space revision `b13d2bdb6eb12153a23453382244630e3746f240`. That exact
+revision is now running and healthy, with GPU readiness verified on Tesla T4.
+All 89 managed files match the intended source. Four live API requests passed
+36 response-preservation checks, and one further browser conversation passed
+desktop/mobile checks. The original Space and hardware remain unchanged.
+
+The failed before-test and successful after-test are checkpointed privately at
+Dataset revision `82139f4d432bbf9e32d590d55bd1c8a84d7df63a`, under
+`runs/response-polish-live-20260908T105322Z`. Local evidence is in
+`.audit/response-polish-20260908-hf-token/`. The deployment used a direct process;
+GitHub Actions still needs its own `HF_TOKEN` secret configured.
+
+## Earlier deployment attempts
+
 The NCS Space is public and running on `t4-medium`, verified at source and
 runtime revision `4138eb056b80f4689fb0ef87244cf128c44280b2`. The original
 application remains separate. PR #4 merged the response changes into `ncs` at
@@ -15,10 +31,9 @@ The user subsequently specified the existing `HF_TOKEN` secret for deployment;
 the workflow reference has been corrected to use it. A new explicit deployment
 push `d7587caeb0539ac0a2e282982f95f16e96fb137b` launched Actions run `34215299377`,
 which also received no token and failed before upload. A clean `ncs` checkout
-for direct deployment passed its manifest dry run. Loading the local token from
-`backend/.env` requires a specific exception to the current AGENTS prohibition;
-that question is pending. Until the new running revision is verified, the
-response changes must not be described as live.
+for direct deployment passed its manifest dry run. The user then approved
+loading only `HF_TOKEN` from `backend/.env`; the direct deployment and live
+verification described above succeeded.
 
 For the already public target, run the following from a clean, committed `ncs`
 checkout with an approved `HF_TOKEN` in the process environment:
