@@ -136,17 +136,8 @@ const ReviewEvidence = forwardRef<ReviewEvidenceHandle, {
               const originalPreview = Array.from(review.text).slice(0, ORIGINAL_PREVIEW_LENGTH).join("");
               const longOriginal = originalPreview.length < review.text.length;
               const originalId = `${contentId}-${review.evidence_id}`;
-              return (
-                <article
-                  key={review.evidence_id}
-                  data-evidence-id={review.evidence_id}
-                  tabIndex={-1}
-                  ref={element => {
-                    if (element) reviewElements.current.set(review.evidence_id, element);
-                    else reviewElements.current.delete(review.evidence_id);
-                  }}
-                  className="rounded-md bg-white p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
+              const originalContent = (
+                <>
                   <p className="mb-1 text-xs text-slate-500">
                     {korean ? "원문 후기" : "Original review"}
                     {review.visit_date ? ` · ${review.visit_date}` : ""}
@@ -170,12 +161,34 @@ const ReviewEvidence = forwardRef<ReviewEvidenceHandle, {
                       {fullOriginal ? (korean ? "미리보기" : "Show preview") : (korean ? "원문 전체 보기" : "Read full original")}
                     </button>
                   )}
-                  {translatedText && (
-                    <div className="mt-3 border-t border-slate-100 pt-2">
-                      <p className="mb-1 text-xs text-slate-500">{korean ? "자동 번역" : "Automatic translation"}</p>
-                      <p data-review-translation className="whitespace-pre-wrap break-words">{translatedText}</p>
-                    </div>
-                  )}
+                </>
+              );
+              return (
+                <article
+                  key={review.evidence_id}
+                  data-evidence-id={review.evidence_id}
+                  tabIndex={-1}
+                  ref={element => {
+                    if (element) reviewElements.current.set(review.evidence_id, element);
+                    else reviewElements.current.delete(review.evidence_id);
+                  }}
+                  className="rounded-md bg-white p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {translatedText ? (
+                    <>
+                      <p className="mb-1 text-xs text-slate-500">
+                        {korean ? "자동 번역" : "Automatic translation"}
+                        {review.visit_date ? ` · ${review.visit_date}` : ""}
+                      </p>
+                      <p data-review-translation className="whitespace-pre-wrap break-words text-slate-900">{translatedText}</p>
+                      <details key={focusRequest} className="mt-2" open={focusedReviewId === review.evidence_id}>
+                        <summary className="cursor-pointer text-blue-700">
+                          {korean ? "원문 보기" : "Show original"}
+                        </summary>
+                        <div className="mt-2">{originalContent}</div>
+                      </details>
+                    </>
+                  ) : originalContent}
                   {unavailable && (
                     <p className="mt-2 text-xs text-slate-500">{korean ? "번역을 제공할 수 없어 원문을 표시합니다." : "Translation unavailable. Showing the original."}</p>
                   )}

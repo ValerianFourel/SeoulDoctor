@@ -37,7 +37,7 @@ const reviews = [
   review(7, 'The staff answered my question.'),
   review(8, 'The appointment started late.'),
   review(9, 'The nurse listened carefully.'),
-  review(10, longOriginal, { status: 'unavailable', language: 'English' }),
+  review(10, longOriginal, { status: 'translated', language: 'English', text: 'They explained everything slowly to my child.' }),
   review(11, 'I would visit again.'),
   { ...review(12, 'WRONG_FACILITY_REVIEW'), place_id: 'beta' },
 ];
@@ -151,7 +151,13 @@ async function main() {
       }
       await send('Find pediatric care');
       await page.getByText('Synthetic clinic', { exact: true }).waitFor();
-      await check(`${label} original visible alongside translation`, page.getByText(original, { exact: true }).isVisible());
+      await check(`${label} translation visible by default`, page.getByText('The doctor explained clearly.', { exact: true }).isVisible());
+      await check(`${label} translated original initially hidden`, page.getByText(original, { exact: true }).isHidden());
+      const firstTranslatedReview = page.locator(`[data-evidence-id="${reviews[0].evidence_id}"]`).first();
+      await firstTranslatedReview.getByText('Show original', { exact: true }).click();
+      await check(`${label} original revealed on click`, page.getByText(original, { exact: true }).isVisible());
+      await firstTranslatedReview.getByText('Show original', { exact: true }).click();
+      await check(`${label} original collapses again`, page.getByText(original, { exact: true }).isHidden());
       await check(`${label} three-word negative survives`, page.getByText('Nurse was rude.', { exact: true }).isVisible());
       await check(`${label} failed translation keeps original`, page.getByText('The nurse was rude.', { exact: true }).isVisible());
       if (before) {
@@ -168,12 +174,15 @@ async function main() {
       await page.screenshot({ path: path.join(outputDirectory, `${label}-originals.png`) });
       await panel.getByRole('button', { name: 'Next', exact: true }).click();
       await check(`${label} next page has seven`, panel.locator('article').count().then(count => count === 7));
+      await check(`${label} translated original stays hidden`, panel.getByText('간호사가 불친절했어요.', { exact: true }).isHidden());
+      await panel.locator(`[data-evidence-id="${reviews[4].evidence_id}"]`).getByText('Show original', { exact: true }).click();
       await check(`${label} three-word translation preserves original`, panel.getByText('간호사가 불친절했어요.', { exact: true }).isVisible());
       await check(`${label} three-word translation remains visible`, panel.getByText('Nurse was rude.', { exact: true }).isVisible());
       await check(`${label} review HTML stays text`, panel.locator('img').count().then(count => count === 0));
       await check(`${label} stale translation omitted`, page.getByText('STALE_TRANSLATION_SHOULD_NOT_APPEAR', { exact: true }).count().then(count => count === 0));
       await panel.getByRole('button', { name: 'Next', exact: true }).click();
       const longReview = panel.locator(`[data-evidence-id="${reviews[10].evidence_id}"]`);
+      await longReview.getByText('Show original', { exact: true }).click();
       const preview = await longReview.locator('[data-original-review]').textContent();
       await check(`${label} long original exact preview`, preview.length < longOriginal.length && longOriginal.startsWith(preview));
       await longReview.getByRole('button', { name: 'Read full original', exact: true }).click();
@@ -184,6 +193,11 @@ async function main() {
       await page.getByRole('button', { name: 'Review 1 from Synthetic clinic', exact: true }).click();
       await check(`${label} citation reveals later original`, longReview.locator('[data-original-review]').textContent().then(text => text === longOriginal));
       await check(`${label} citation focuses correct review`, longReview.evaluate(element => document.activeElement === element));
+      await check(`${label} citation opens translated original`, longReview.locator('[data-original-review]').isVisible());
+      await longReview.getByText('Show original', { exact: true }).click();
+      await page.getByRole('button', { name: /Review 1 from/ }).first().click();
+      await check(`${label} repeated citation reopens original`, longReview.locator('[data-original-review]').isVisible());
+
       await page.screenshot({ path: path.join(outputDirectory, `${label}-citation.png`) });
       await send('fallback');
       await page.getByRole('button', { name: 'Review 2 from Synthetic clinic', exact: true }).first().evaluate(button => button.click());
@@ -193,7 +207,7 @@ async function main() {
         const bounds = element.getBoundingClientRect();
         return document.activeElement === element && bounds.top >= 0 && bounds.bottom <= window.innerHeight;
       }));
-      await check(`${label} fallback retains originals`, page.locator('section[data-facility-id="alpha"]').nth(1).getByText(original, { exact: true }).isVisible());
+      await check(`${label} fallback retains translation`, page.locator('section[data-facility-id="alpha"]').nth(1).getByText('The doctor explained clearly.', { exact: true }).isVisible());
       await send('한국어로 답해 주세요');
       const koreanPanel = page.locator('section[data-facility-id="alpha"]').nth(2);
       await check(`${label} Korean reply retains original`, koreanPanel.getByText(original, { exact: true }).isVisible());

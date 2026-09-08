@@ -1394,3 +1394,20 @@ Relative links, preserved Space metadata and git diff --check passed. No new
 application tests, evaluation or deployment ran for this documentation change.
 Other pending documentation is excluded. Next action: restore pipeline
 completeness, then trace each frozen facility miss before relevance tuning.
+
+## Translation-first review display, 2026-09-09
+
+Owner: root. Branch local/ncs-translation-first-20260909 from origin/ncs
+b62f9282. Owns frontend/components/ReviewEvidence.tsx, its browser regression
+script and this entry. User explicitly scopes the change to ncs. Show the
+automatic translation by default and reveal original text on demand. Preserve
+original-only fallback, relevance order, pagination and citation navigation.
+
+Verification: production build passed, all 70 desktop/mobile browser checks
+passed, and all 360 backend tests passed in 6.952 seconds on the host. The
+sandbox backend run stalled and was stopped before the bounded host retry.
+Checks cover translation-first display, click/keyboard-native disclosure,
+original-only fallback, full-original expansion and repeated citation reopening.
+Independent correctness and comment review found no blocking issue. This change
+is for ncs; no main or Hugging Face deployment is part of this task.
+Next action: inspect the ncs branch's translation-first review cards.
