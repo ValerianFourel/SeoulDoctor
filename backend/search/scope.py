@@ -92,12 +92,6 @@ def _row_search_text(row: pd.Series) -> str:
         if field not in row.index:
             continue
         parts.extend(_flatten_positive_values(row[field]))
-    if (
-        "has_english" in row.index
-        and pd.notna(row["has_english"])
-        and bool(row["has_english"])
-    ):
-        parts.extend(("english speaking", "english consultation", "영어 진료"))
     return _normalized(" ".join(parts))
 
 

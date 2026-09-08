@@ -31,6 +31,7 @@ from search.indexes.documents import (
     render_facility_profile,
 )
 from search.scope import ScopeSelection
+from search.rules import RulesCompiler
 
 
 class SearchIndexReleaseTests(unittest.TestCase):
@@ -231,6 +232,24 @@ class SearchIndexReleaseTests(unittest.TestCase):
                 )
                 self.assertEqual(english[0].original_text, "English friendly acne treatment")
                 self.assertEqual(english[0].source_locator, "review_snapshot:alpha:0")
+                required_english = RulesCompiler().compile(
+                    original_query="English consultation is required in Seoul",
+                    turn_id="source-type-regression",
+                    proposal={"location": "Seoul", "hard_keywords": ["English consultation"]},
+                ).rules.evidence[0]
+                hard_language_hits = scoped.search_evidence_for_facilities(
+                    "English", facility_ids=("alpha",), limit_per_facility=5,
+                    source_types=tuple(required_english.source_types),
+                )
+                self.assertIn(english[0].evidence_id, {hit.evidence_id for hit in hard_language_hits})
+                for invalid in (("review",), ("unknown_source",)):
+                    with self.subTest(source_types=invalid), self.assertRaises(ValueError):
+                        scoped.search_evidence("English", source_types=invalid)
+                    with self.subTest(source_types=invalid), self.assertRaises(ValueError):
+                        scoped.search_evidence_for_facilities(
+                            "English", facility_ids=("alpha",), limit_per_facility=5,
+                            source_types=invalid,
+                        )
 
         database = sqlite3.connect(
             f"file:{published.directory / 'evidence_lexical.sqlite3'}?mode=ro&immutable=1",

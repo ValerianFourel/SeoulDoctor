@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from time import perf_counter
-from typing import Mapping, Protocol, Sequence
+from typing import Literal, Mapping, Protocol, Sequence
 
 import numpy as np
 import pandas as pd
@@ -17,6 +17,8 @@ from search.evidence_retrieval import (
     ConstraintEvidenceRetriever,
     EvidenceRecallPolicy,
     EvidenceRecallResult,
+    assess_facility_coverage,
+    compile_evidence_constraints,
     evidence_payload,
 )
 from search.indexes.manifest import EXPECTED_DENSE_DIMENSION
@@ -105,6 +107,8 @@ class RetrievalTelemetry:
     coverage_assessed: bool = True
     coverage_sufficient: bool = False
     finish_status: str = "complete"
+    execution_status: Literal["complete", "partial", "failed", "not_run"] = "complete"
+    reason_codes: tuple[str, ...] = ()
 
     def as_private_dict(self) -> dict[str, object]:
         return {
@@ -123,6 +127,8 @@ class RetrievalTelemetry:
             "coverage_assessed": self.coverage_assessed,
             "coverage_sufficient": self.coverage_sufficient,
             "finish_status": self.finish_status,
+            "retrieval_execution_status": self.execution_status,
+            "retrieval_reason_codes": list(self.reason_codes),
         }
 
 
@@ -228,9 +234,8 @@ class CandidateRetrievalAdapter:
                     shortlisted_facility_ids=shortlist,
                     displayed_facility_ids=displayed,
                     # Evidence can change facility order after preliminary
-                    # fusion. Select attachments for the full shortlist while
-                    # keeping expensive coverage retries focused on the
-                    # provisional top three.
+                    # fusion. Assess attachments across the shortlist, while
+                    # limiting retries to the provisional top three.
                     attachment_facility_ids=shortlist,
                 )
                 review_source_sha256 = scoped.review_source_sha256
@@ -293,6 +298,8 @@ class CandidateRetrievalAdapter:
                         for item in groups.warnings
                     ],
                     "unverified": list(groups.unverified),
+                    "coverage_status": "assessed" if evidence_result.coverage else "not_applicable",
+                    "coverage_scope": rules.rules_hash,
                 }
                 for facility_id, groups in evidence_result.by_facility.items()
             }
@@ -312,17 +319,39 @@ class CandidateRetrievalAdapter:
                     ranked["retrieval_methods"],
                 )
             ]
+            constraints = compile_evidence_constraints(rules)
+            required_ids = [item.constraint_id for item in constraints if item.required]
             ranked["retrieval_evidence_groups"] = (
                 ranked["place_id"].astype(str).map(
                     lambda item: evidence_groups_by_facility.get(
                         item,
-                        {"supporting": [], "warnings": [], "unverified": []},
+                        {
+                            "supporting": [], "warnings": [],
+                            "unverified": required_ids,
+                            "coverage_status": "unassessed" if constraints else "not_applicable",
+                            "coverage_scope": rules.rules_hash,
+                        },
                     )
                 )
             )
-            coverage_sufficient = evidence_result.finish_status == "complete"
+            final_candidates = tuple(ranked["place_id"].astype(str).head(5))
+            unassessed_ids = tuple(item for item in final_candidates if item not in shortlist)
+            if unassessed_ids:
+                evidence_result = replace(
+                    evidence_result,
+                    coverage=(*evidence_result.coverage, *(
+                        replace(cell, status="unassessed")
+                        for cell in assess_facility_coverage(unassessed_ids, constraints, ())
+                    )),
+                )
+            coverage_sufficient = not any(
+                cell.required and cell.status in {"missing", "unassessed"}
+                for cell in evidence_result.coverage
+                if cell.facility_id in final_candidates
+            )
+            finish_status = "complete" if coverage_sufficient else "partial_evidence"
             telemetry = RetrievalTelemetry(
-                status="complete" if coverage_sufficient else "incomplete",
+                status="complete" if evidence_result.execution_status != "partial" else "incomplete",
                 termination_reason="finish_search",
                 index_version=self._active_index.version,
                 policy_version=(
@@ -363,7 +392,11 @@ class CandidateRetrievalAdapter:
                 fallback_reason=None,
                 elapsed_ms=(perf_counter() - started) * 1000,
                 coverage_sufficient=coverage_sufficient,
-                finish_status=evidence_result.finish_status,
+                finish_status=finish_status,
+                execution_status=(
+                    "partial" if evidence_result.execution_status == "partial" else "complete"
+                ),
+                reason_codes=evidence_result.reason_codes,
             )
             rerank_outcome = RerankOutcome(
                 evidence_hits,
@@ -411,6 +444,8 @@ class CandidateRetrievalAdapter:
             retry_reason=None,
             fallback_reason=None,
             elapsed_ms=(perf_counter() - started) * 1000,
+            coverage_assessed=False,
+            execution_status="not_run",
         )
         result = eligible.copy()
         _attach_private_metadata(result, telemetry, ())
@@ -458,6 +493,10 @@ class CandidateRetrievalAdapter:
             retry_reason=None,
             fallback_reason=reason,
             elapsed_ms=(perf_counter() - started) * 1000,
+            coverage_assessed=False,
+            finish_status="partial_evidence",
+            execution_status="partial" if self._legacy_pipeline is not None else "failed",
+            reason_codes=("index_unavailable" if reason == "index_unavailable" else "indexed_retrieval_failed",),
         )
         _attach_private_metadata(
             ranked,
@@ -899,6 +938,16 @@ def _attach_private_metadata(
             "reranker_candidate_count": len(rerank_outcome.hits),
         })
     if evidence_result is not None:
+        dataframe.attrs["rag_metadata"]["retrieval_channel_status"] = {
+            "facility_bm25": "ok",
+            "facility_semantic": "ok",
+            "evidence_bm25": "ok" if evidence_result.execution_status != "not_run" else "not_applicable",
+            "review_semantic": evidence_result.semantic_status,
+            "evidence_reranker": (
+                evidence_result.reranker_reason if evidence_result.reranker_applicable else "not_applicable"
+            ),
+        }
+        dataframe.attrs["rag_metadata"]["evidence_coverage_scope"] = "final_candidates_and_attachment_shortlist"
         dataframe.attrs["rag_metadata"]["stage_timings_ms"] = {
             "evidence_search": evidence_result.search_ms,
             "evidence_reranking": evidence_result.reranking_ms,

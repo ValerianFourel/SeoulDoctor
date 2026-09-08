@@ -4,11 +4,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, Mapping, TypeAlias
+from typing import Iterable, Literal, Mapping, TypeAlias, get_args
 
 
 Language: TypeAlias = Literal["en", "ko", "mixed"]
 EvidenceRole: TypeAlias = Literal["disease", "support", "risk"]
+EvidenceSourceType: TypeAlias = Literal[
+    "amenity", "facility_fact", "medical_info", "review_highlight",
+    "review_summary", "verbatim_review",
+]
+EVIDENCE_SOURCE_TYPES = frozenset(get_args(EvidenceSourceType))
+
+
+def validate_evidence_source_types(values: Iterable[str]) -> tuple[str, ...]:
+    source_types = tuple(dict.fromkeys(values))
+    if any(value not in EVIDENCE_SOURCE_TYPES for value in source_types):
+        raise ValueError("unsupported evidence source type")
+    return source_types
+
+
 RuleSource: TypeAlias = Literal[
     "user_explicit",
     "default_5km",
@@ -118,6 +132,7 @@ class EvidenceRequirement:
             raise ValueError("requirement_id is required")
         if not self.source_types:
             raise ValueError("source_types cannot be empty")
+        validate_evidence_source_types(self.source_types)
 
 
 @dataclass(frozen=True)

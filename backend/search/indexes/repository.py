@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from search.contracts import validate_evidence_source_types
 from search.scope import ScopeSelection
 
 from .build import (
@@ -352,11 +353,9 @@ class ScopedIndex:
     ) -> list[EvidenceHit]:
         self._assert_open()
         limit = _bounded_limit(limit, maximum=1_000)
+        accepted_types = validate_evidence_source_types(source_types or ())
         if not query.strip() or not len(self._ordinals):
             return []
-        accepted_types = tuple(dict.fromkeys(
-            value.strip() for value in (source_types or ()) if value.strip()
-        ))
         word_rows = _evidence_rows(
             self._evidence_connection,
             table="evidence_terms",
@@ -408,6 +407,7 @@ class ScopedIndex:
         """Return a deterministic lexical quota for each requested facility."""
         self._assert_open()
         limit = _bounded_limit(limit_per_facility, maximum=100)
+        accepted_types = validate_evidence_source_types(source_types)
         requested = tuple(str(value).strip() for value in facility_ids)
         if not requested:
             return []
@@ -426,9 +426,6 @@ class ScopedIndex:
                 raise ValueError("facility shortlist contains an ID outside scope")
             ordinals.append(ordinal)
 
-        accepted_types = tuple(dict.fromkeys(
-            value.strip() for value in source_types if value.strip()
-        ))
         if not query.strip():
             return []
 

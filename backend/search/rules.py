@@ -35,7 +35,7 @@ from .contracts import (
 )
 
 
-SCHEMA_VERSION = "search-rules-v1"
+SCHEMA_VERSION = "search-rules-v2"
 
 _ALLOWED_PROPOSAL_FIELDS = frozenset({
     "address_korean",
@@ -47,6 +47,7 @@ _ALLOWED_PROPOSAL_FIELDS = frozenset({
     "extraction_source",
     "gender_terms",
     "hard_keywords",
+    "inquiries",
     "is_citywide_search",
     "keywords",
     "language_pref",
@@ -62,6 +63,7 @@ _ALLOWED_PROPOSAL_FIELDS = frozenset({
     "specialty_confidence",
     "travel_confidence",
     "travel_label",
+    "visit_reason",
 })
 
 SPECIALTY_IDS = {
@@ -231,6 +233,8 @@ class SearchRulesDraft:
     disease_terms: tuple[str, ...]
     comment_terms: tuple[str, ...]
     required_hours: tuple[str, ...]
+    inquiries: tuple[str, ...]
+    visit_reason: str | None
 
 
 def _string_or_none(value: Any) -> str | None:
@@ -302,6 +306,8 @@ def _parse_draft(
             disease_terms=_string_tuple(proposal.get("disease_terms")),
             comment_terms=_string_tuple(proposal.get("comment_terms")),
             required_hours=_string_tuple(proposal.get("required_hours")),
+            inquiries=_string_tuple(proposal.get("inquiries")),
+            visit_reason=_string_or_none(proposal.get("visit_reason")),
         )
     except (TypeError, ValueError):
         return None, (
@@ -441,6 +447,7 @@ def _rules_hash(
                 item.match_mode,
                 tuple(sorted(item.source_types)),
                 item.support_required,
+                item.evidence_role,
             )
             for item in evidence
         ),
@@ -654,6 +661,7 @@ class RulesCompiler:
                 if previous_rules
                 else ()
             )
+            if not item.requirement_id.startswith("inquiry:")
         }
 
         for term in draft.hard_keywords:
@@ -687,7 +695,7 @@ class RulesCompiler:
                 terms_en=terms_en,
                 terms_ko=terms_ko,
                 match_mode="all_terms",
-                source_types=frozenset({"facility_fact", "review"}),
+                source_types=frozenset({"facility_fact", "verbatim_review"}),
                 support_required=True,
             )
 
@@ -806,6 +814,47 @@ class RulesCompiler:
                     support_required=True,
                     evidence_role=evidence_role,
                 )
+
+        for inquiry in draft.inquiries:
+            inquiry_concepts = {
+                concept_id: aliases
+                for concept_id, aliases in HARD_CONCEPT_ALIASES.items()
+                if _source_span(inquiry, aliases) is not None
+            }
+            if re.search(r"\benglish\b|영어", inquiry, re.I):
+                inquiry_concepts["english_consultation"] = HARD_CONCEPT_ALIASES["english_consultation"]
+            if not inquiry_concepts:
+                inquiry_concepts[sha256(inquiry.encode("utf-8")).hexdigest()[:16]] = (
+                    tuple(expand_multilingual_retrieval_terms((inquiry,)))
+                )
+            for concept_id, aliases in inquiry_concepts.items():
+                if f"attribute:{concept_id}" in evidence_requirements:
+                    continue
+                terms_en, terms_ko = _split_language_terms(aliases)
+                requirement_id = f"inquiry:{concept_id}"
+                evidence_requirements[requirement_id] = EvidenceRequirement(
+                    requirement_id=requirement_id,
+                    terms_en=terms_en,
+                    terms_ko=terms_ko,
+                    match_mode="semantic",
+                    source_types=frozenset({"facility_fact", "verbatim_review"}),
+                    support_required=False,
+                )
+
+        if draft.visit_reason:
+            terms_en, terms_ko = _split_language_terms(tuple(
+                expand_multilingual_retrieval_terms((draft.visit_reason,))
+            ))
+            requirement_id = f"visit_reason:{_slug(draft.visit_reason)}"
+            evidence_requirements[requirement_id] = EvidenceRequirement(
+                requirement_id=requirement_id,
+                terms_en=terms_en,
+                terms_ko=terms_ko,
+                match_mode="semantic",
+                source_types=frozenset({"medical_info", "verbatim_review"}),
+                support_required=False,
+                evidence_role="disease",
+            )
 
         hour_aliases = {
             "tuesday_evening": (
@@ -953,6 +1002,8 @@ def compile_legacy_state_rules(
         "disease_terms": list(getattr(state, "disease_terms", ()) or ()),
         "comment_terms": list(getattr(state, "comment_terms", ()) or ()),
         "required_hours": list(getattr(state, "required_hours", ()) or ()),
+        "inquiries": list(getattr(state, "inquiries", ()) or ()),
+        "visit_reason": getattr(state, "visit_reason", None),
     }
     try:
         travel_confidence = float(

@@ -13,7 +13,7 @@ from typing import Literal, Mapping, Protocol, Sequence
 import unicodedata
 
 from query_facets import expand_multilingual_retrieval_terms
-from search.contracts import EvidenceRole, SearchRules
+from search.contracts import EvidenceRole, SearchRules, validate_evidence_source_types
 from search.indexes.repository import EvidenceHit
 from search.reranker import RerankOutcome
 from search.semantic_retriever import (
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 FinishStatus = Literal["complete", "partial_evidence"]
-CoverageStatus = Literal["satisfied", "risk_found", "missing"]
+CoverageStatus = Literal["matched", "missing", "unassessed"]
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,11 @@ class EvidenceConstraint:
     source_types: tuple[str, ...]
     required: bool
     priority: int
+
+    def __post_init__(self) -> None:
+        if not self.source_types:
+            raise ValueError("evidence constraint requires source types")
+        validate_evidence_source_types(self.source_types)
 
 
 @dataclass(frozen=True)
@@ -136,6 +141,10 @@ class EvidenceRecallResult:
     semantic_status: str = "disabled"
     search_ms: float = 0.0
     reranking_ms: float = 0.0
+    execution_status: Literal["complete", "partial", "not_run"] = "complete"
+    reason_codes: tuple[str, ...] = ()
+    semantic_applicable: bool = False
+    reranker_applicable: bool = False
 
 
 @dataclass(frozen=True)
@@ -146,7 +155,7 @@ class _CandidateSearchBatch:
 
 @dataclass(frozen=True)
 class EvidenceRecallPolicy:
-    version: str = "facility-constraint-cells-v4"
+    version: str = "facility-constraint-cells-v5"
     shortlist_limit: int = 20
     lexical_per_cell: int = 5
     retry_lexical_per_cell: int = 20
@@ -205,6 +214,34 @@ class EvidenceReranker(Protocol):
         hits: Sequence[EvidenceHit],
     ) -> RerankOutcome:
         ...
+
+
+def _execution_reasons(
+    semantic_statuses: Sequence[str],
+    reranker_statuses: Sequence[str],
+    *,
+    require_remote: bool,
+    semantic_applicable: bool,
+    reranker_applicable: bool,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    for channel, applicable, statuses in (
+        ("semantic", semantic_applicable, semantic_statuses),
+        ("reranker", reranker_applicable, reranker_statuses),
+    ):
+        if not applicable:
+            continue
+        for status in statuses:
+            if status in {"ok", "not_applicable", "no_candidates"}:
+                continue
+            if status == "disabled":
+                if require_remote:
+                    reasons.append(f"{channel}_unavailable")
+            elif status in {"request_failed", "invalid_response", "release_mismatch", "service_expired"}:
+                reasons.append(f"{channel}_{status}")
+            else:
+                reasons.append(f"{channel}_failed")
+    return tuple(dict.fromkeys(reasons))
 
 
 def compile_evidence_constraints(
@@ -437,7 +474,8 @@ class ConstraintEvidenceRetriever:
                 for facility_id in attachment_facilities
             }
             return EvidenceRecallResult(
-                empty_groups, (), (), (), "complete", False, "no_constraints", False
+                empty_groups, (), (), (), "complete", False, "no_constraints", False,
+                semantic_status="not_applicable", execution_status="not_run",
             )
 
         search_started = perf_counter()
@@ -485,10 +523,12 @@ class ConstraintEvidenceRetriever:
                     (constraint,),
                     (cell.facility_id,),
                     limit=self.policy.retry_lexical_per_cell,
+                    allow_semantic=all(status == "ok" for status in semantic_statuses),
                 )
                 search_ms += (perf_counter() - search_started) * 1000
                 retry_candidates.extend(retry_search.candidates)
-                semantic_statuses.append(retry_search.semantic_status)
+                if retry_search.semantic_status != "not_retried":
+                    semantic_statuses.append(retry_search.semantic_status)
             already_admitted = {item.hit.evidence_id for item in admitted}
             retry_candidates = [
                 item for item in retry_candidates
@@ -512,9 +552,11 @@ class ConstraintEvidenceRetriever:
                 reranker_reason = ",".join(dict.fromkeys((
                     *reranker_reason.split(","), *retry_reason.split(","),
                 )))
-            coverage = assess_facility_coverage(displayed, constraints, scored)
             admitted = (*admitted, *retry_admitted)
 
+        # Final order can differ from the provisional retry set. Assess every
+        # attachment candidate without expanding the bounded retry allowance.
+        coverage = assess_facility_coverage(attachment_facilities, constraints, scored)
         by_facility = select_evidence_groups(
             attachment_facilities,
             scored,
@@ -532,23 +574,21 @@ class ConstraintEvidenceRetriever:
             admitted,
             attached_ids,
         )
-        services_succeeded = (
-            all(status in {"ok", "disabled"} for status in semantic_statuses)
-            and all(reason in {"ok", "disabled", "no_candidates"}
-                    for reason in reranker_reason.split(","))
+        semantic_applicable = any(
+            "verbatim_review" in item.source_types and (item.terms_en or item.terms_ko)
+            for item in constraints
         )
-        if self.policy.require_remote_services:
-            services_succeeded = services_succeeded and (
-                self._semantic_source is not None
-                and self._reranker is not None
-                and all(status == "ok" for status in semantic_statuses)
-                and all(reason in {"ok", "no_candidates"}
-                        for reason in reranker_reason.split(","))
-            )
+        reranker_applicable = bool(admitted)
+        reason_codes = _execution_reasons(
+            semantic_statuses,
+            reranker_reason.split(","),
+            require_remote=self.policy.require_remote_services,
+            semantic_applicable=semantic_applicable,
+            reranker_applicable=reranker_applicable,
+        )
         finish_status: FinishStatus = (
             "complete"
-            if services_succeeded
-            and not any(cell.required and cell.status == "missing" for cell in coverage)
+            if not any(cell.required and cell.status == "missing" for cell in coverage)
             else "partial_evidence"
         )
         return EvidenceRecallResult(
@@ -563,6 +603,10 @@ class ConstraintEvidenceRetriever:
             semantic_status=",".join(dict.fromkeys(semantic_statuses)),
             search_ms=search_ms,
             reranking_ms=reranking_ms,
+            execution_status="partial" if reason_codes else "complete",
+            reason_codes=reason_codes,
+            semantic_applicable=semantic_applicable,
+            reranker_applicable=reranker_applicable,
         )
 
     def _search(
@@ -572,6 +616,7 @@ class ConstraintEvidenceRetriever:
         facility_ids: Sequence[str],
         *,
         limit: int,
+        allow_semantic: bool = True,
     ) -> _CandidateSearchBatch:
         search_started = perf_counter()
         candidate_by_key: dict[
@@ -660,8 +705,11 @@ class ConstraintEvidenceRetriever:
                         lexical_rank=ranks[found.facility_id],
                     )
 
-        semantic_status = "disabled"
-        if self._semantic_source is not None and semantic_queries:
+        semantic_status = (
+            "not_applicable" if not semantic_queries else
+            "not_retried" if not allow_semantic else "disabled"
+        )
+        if self._semantic_source is not None and semantic_queries and allow_semantic:
             semantic_started = perf_counter()
             try:
                 outcome: SemanticReviewOutcome = self._semantic_source.retrieve(
@@ -825,7 +873,10 @@ class ConstraintEvidenceRetriever:
             if self._reranker is None:
                 outcome = RerankOutcome(ordered_hits, False, "disabled")
             else:
-                outcome = self._reranker.rerank(query, ordered_hits)
+                try:
+                    outcome = self._reranker.rerank(query, ordered_hits)
+                except Exception:
+                    outcome = RerankOutcome(ordered_hits, False, "request_failed")
             logger.info(
                 "Evidence recall phase=rerank role=%s candidates=%d used=%s "
                 "reason=%s elapsed_ms=%.1f",
@@ -906,7 +957,7 @@ def assess_facility_coverage(
             )
             status: CoverageStatus
             if matched:
-                status = "risk_found" if constraint.role == "risk" else "satisfied"
+                status = "matched"
             else:
                 status = "missing"
             output.append(CoverageCell(
@@ -995,10 +1046,6 @@ def select_evidence_groups(
 
 
 def evidence_payload(item: ScoredEvidence) -> dict[str, object]:
-    if len(item.roles) == 1:
-        role = next(iter(item.roles))
-    else:
-        role = "mixed"
     return {
         "evidence_id": item.hit.evidence_id,
         "place_id": item.hit.facility_id,
@@ -1011,7 +1058,7 @@ def evidence_payload(item: ScoredEvidence) -> dict[str, object]:
         "visit_date": item.hit.visit_date,
         "scraped_at": item.hit.scraped_at,
         "is_verbatim": item.hit.is_verbatim,
-        "evidence_role": role,
+        "retrieval_roles": sorted(item.roles),
         "matched_constraint_ids": sorted(item.matched_constraint_ids),
         "distinctiveness_score": round(item.distinctiveness, 6),
         "similar_review_count": item.local_cluster_size,

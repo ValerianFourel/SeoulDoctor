@@ -509,7 +509,8 @@ class LiveRetrievalTests(unittest.TestCase):
             rules=make_rules(evidence=True),
             query=self.query(),
         )
-        self.assertEqual(result.telemetry.status, "incomplete")
+        self.assertEqual(result.telemetry.status, "complete")
+        self.assertEqual(result.telemetry.execution_status, "complete")
         self.assertEqual(result.telemetry.finish_status, "partial_evidence")
         self.assertEqual(result.telemetry.termination_reason, "finish_search")
         self.assertTrue(result.telemetry.retry_ran)
