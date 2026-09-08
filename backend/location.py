@@ -1,6 +1,7 @@
 
 from typing import List, Optional, Dict, Any
 import logging
+import re
 from dotenv import load_dotenv
 import os
 from cookies import CookieConsent, should_log_analytics
@@ -531,13 +532,33 @@ def verify_and_standardize_address(
     
     _log_location_detail(consent, "debug", "Verifying location: %s", location_text)
     
+    alias = re.fullmatch(
+        r"(?:(?:seoul|서울(?:특별시)?)\s*)?(?:중구\s*)?"
+        r"(?:myeon(?:g)?[ -]?dong|명동)\s*(station|역)?"
+        r"(?:\s*,?\s*(?:seoul|서울))?",
+        location_text.strip(),
+        flags=re.IGNORECASE,
+    )
+    if alias:
+        location_text = "서울 중구 명동" + ("역" if alias.group(1) else "")
+
+    def matches_requested_place(result: Optional[Dict[str, Any]]) -> bool:
+        if not result:
+            return False
+        if not alias:
+            return True
+        identity = " ".join(str(result.get(field, "")) for field in (
+            "district", "dong", "place_name", "formatted_address", "address_korean"
+        ))
+        return "서울" in identity and "중구" in identity and "명동" in identity
+
     # ===== STRATEGY 1: Direct Google Maps Geocoding =====
     if GOOGLE_MAPS_API_KEY:
         logger.debug("Trying Google Maps direct geocoding...")
         result = google_maps_geocode(
             location_text, add_seoul=False, consent=consent
         )
-        if result:
+        if matches_requested_place(result):
             _log_location_detail(
                 consent,
                 "info",
@@ -553,7 +574,7 @@ def verify_and_standardize_address(
         result = google_maps_geocode(
             location_text, add_seoul=True, consent=consent
         )
-        if result:
+        if matches_requested_place(result):
             _log_location_detail(
                 consent,
                 "info",
@@ -567,7 +588,7 @@ def verify_and_standardize_address(
     if GOOGLE_MAPS_API_KEY:
         logger.debug("Trying Google Maps place search...")
         result = google_maps_place_search(location_text, consent=consent)
-        if result:
+        if matches_requested_place(result):
             _log_location_detail(
                 consent,
                 "info",
@@ -583,7 +604,7 @@ def verify_and_standardize_address(
         
         # Try direct Kakao geocoding
         result = kakao_geocode(location_text, consent=consent)
-        if result:
+        if matches_requested_place(result):
             _log_location_detail(
                 consent,
                 "info",
@@ -594,7 +615,7 @@ def verify_and_standardize_address(
             return result
 
         result = kakao_keyword_search(location_text, consent=consent)
-        if result:
+        if matches_requested_place(result):
             _log_location_detail(
                 consent,
                 "info",
@@ -607,7 +628,7 @@ def verify_and_standardize_address(
         # Try adding "서울" prefix for Kakao
         if not location_text.startswith("서울") and not location_text.lower().startswith("seoul"):
             result = kakao_geocode(f"서울 {location_text}", consent=consent)
-            if result:
+            if matches_requested_place(result):
                 _log_location_detail(
                     consent,
                     "info",
@@ -620,7 +641,7 @@ def verify_and_standardize_address(
             result = kakao_keyword_search(
                 f"서울 {location_text}", consent=consent
             )
-            if result:
+            if matches_requested_place(result):
                 _log_location_detail(
                     consent,
                     "info",
@@ -635,7 +656,7 @@ def verify_and_standardize_address(
             result = kakao_geocode(
                 f"서울 {location_text}구", consent=consent
             )
-            if result:
+            if matches_requested_place(result):
                 _log_location_detail(
                     consent,
                     "info",

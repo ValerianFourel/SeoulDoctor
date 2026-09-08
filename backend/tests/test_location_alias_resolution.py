@@ -68,6 +68,25 @@ class LocationAliasResolutionTests(unittest.TestCase):
             location.verify_and_standardize_address("Myeong-dong station")
             geocode.assert_called_once_with("서울 중구 명동역", add_seoul=False, consent=None)
 
+    def test_kakao_rejects_wrong_address_then_accepts_matching_landmark(self):
+        with (
+            patch.object(location, "GOOGLE_MAPS_API_KEY", None),
+            patch.object(location, "KAKAO_REST_API_KEY", "test"),
+            patch.object(location, "kakao_geocode", return_value=self.wrong) as geocode,
+            patch.object(location, "kakao_keyword_search", return_value=self.correct) as keyword,
+        ):
+            self.assertEqual(location.verify_and_standardize_address("myeondong"), self.correct)
+            geocode.assert_called_once_with("서울 중구 명동", consent=None)
+            keyword.assert_called_once_with("서울 중구 명동", consent=None)
+
+    def test_same_name_outside_seoul_is_not_accepted(self):
+        other_city = {**self.correct, "formatted_address": "강원특별자치도 춘천시 명동"}
+        with (
+            patch.object(location, "google_maps_geocode", return_value=other_city),
+            patch.object(location, "google_maps_place_search", return_value=other_city),
+        ):
+            self.assertIsNone(location.verify_and_standardize_address("Myeongdong"))
+
 
 if __name__ == "__main__":
     unittest.main()
