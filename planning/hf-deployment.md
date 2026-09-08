@@ -16,6 +16,12 @@ backend/venv/bin/python scripts/sync_ncs_spaces.py app
 backend/venv/bin/python scripts/sync_ncs_spaces.py app --apply --allow-public
 ```
 
+For one deployment through GitHub Actions, prefix the pushed `ncs` commit title
+with `[deploy ncs] `. This explicit request runs the existing workflow using
+`NCS_HF_TOKEN`, even when automatic sync is disabled. Normal pushes still require
+`NCS_HF_SYNC_ENABLED=true`. Checkout remains pinned to the pushed revision and
+the workflow only deploys `ncs` to the fixed NCS Space. It does not modify `main`.
+
 `--allow-public` acknowledges the target's current visibility. It does not change
 visibility, hardware, or the fixed target. The source branch marker and parent
 revision checks still apply. The sections below record the earlier private

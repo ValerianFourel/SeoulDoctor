@@ -12,13 +12,44 @@ No Hugging Face credential is present in the process environment.
 
 Root owns deployment preparation in `/tmp/seouldoc-response-polish`, including
 `scripts/sync_ncs_spaces.py`, `backend/tests/test_ncs_deployment.py`, and this
-record. The explicit `--allow-public` deployment option acknowledges the
+record. Root owns the two-line NCS workflow update that permits an explicitly
+requested deployment when the commit title starts with `[deploy ncs] `, while
+keeping automatic sync opt-in for ordinary pushes. It uses the existing Actions
+secret and the fixed public NCS target; main remains excluded.
+Root also owns `scripts/check_response_preservation.py`, a bounded
+four-request live API regression with source/runtime revision checks and
+retained failures. Its local runner replay checks state continuity, rejection
+of generic replies and incorrect distances, and HTTP error retention. This
+runner verifies the final guided reply; the API-test delegate's sentinel test
+checks preservation of generated text separately.
+The live before-check ran against the old Space revision and failed. The
+initial request returned generic text in 12.394 seconds; the 1 km followup
+timed out after 180.166 seconds. The runner stopped after two attempted calls,
+retaining the incomplete conversation without retry. Records are in the root
+checkout's `.audit/response-polish-20260908-deploy/api-before/`. This is a failed
+diagnostic, not evidence that the pending response change is deployed.
+The explicit `--allow-public` deployment option acknowledges the
 existing public NCS target without changing visibility or hardware. Automatic
 sync remains opt-in. The API-test delegate owns only
 `backend/tests/test_chat_response_preservation.py` in the isolated worktree
 `/tmp/seouldoc-api-response-tests`, branch
 `local/ncs-api-response-tests-20260908`, based on the merge above. These tests
 exercise multiple requests through the API and check response preservation.
+The three new API tests passed through four HTTP requests on the host, covering
+English search and refinement, Korean retrieval, and an unchanged generated
+reply. The real route, search orchestration, composition, and serialization run
+with controlled model/retriever/geocoder boundaries. Independent review passed
+for those tests, the live runner, deployment option, and explicit workflow
+trigger. A sandbox TestClient stall was resolved by the bounded host run.
+Seven deployment boundary tests and the 36 focused evaluator tests passed.
+After integrating the API tests as `7860e9d3`, the combined backend suite passed
+270 tests in 5.331 seconds. The frontend production build had already passed
+for the unchanged application source; subsequent changes affect tests, scripts,
+workflow configuration, and documentation only.
+The public Space's 89 managed files match its recorded NCS source commit
+`66022eabf25ee0dde0ebeab4276aef78d7e6ef0b`; no unrecorded live fixes were found.
+The next deployment also includes the existing committed `ReviewEvidence.tsx`
+refactor `1807fa81`, along with the three response-polish runtime files.
 The next action is to complete these checks, then deploy with an approved
 process credential and verify the running revision and Jonggak conversation.
 

@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   sync:
-    if: github.ref == 'refs/heads/ncs' && vars.NCS_HF_SYNC_ENABLED == 'true'
+    if: github.ref == 'refs/heads/ncs' && (vars.NCS_HF_SYNC_ENABLED == 'true' || startsWith(github.event.head_commit.message, '[deploy ncs] '))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -26,4 +26,4 @@ jobs:
       - name: Sync application
         env:
           HF_TOKEN: ${{ secrets.NCS_HF_TOKEN }}
-        run: python scripts/sync_ncs_spaces.py app --apply
+        run: python scripts/sync_ncs_spaces.py app --apply --allow-public

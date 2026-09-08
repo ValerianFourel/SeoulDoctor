@@ -1,5 +1,26 @@
 # Useful follow-up after a facility search
 
+## API regression runner
+
+`scripts/check_response_preservation.py` sends four public NCS `/chat` requests:
+two independent Jonggak searches, each followed by a 1 km refinement. It checks
+that the guided response survives, its closest-clinic sentence agrees with the
+cards, and the refinement preserves specialty and location. The source and
+running Space revisions must both match the supplied revision. Requests,
+responses, latencies, and errors stay in the fresh excluded `.audit/` directory.
+
+```bash
+backend/venv/bin/python scripts/check_response_preservation.py --expected-space-sha SPACE_COMMIT
+```
+
+Replace `SPACE_COMMIT` with the verified Hugging Face Space commit, not a GitHub
+commit. A nonzero exit is a failed check. The runner does not prove review
+faithfulness or preservation of arbitrary model output; generated-text
+preservation is covered separately through the real API route with a controlled
+model response in `backend/tests/test_chat_response_preservation.py`.
+
+## Original response problem
+
 The NCS app returned the same generic caution for every successful search with
 cards. It generated an answer first, then discarded it in
 `finalize_evidence_response`. Changing the generation prompt alone could not
