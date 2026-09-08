@@ -61,7 +61,12 @@ class StateReliabilityTests(unittest.TestCase):
 
     def test_wait_intolerance_is_not_misread_as_withdrawal(self):
         state = State(keywords=["short wait"])
-        for message in ("Waiting is not fine.", "I don't think waiting is acceptable.", "대기가 길면 괜찮지 않아요."):
+        for message in (
+            "Waiting is not fine.", "I don't think waiting is acceptable.",
+            "Waiting isn't okay.", "Waiting isn’t okay.", "Long waits aren't acceptable.",
+            "Waiting is not at all okay.", "Is waiting okay?",
+            "대기가 길면 괜찮지 않아요.", "대기는 안 괜찮아요.",
+        ):
             with self.subTest(message=message):
                 self.assertIn("short wait", self.apply(message, state).keywords)
 
@@ -146,6 +151,12 @@ class StateReliabilityTests(unittest.TestCase):
         self.assertTrue(result.inquiries)
         excluded = self.apply("Please exclude clinics with unfriendly nurses.")
         self.assertIn("unfriendly nurses", excluded.negative_keywords)
+        korean = self.apply(
+            "간호사가 불친절하다는 후기는 어떤 의미인가요?",
+            negative_keywords=["unfriendly nurses", "unfriendly"],
+        )
+        self.assertEqual(korean.negative_keywords, [])
+        self.assertTrue(korean.inquiries)
 
     def test_model_cannot_reset_context_or_remove_without_user_instruction(self):
         state = State(comment_terms=["clear explanations"], hard_keywords=["parking"])

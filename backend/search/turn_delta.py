@@ -165,6 +165,20 @@ def _canonical_comment_terms(value: Any) -> tuple[str, ...] | None:
 
 def _negative_terms(message: str, value: Any) -> tuple[str, ...] | None:
     incoming = list(_optional_terms(value) or ())
+    inquiries = {
+        canonical
+        for canonical, patterns in _NEGATIVE_SIGNAL_PATTERNS.items()
+        if any(pattern.search(clause) for pattern in patterns for clause in intent_clauses(message))
+        and all(is_inquiry(clause) and not is_exclusion(clause)
+                for clause in intent_clauses(message)
+                if any(pattern.search(clause) for pattern in patterns))
+    }
+    incoming = [term for term in incoming if not any(
+        _normalize(term) == canonical or any(pattern.search(term) for pattern in _NEGATIVE_SIGNAL_PATTERNS[canonical])
+        for canonical in inquiries
+    )]
+    if "unfriendly nurses" in inquiries:
+        incoming = [term for term in incoming if _normalize(term) not in {"unfriendly", "rude", "nurse", "nurses"}]
     detected = {
         canonical
         for canonical, patterns in _NEGATIVE_SIGNAL_PATTERNS.items()
@@ -264,7 +278,12 @@ def _accepts_waiting(message: str) -> bool:
     for clause in intent_clauses(message):
         if not re.search(r"\bwait(?:ing|s)?\b|대기|기다", clause, re.I):
             continue
-        if re.search(r"\bnot\s+(?:fine|okay|acceptable)|don['’]?t\s+think|do not\s+think|괜찮지\s*않", clause, re.I):
+        if is_inquiry(clause):
+            continue
+        if re.search(
+            r"\b(?:not|isn['’]?t|aren['’]?t)(?:\s+(?:at all|really))?\s+(?:fine|okay|ok|acceptable)\b"
+            r"|don['’]?t\s+think|do not\s+think|괜찮지\s*않|안\s*괜찮", clause, re.I,
+        ):
             continue
         if is_withdrawal(clause) or re.search(
             r"\b(?:fine|okay|acceptable|willing to wait|can wait|not a dealbreaker)\b|괜찮|상관\s*없", clause, re.I,
