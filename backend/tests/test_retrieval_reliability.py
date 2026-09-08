@@ -41,7 +41,9 @@ from search.semantic_retriever import SemanticReviewOutcome
 
 class IdentityReranker:
     def rerank(self, query, hits):
-        return RerankOutcome(tuple(hits), True, "ok")
+        return RerankOutcome(tuple(hits), True, "ok", scores=tuple(
+            (hit.evidence_id, 1.0 / (index + 1)) for index, hit in enumerate(hits)
+        ))
 
 
 class EmptyScopedEvidence:

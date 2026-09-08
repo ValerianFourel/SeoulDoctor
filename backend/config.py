@@ -78,7 +78,7 @@ RERANKER_TIMEOUT_SECONDS = _bounded_positive_float_env(
     "RERANKER_TIMEOUT_SECONDS", 20.0, 120.0
 )
 RERANKER_MAX_CANDIDATES = _bounded_positive_int_env(
-    "RERANKER_MAX_CANDIDATES", 64, 512
+    "RERANKER_MAX_CANDIDATES", 256, 256
 )
 
 BGE_M3_RETRIEVER_URL = os.getenv(

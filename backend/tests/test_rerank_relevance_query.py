@@ -60,7 +60,9 @@ class RerankRelevanceQueryTests(TestCase):
         class CaptureReranker:
             def rerank(self, query, hits):
                 calls.append((query, tuple(hits)))
-                return RerankOutcome(tuple(hits), True, "ok")
+                return RerankOutcome(tuple(hits), True, "ok", scores=tuple(
+                    (hit.evidence_id, 1.0 / (index + 1)) for index, hit in enumerate(hits)
+                ))
 
         scored, used, reason = ConstraintEvidenceRetriever(reranker=CaptureReranker())._score(
             admitted, admitted, constraints,

@@ -48,8 +48,8 @@ class RemoteEvidenceReranker:
             raise ValueError("reranker base_url cannot be empty")
         if not 0.1 <= timeout_seconds <= 120.0:
             raise ValueError("reranker timeout_seconds must be between 0.1 and 120")
-        if not 1 <= max_candidates <= 512:
-            raise ValueError("reranker max_candidates must be between 1 and 512")
+        if not 1 <= max_candidates <= 256:
+            raise ValueError("reranker max_candidates must be between 1 and 256")
         self._base_url = normalized_url
         self._token = token.strip()
         self._timeout_seconds = timeout_seconds
@@ -123,7 +123,7 @@ class RemoteEvidenceReranker:
         return RerankOutcome(
             (*reranked, *unique_original[len(selected):]),
             True,
-            "ok",
+            "ok" if len(selected) == len(unique_original) else "candidate_limit",
             model,
             tuple(sorted(score_by_id.items())),
         )

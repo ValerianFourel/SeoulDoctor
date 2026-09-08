@@ -156,7 +156,7 @@ class _CandidateSearchBatch:
 
 @dataclass(frozen=True)
 class EvidenceRecallPolicy:
-    version: str = "facility-constraint-cells-v5"
+    version: str = "facility-constraint-cells-v6"
     shortlist_limit: int = 20
     lexical_per_cell: int = 5
     retry_lexical_per_cell: int = 20
@@ -926,12 +926,19 @@ class ConstraintEvidenceRetriever:
                 (perf_counter() - rerank_started) * 1000,
             )
             used = used or outcome.used
-            reasons.append(outcome.reason)
+            score_map = dict(outcome.scores) if outcome.used else {}
+            reason = outcome.reason
+            if outcome.used and reason == "ok" and set(score_map) != {
+                hit.evidence_id for hit in ordered_hits
+            }:
+                reason = "incomplete_scores"
+            reasons.append(reason)
             for rank, found in enumerate(outcome.hits, start=1):
-                rerank_rank[found.evidence_id] = rank
-                scores = getattr(outcome, "scores", ())
-                score_map = dict(scores) if scores else {}
-                if found.evidence_id in score_map:
+                if found.evidence_id in score_map and (
+                    found.evidence_id not in rerank_score
+                    or score_map[found.evidence_id] > rerank_score[found.evidence_id]
+                ):
+                    rerank_rank[found.evidence_id] = rank
                     rerank_score[found.evidence_id] = score_map[found.evidence_id]
 
         profiles = score_local_distinctiveness(tuple(item.hit for item in admitted))
@@ -968,11 +975,7 @@ class ConstraintEvidenceRetriever:
         return (
             tuple(sorted(
                 scored,
-                key=lambda value: (
-                    -value.selection_score,
-                    value.hit.ordinal,
-                    value.hit.evidence_id,
-                ),
+                key=lambda value: (*_relevance_order(value), value.hit.ordinal, value.hit.evidence_id),
             )),
             used,
             ",".join(dict.fromkeys(reasons)) or "no_candidates",
@@ -1010,6 +1013,13 @@ def assess_facility_coverage(
     return tuple(output)
 
 
+def _relevance_order(item: ScoredEvidence) -> tuple[bool, float]:
+    return (
+        item.rerank_score is None,
+        -(item.rerank_score if item.rerank_score is not None else item.selection_score),
+    )
+
+
 def select_evidence_groups(
     facility_ids: Sequence[str],
     evidence: Sequence[ScoredEvidence],
@@ -1019,18 +1029,21 @@ def select_evidence_groups(
 ) -> Mapping[str, EvidenceGroups]:
     output: dict[str, EvidenceGroups] = {}
     for facility_id in facility_ids:
-        candidates = [
+        candidates = sorted((
             item for item in evidence if item.hit.facility_id == facility_id
-        ]
+        ), key=lambda item: (*_relevance_order(item), item.hit.ordinal, item.hit.evidence_id))
         selected: list[ScoredEvidence] = []
         covered: set[str] = set()
         unused = [
             item for item in candidates
             if item.hit.is_verbatim and item.hit.source_type == "verbatim_review"
+            and any(char.isalpha() and not (
+                '\u3130' <= char <= '\u318f' or '\u1100' <= char <= '\u11ff'
+            ) for char in item.hit.original_text)
         ]
         warnings = sorted(
             (item for item in unused if "risk" in item.roles),
-            key=lambda item: (-item.selection_score, item.hit.ordinal),
+            key=lambda item: (*_relevance_order(item), item.hit.ordinal),
         )
         for warning in warnings:
             if len(selected) >= limit:
@@ -1039,27 +1052,16 @@ def select_evidence_groups(
                 selected.append(warning)
                 covered.update(warning.matched_constraint_ids)
                 unused.remove(warning)
-        if len(unused) > 1 and len(selected) < limit and limit > 1:
-            distinctive = max(
-                unused,
-                key=lambda item: (
-                    item.distinctiveness,
-                    item.selection_score,
-                    -item.hit.ordinal,
-                ),
-            )
-            selected.append(distinctive)
-            covered.update(distinctive.matched_constraint_ids)
-            unused.remove(distinctive)
         while unused and len(selected) < limit:
             selected_cluster_ids = {
                 item.local_cluster_id for item in selected
             }
             unused.sort(
                 key=lambda item: (
+                    *_relevance_order(item),
                     item.local_cluster_id in selected_cluster_ids,
                     -len(item.matched_constraint_ids - covered),
-                    -item.selection_score,
+                    -item.distinctiveness,
                     item.local_cluster_size,
                     item.hit.ordinal,
                 )

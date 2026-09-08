@@ -289,7 +289,7 @@ class EvidenceRetrievalTests(unittest.TestCase):
         ))
         self.assertFalse(hasattr(profiles["specific"], "truth_score"))
 
-    def test_presentation_reserves_a_slot_for_distinctive_evidence(self) -> None:
+    def test_distinctiveness_cannot_displace_more_relevant_evidence(self) -> None:
         def scored(
             evidence_id: str,
             ordinal: int,
@@ -318,7 +318,7 @@ class EvidenceRetrievalTests(unittest.TestCase):
         )
         groups = select_evidence_groups(("alpha",), evidence, (), limit=3)
 
-        self.assertIn(
+        self.assertNotIn(
             "decisive-distinctive",
             {item.hit.evidence_id for item in groups["alpha"].presented},
         )
@@ -348,7 +348,7 @@ class EvidenceRetrievalTests(unittest.TestCase):
         evidence = (
             scored("generic-distinctive", 1, 1.0, 1.0, "generic"),
             scored("generic-duplicate", 2, 0.9, 0.5, "generic"),
-            scored("different-cluster", 3, 0.8, 0.4, "different"),
+            scored("different-cluster", 3, 0.9, 0.4, "different"),
         )
 
         groups = select_evidence_groups(("alpha",), evidence, (), limit=3)
