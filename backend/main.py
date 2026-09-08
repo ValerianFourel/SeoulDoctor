@@ -176,6 +176,7 @@ from config import (
     ENABLE_RETRIEVAL_DEBUG,
     GROQ_AGENT_MODEL,
     GROQ_CHAT_MODEL,
+    ANSWER_MODEL,
     GROQ_REASONING_EFFORT,
     LLM_PROVIDER,
     RETRIEVAL_DEBUG_LIMIT,
@@ -1919,10 +1920,10 @@ def execute_search(
         cards=results,
         metadata=state.last_retrieval_metadata,
         language=language,
-        complete=partial(request_answer_completion, client, model=GROQ_CHAT_MODEL) if client else None,
+        complete=partial(request_answer_completion, client, model=ANSWER_MODEL) if client else None,
         translation_api_key=os.getenv("GOOGLE_TRANSLATE_API_KEY", ""),
     )
-    state.last_retrieval_metadata["answer"] = {"model": GROQ_CHAT_MODEL, **outcome.trace}
+    state.last_retrieval_metadata["answer"] = {"model": ANSWER_MODEL, **outcome.trace}
     return outcome.text, serialize_results_for_chat(
         outcome.cards, include_debug=ENABLE_RETRIEVAL_DEBUG,
     )

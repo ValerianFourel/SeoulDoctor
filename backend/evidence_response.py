@@ -259,6 +259,7 @@ the question, say what remains unknown and how to check it. Never pretend a targ
 was found. Do not invent symptoms, identities, distances, counts, percentages or guarantees.
 Use the supplied distance values only and label them straight-line, not walking distance.
 For each distance, name exactly one clinic using its exact name in that sentence.
+Distances are already on the cards; omit them unless they help answer the question.
 Omit measurements if ownership cannot be stated clearly. A partial evidence context
 never establishes that no concerns exist or that every review agrees.
 An uncertain candidate must not be endorsed as satisfying every mandatory requirement.
@@ -500,15 +501,22 @@ def _validate_proposal(proposal, context):
             if match.group(2).lower() in {"m", "미터"}:
                 value /= 1000
             named = [card for card in context["facilities"] if card["name"] and card["name"] in sentence]
+            prefix = sentence[:match.start()]
+            scope_measurement = (re.search(r"(?:\bwithin|\bradius(?: of)?|반경)\s*$", prefix, re.I)
+                                 and not any(card["name"] in prefix for card in named))
             suggested_change = re.search(
                 r"(?:\b(?:could|can|if you|would you like|try)\b|원하시면|원하신다면).*(?:expand|narrow|widen|extend|reduce|radius|넓|줄|조정|반경)",
                 sentence, re.I,
             )
-            if not named and suggested_change and 0 < value <= 100:
+            if scope_measurement and not suggested_change:
+                if value not in [context["active_state"]["max_distance_km"],
+                                  *context["search_progress"]["attempted_radii_km"]]:
+                    raise ValueError("radius_mismatch")
+            elif not named and suggested_change and 0 < value <= 100:
                 allowed_numbers.add(float(match.group(1)))
             elif len(named) == 1:
                 actual = named[0]["distance_km"]
-                if actual is None or value not in {actual, round(actual, 1)}:
+                if actual is None or value not in {actual, *(round(actual, digits) for digits in (1, 2, 3))}:
                     raise ValueError("distance_owner_mismatch")
             elif not named and re.search(r"radius|within|범위|이내|반경", sentence, re.I):
                 if value not in [context["active_state"]["max_distance_km"],

@@ -375,6 +375,13 @@ class AnswerReliabilityTests(unittest.TestCase):
         self.assertEqual(len(complete.calls), 1)
         self.assert_originals(outcome, [review(), review(owner="beta")])
 
+    def test_search_radius_and_rounded_clinic_distance_in_one_sentence(self):
+        submitted = proposal(answer="Within 1 km of Ichon, Clinic alpha is 0.29 km away by straight-line distance. Staff feedback is mixed. [1]")
+        complete = ScriptedCompletion(submitted, {"accepted": True, "issues": []})
+        self.assertEqual(self.answer(complete).trace["status"], "generated")
+        submitted["answer"] = submitted["answer"].replace("Within 1 km", "Within 10 km")
+        self.assertEqual(self.answer(ScriptedCompletion(submitted)).trace["reason"], "radius_mismatch")
+
     def test_context_does_not_promote_legacy_language_flags_or_summary_percentages(self):
         complete = ScriptedCompletion(proposal(), {"accepted": True, "issues": []})
         self.answer(complete, metadata={"retrieval_execution_status": "complete", "coverage_sufficient": False})

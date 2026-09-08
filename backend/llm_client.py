@@ -148,12 +148,13 @@ def request_answer_completion(
         model=model,
         messages=list(messages),
         temperature=0.0,
-        max_completion_tokens=max_completion_tokens,
+        **({"max_tokens": max_completion_tokens} if LLM_PROVIDER == "openrouter"
+           else {"max_completion_tokens": max_completion_tokens}),
         response_format={"type": "json_schema", "json_schema": {
             "name": "search_response", "strict": True, "schema": response_schema,
         }},
         extra_body={"provider": {"require_parameters": True}} if LLM_PROVIDER == "openrouter" else {},
-        reasoning_effort="low",
+        **({"reasoning_effort": "low"} if model.startswith("openai/gpt-oss-") else {}),
     )
     if not completion.choices or completion.choices[0].finish_reason != "stop":
         raise ValueError("answer_completion_incomplete")

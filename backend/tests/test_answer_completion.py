@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -30,12 +30,15 @@ class AnswerCompletionTests(unittest.TestCase):
 
     def test_valid_json_uses_explicit_timeout_and_disables_provider_retries(self):
         client = self.client()
-        value, _ = self.request(client)
+        with patch("llm_client.LLM_PROVIDER", "openrouter"):
+            value, _ = self.request(client)
         self.assertEqual(value, {"answer": "safe"})
         client.with_options.assert_called_once_with(max_retries=0, timeout=17.5)
         create = client.with_options.return_value.chat.completions.create
         create.assert_called_once()
-        self.assertEqual(create.call_args.kwargs["max_completion_tokens"], 3072)
+        self.assertEqual(create.call_args.kwargs["max_tokens"], 3072)
+        self.assertNotIn("max_completion_tokens", create.call_args.kwargs)
+        self.assertTrue(create.call_args.kwargs["extra_body"]["provider"]["require_parameters"])
         self.assertEqual(create.call_args.kwargs["temperature"], 0.0)
         self.assertEqual(create.call_args.kwargs["response_format"]["type"], "json_schema")
         self.assertTrue(create.call_args.kwargs["response_format"]["json_schema"]["strict"])
