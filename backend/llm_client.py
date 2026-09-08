@@ -130,40 +130,30 @@ def request_json_completion(
     raise last_error
 
 
-def request_text_completion(
+def request_answer_completion(
     client: Any,
     *,
     model: str,
     messages: Sequence[Mapping[str, str]],
     max_completion_tokens: int,
-    reasoning_effort: str,
-    temperature: float = 0.0,
-) -> tuple[str, Any]:
-    """Return nonempty text, retrying once with more tokens and low reasoning."""
-    last_error: Optional[BaseException] = None
-    for attempt in range(2):
-        try:
-            completion = client.chat.completions.create(
-                model=model,
-                messages=list(messages),
-                temperature=temperature,
-                max_completion_tokens=(
-                    max_completion_tokens
-                    if attempt == 0
-                    else max(2048, max_completion_tokens * 2)
-                ),
-                reasoning_effort=reasoning_effort if attempt == 0 else "low",
-            )
-            content = completion.choices[0].message.content
-            if not isinstance(content, str) or not content.strip():
-                raise ValueError("model returned empty answer content")
-            return content, completion
-        except Exception as error:
-            last_error = error
-            if attempt == 1 or not _can_retry(error):
-                raise
-    assert last_error is not None
-    raise last_error
+    timeout_seconds: float,
+) -> tuple[dict[str, Any], Any]:
+    """Make one bounded request; incomplete output cannot become an answer."""
+    if client is None:
+        raise RuntimeError("answer_model_unavailable")
+    completion = client.with_options(
+        max_retries=0, timeout=timeout_seconds,
+    ).chat.completions.create(
+        model=model,
+        messages=list(messages),
+        temperature=0.0,
+        max_completion_tokens=max_completion_tokens,
+        response_format={"type": "json_object"},
+        reasoning_effort="low",
+    )
+    if not completion.choices or completion.choices[0].finish_reason != "stop":
+        raise ValueError("answer_completion_incomplete")
+    return _json_object(completion.choices[0].message.content), completion
 
 
 def request_tool_completion(

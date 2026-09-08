@@ -267,6 +267,27 @@ class RetrievalReliabilityTests(unittest.TestCase):
                 self.assertEqual(group["coverage_status"], "unassessed")
                 self.assertTrue(group["unverified"])
 
+    def test_coverage_aggregate_uses_the_requested_final_card_count(self):
+        identifiers = ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot")
+        result = CandidateRetrievalAdapter(
+            active_index=FakeIndex(ShortlistEvidenceScopedIndex(identifiers)),
+            legacy_pipeline=FakePipeline(), evidence_policy=EvidenceRecallPolicy(shortlist_limit=3),
+        ).rank(
+            scope=make_scope(identifiers),
+            eligible=pd.DataFrame({"place_id": identifiers, "name": identifiers,
+                                   "distance_km": [1, 2, 3, 4, 5, 6]}),
+            rules=make_rules(evidence=True),
+            query=RetrievalQuery("friendly clinic", 7, "distance", 0.9, display_limit=4),
+        )
+        metadata = result.dataframe.attrs["rag_metadata"]
+        self.assertEqual(metadata["coverage_candidate_ids"], result.dataframe["place_id"].head(4).tolist())
+        final_cells = [cell for cell in metadata["evidence_coverage"]
+                       if cell["facility_id"] in metadata["coverage_candidate_ids"]]
+        self.assertEqual(metadata["coverage_sufficient"], not any(
+            cell["required"] and cell["status"] in {"missing", "unassessed"} for cell in final_cells))
+        with self.assertRaises(ValueError):
+            RetrievalQuery("friendly clinic", 7, "distance", 0.9, display_limit=0)
+
     def test_legacy_english_boolean_does_not_satisfy_a_hard_language_requirement(self):
         flagged = facility("flagged")
         flagged["has_english"] = True

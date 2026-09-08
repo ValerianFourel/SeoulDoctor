@@ -1,5 +1,5 @@
 import unittest
-from evidence_response import finalize_evidence_response
+from backend.tests.test_evidence_response import fallback_response
 from models import serialize_results_for_chat
 
 
@@ -14,10 +14,9 @@ def review(text, identity="review:fixture"):
 class ReviewPresentationTests(unittest.TestCase):
     def test_reply_is_concise_and_api_retains_identity(self):
         source = review("The nurse explained the paperwork clearly.")
-        reply, cards = finalize_evidence_response(
-            "Perfect match with evidence:fixture", [{"place_id": "fixture-clinic",
-             "retrieval_evidence": [source]}], {"retrieval_status": "incomplete"}, "English")
-        self.assertIn("Search is incomplete", reply)
+        reply, cards = fallback_response([{"place_id": "fixture-clinic",
+             "retrieval_evidence": [source]}], {"retrieval_execution_status": "partial"}, "English")
+        self.assertIn("search did not finish", reply)
         self.assertNotIn(source["text"], reply)
         self.assertNotIn("review:fixture", reply)
         self.assertNotIn("evidence:fixture", reply)
@@ -138,7 +137,7 @@ class TranslationTests(unittest.TestCase):
 
     def test_supporting_group_reviews_are_not_lost(self):
         source = review("The nurse explained the paperwork clearly.")
-        reply, cards = finalize_evidence_response("", [{"place_id": "fixture-clinic",
+        reply, cards = fallback_response([{"place_id": "fixture-clinic",
             "retrieval_evidence_groups": {"supporting": [source]}}], {}, "English")
         self.assertEqual(cards[0]["retrieval_evidence"][0]["text"], source["text"])
         self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["status"], "original")

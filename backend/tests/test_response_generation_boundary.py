@@ -1,4 +1,4 @@
-"""Keep deterministic retrieval replies off the final text-generation path."""
+"""The source-aware answer path replaces obsolete context and text generation."""
 
 from pathlib import Path
 import sys
@@ -14,7 +14,7 @@ from models import State
 
 
 class ResponseGenerationBoundaryTests(unittest.TestCase):
-    def test_complete_retrieval_path_skips_final_text_generation(self):
+    def test_complete_retrieval_path_uses_verified_answer_once(self):
         import main
 
         frame = pd.DataFrame([facility("alpha", category="치과")])
@@ -40,7 +40,11 @@ class ResponseGenerationBoundaryTests(unittest.TestCase):
                 )
 
         context_builder = Mock(return_value="unused context")
-        final_generation = Mock(return_value=("unsafe generated response", None))
+        accepted = "This clinic is a search candidate. Ask it about appointment availability."
+        final_generation = Mock(side_effect=[
+            ({"answer": accepted, "assessments": [], "citations": []}, None),
+            ({"accepted": True, "issues": []}, None),
+        ])
         state = State(
             specialty="치과",
             specialty_confidence=0.95,
@@ -65,7 +69,7 @@ class ResponseGenerationBoundaryTests(unittest.TestCase):
             ),
             patch.object(main, "CandidateRetrievalAdapter", Adapter),
             patch.object(main, "client", object()),
-            patch.object(main, "request_text_completion", final_generation),
+            patch.object(main, "request_answer_completion", final_generation),
         ):
             response, cards = main.execute_search(
                 state,
@@ -73,8 +77,8 @@ class ResponseGenerationBoundaryTests(unittest.TestCase):
             )
 
         context_builder.assert_not_called()
-        final_generation.assert_not_called()
-        self.assertIn("1 option for dentistry across Seoul", response)
+        self.assertEqual(final_generation.call_count, 2)
+        self.assertEqual(response, accepted)
         self.assertEqual([card["place_id"] for card in cards], ["alpha"])
 
 

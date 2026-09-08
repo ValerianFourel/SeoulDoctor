@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager, ExitStack
 from pathlib import Path
 import sys
+import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -126,9 +127,24 @@ class ChatResponsePreservationTests(unittest.TestCase):
         self.utils = utils
         self.catalog = _catalog()
         self.retrieval_calls = []
-        self.text_generation = Mock(
-            return_value=("MODEL OUTPUT THAT MUST NOT REPLACE RETRIEVAL", None)
-        )
+        self.generated_answers = []
+        def complete(*args, **kwargs):
+            payload = json.loads(kwargs["messages"][-1]["content"])
+            if "proposal" in payload:
+                return {"accepted": True, "issues": []}, None
+            evidence = payload["evidence"]
+            korean = payload["response_language"] == "Korean"
+            answer = (
+                "환자는 진료 설명이 자세했다고 적었습니다 [1]. 원문을 확인하고 예약 가능 여부를 병원에 문의하세요."
+                if korean else
+                "A patient reports clear explanations [1]. Read the original below and ask the clinic about an appointment."
+            ) if evidence else "These are nearby search candidates. Contact the clinic about an appointment."
+            citations = [{"marker": 1, "place_id": evidence[0]["place_id"],
+                          "evidence_id": evidence[0]["evidence_id"],
+                          "original_excerpt": evidence[0]["original_text"]}] if evidence else []
+            self.generated_answers.append(answer)
+            return {"answer": answer, "assessments": [], "citations": citations}, None
+        self.answer_generation = Mock(side_effect=complete)
         self.context_builder = Mock(return_value="test facility context")
 
         retrieval_calls = self.retrieval_calls
@@ -181,6 +197,7 @@ class ChatResponsePreservationTests(unittest.TestCase):
                 ranked["relevance_rank"] = range(1, len(ranked) + 1)
                 ranked.attrs["rag_metadata"] = {
                     "retrieval_status": "complete",
+                    "retrieval_execution_status": "complete",
                     "coverage_sufficient": True,
                 }
                 return SimpleNamespace(
@@ -204,7 +221,7 @@ class ChatResponsePreservationTests(unittest.TestCase):
         self.stack.enter_context(patch.object(main, "CandidateRetrievalAdapter", Adapter))
         self.stack.enter_context(patch.object(main, "client", object()))
         self.stack.enter_context(
-            patch.object(main, "request_text_completion", self.text_generation)
+            patch.object(main, "request_answer_completion", self.answer_generation)
         )
         self.stack.enter_context(patch.object(main, "ENABLE_RETRIEVAL_DEBUG", False))
         self.stack.enter_context(patch.object(main, "GOOGLE_MAPS_API_KEY", ""))
@@ -229,9 +246,7 @@ class ChatResponsePreservationTests(unittest.TestCase):
         self.stack.enter_context(
             patch.object(self.main, "request_json_completion", side_effect=boundary)
         )
-        self.stack.enter_context(
-            patch.object(self.utils, "request_json_completion", side_effect=boundary)
-        )
+
 
     @staticmethod
     def _geocoded(location):
@@ -265,14 +280,7 @@ class ChatResponsePreservationTests(unittest.TestCase):
 
         self.assertEqual(first.status_code, 200, first.text)
         first_body = first.json()
-        self.assertEqual(
-            first_body["response"],
-            "I found 4 options for orthopedics around Jonggak. Of the options "
-            "shown, 광화문정형외과의원 is closest, about 0.4 km from Jonggak by "
-            "straight-line distance.\n\nWhat would you like the doctor to help with? "
-            "You can also narrow the search to within 1 km, or add language or "
-            "access needs.",
-        )
+        self.assertEqual(first_body["response"], self.generated_answers[0])
         self.assertNotIn(GENERIC_RESPONSE, first_body["response"])
         self.assertEqual(
             [card["place_id"] for card in first_body["results"]],
@@ -288,13 +296,7 @@ class ChatResponsePreservationTests(unittest.TestCase):
 
         self.assertEqual(refined.status_code, 200, refined.text)
         refined_body = refined.json()
-        self.assertEqual(
-            refined_body["response"],
-            "I found 3 options for orthopedics around Jonggak. Of the options "
-            "shown, 광화문정형외과의원 is closest, about 0.4 km from Jonggak by "
-            "straight-line distance.\n\nYou can compare the cards below or refine "
-            "this search further.",
-        )
+        self.assertEqual(refined_body["response"], self.generated_answers[1])
         self.assertNotIn(GENERIC_RESPONSE, refined_body["response"])
         self.assertEqual(
             [card["place_id"] for card in refined_body["results"]],
@@ -307,7 +309,7 @@ class ChatResponsePreservationTests(unittest.TestCase):
         self.assertEqual([call["max_distance_km"] for call in self.retrieval_calls], [5.0, 1.0])
         self.assertNotIn("far", self.retrieval_calls[1]["eligible"])
         self.assertEqual(geocoder.call_count, 1)
-        self.text_generation.assert_not_called()
+        self.assertEqual(self.answer_generation.call_count, 2 * len(self.generated_answers))
         self.context_builder.assert_not_called()
         self.translation_request.assert_not_called()
 
@@ -361,23 +363,15 @@ class ChatResponsePreservationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
-        self.assertEqual(
-            body["response"],
-            "종각 주변에서 정형외과 검색 결과로 시설 4곳을 찾았습니다. 표시된 후보 중 "
-            "광화문정형외과의원의 직선거리가 가장 짧으며, 종각 기준 약 0.4 km입니다.\n\n"
-            "어떤 진료나 증상으로 도움이 필요하신가요? 원하시면 1 km 이내처럼 이동 거리나 "
-            "언어 또는 접근성 요구사항도 알려 주세요.",
-        )
+        self.assertEqual(body["response"], self.generated_answers[0])
         self.assertNotIn("아래 카드에서 시설과 후기를 확인해 주세요", body["response"])
         self.assertEqual(body["state"]["language_pref"], "Korean")
         self._assert_public_cards(body, "Korean")
-        self.text_generation.assert_not_called()
+        self.assertEqual(self.answer_generation.call_count, 2 * len(self.generated_answers))
         self.context_builder.assert_not_called()
         self.translation_request.assert_not_called()
 
-    def test_nonretrieval_generated_reply_survives_serialization(self):
-        generated = "I generated this nearby comparison for the current request."
-        self.text_generation.return_value = generated, None
+    def test_general_search_also_attaches_originals_and_preserves_answer(self):
         boundary = JsonModelBoundary(["CONFIRMATION"])
         self._install_model_boundary(boundary)
         current_state = State(
@@ -402,13 +396,14 @@ class ChatResponsePreservationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
-        self.assertEqual(body["response"], generated)
+        self.assertEqual(body["response"], self.generated_answers[0])
         self.assertNotIn(GENERIC_RESPONSE, body["response"])
         self.assertEqual(len(body["results"]), 4)
         self.assertEqual(body["state"]["language_pref"], "English")
-        self.text_generation.assert_called_once()
-        self.context_builder.assert_called_once()
-        self.assertEqual(self.retrieval_calls, [])
+        self.assertEqual(self.answer_generation.call_count, 2)
+        self.context_builder.assert_not_called()
+        self.assertEqual(len(self.retrieval_calls), 1)
+        self._assert_public_cards(body, "English")
         self.translation_request.assert_not_called()
 
     def _assert_public_cards(self, body, language):
@@ -419,7 +414,7 @@ class ChatResponsePreservationTests(unittest.TestCase):
         )
         for card in body["results"]:
             self.assertEqual(card["review_language"], language)
-            self.assertEqual(card["recommendation_status"], "evidence_available")
+            self.assertEqual(card["recommendation_status"], "not_established")
             evidence = card["retrieval_evidence"]
             self.assertEqual(len(evidence), 1)
             self.assertEqual(evidence[0]["place_id"], card["place_id"])

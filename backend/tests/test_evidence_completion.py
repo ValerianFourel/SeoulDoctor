@@ -31,19 +31,22 @@ class EvidenceCompletionTests(unittest.TestCase):
             displayed_facility_ids=("alpha",),
         )
 
-    def test_remote_reranker_failure_prevents_complete(self):
+    def test_remote_reranker_failure_marks_partial_execution(self):
         result = self.collect(reranker=FailingReranker())
         self.assertTrue(result.evidence)
-        self.assertEqual(result.finish_status, "partial_evidence")
+        self.assertEqual(result.execution_status, "partial")
+        self.assertEqual(result.finish_status, "complete")
 
     def test_production_policy_requires_both_services(self):
         result = self.collect(policy=EvidenceRecallPolicy(require_remote_services=True))
-        self.assertEqual(result.finish_status, "partial_evidence")
+        self.assertEqual(result.execution_status, "partial")
+        self.assertEqual(result.finish_status, "complete")
 
-    def test_remote_semantic_failure_prevents_complete(self):
+    def test_remote_semantic_failure_marks_partial_execution(self):
         result = self.collect(semantic_source=FailedSemanticEvidenceSource())
         self.assertTrue(result.evidence)
-        self.assertEqual(result.finish_status, "partial_evidence")
+        self.assertEqual(result.execution_status, "partial")
+        self.assertEqual(result.finish_status, "complete")
 
     def test_warning_survives_more_distinctive_positive_reviews(self):
         base = ScoredEvidence(

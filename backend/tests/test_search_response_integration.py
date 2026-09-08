@@ -22,7 +22,7 @@ class SearchResponseIntegrationTests(unittest.TestCase):
         row["business_hours"] = hours
         frame = pd.DataFrame([row])
         review = {"place_id": "alpha", "evidence_id": "review:123",
-                  "is_verbatim": True, "evidence_role": "mixed",
+                  "is_verbatim": True, "source_type": "verbatim_review", "retrieval_roles": ["support", "risk"],
                   "text": "The doctor was kind but the nurses were rude."}
 
         class Adapter:
@@ -34,7 +34,7 @@ class SearchResponseIntegrationTests(unittest.TestCase):
                 result["retrieval_evidence"] = [[review] for _ in range(len(result))]
                 result["retrieval_evidence_groups"] = [
                     {"warnings": [review]} for _ in range(len(result))]
-                result.attrs["rag_metadata"] = {"retrieval_status": "incomplete"}
+                result.attrs["rag_metadata"] = {"retrieval_execution_status": "partial"}
                 return SimpleNamespace(dataframe=result,
                                        telemetry=SimpleNamespace(status="incomplete"))
 
@@ -50,14 +50,14 @@ class SearchResponseIntegrationTests(unittest.TestCase):
             patch.object(main, "search_index_release", SimpleNamespace(version="test-v1")),
             patch.object(main, "CandidateRetrievalAdapter", Adapter),
             patch.object(main, "client", object()),
-            patch.object(main, "request_text_completion",
-                         return_value=("Perfect match. Highly recommended.", None)),
+            patch.object(main, "request_answer_completion",
+                         side_effect=TimeoutError("answer_timeout")),
         ):
             return main.execute_search(state, "Find a kind dentist in Seoul")
 
     def test_actual_response_withholds_incomplete_endorsement_and_quotes_conflict(self):
         response, cards = self.search()
-        self.assertIn("Search is incomplete", response)
+        self.assertIn("search did not finish", response)
         self.assertNotIn("but the nurses were rude", response)
         self.assertIn("but the nurses were rude", cards[0]["retrieval_evidence"][0]["text"])
         self.assertNotIn("Highly recommended", response)

@@ -60,8 +60,11 @@ class RetrievalQuery:
     exact_terms: tuple[str, ...] = ()
     target_language: str = "English"
     manual_mode: str | None = None
+    display_limit: int = 5
 
     def __post_init__(self) -> None:
+        if type(self.display_limit) is not int or not 1 <= self.display_limit <= 5:
+            raise ValueError("display limit must be between 1 and 5")
         if not self.text.strip():
             raise ValueError("retrieval query cannot be empty")
         if not 0.0 < self.max_distance_km <= 100.0:
@@ -334,7 +337,7 @@ class CandidateRetrievalAdapter:
                     )
                 )
             )
-            final_candidates = tuple(ranked["place_id"].astype(str).head(5))
+            final_candidates = tuple(ranked["place_id"].astype(str).head(query.display_limit))
             unassessed_ids = tuple(item for item in final_candidates if item not in shortlist)
             if unassessed_ids:
                 evidence_result = replace(
@@ -412,6 +415,7 @@ class CandidateRetrievalAdapter:
                 rerank_outcome=rerank_outcome,
                 evidence_result=evidence_result,
             )
+            ranked.attrs["rag_metadata"]["coverage_candidate_ids"] = list(final_candidates)
             scope.assert_contains_only(ranked)
             return CandidateRetrievalResult(ranked, telemetry)
         except Exception as exc:

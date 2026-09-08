@@ -136,7 +136,10 @@ class FakeScopedIndex:
         return None
 
     def list_original_reviews(self, *, facility_ids, limit_per_facility):
-        return [evidence_hit(facility_id, index + 1, text)
+        from dataclasses import replace
+        from hashlib import sha256
+        return [replace(evidence_hit(facility_id, index + 1, text), evidence_id="review:" +
+                        sha256(f"{facility_id}|{index + 1}|{text}".encode()).hexdigest()[:20])
                 for facility_id in facility_ids if facility_id != "charlie"
                 for index, text in enumerate(("123", "😞", "ㅋㅋ", "친절해요", "접수 직원은 불친절했어요 😞"))]
 
@@ -334,7 +337,7 @@ class LiveRetrievalTests(unittest.TestCase):
         )
 
     def test_plain_facility_search_attaches_originals_without_ranking_evidence(self):
-        from evidence_response import finalize_evidence_response
+        from backend.tests.test_evidence_response import fallback_response
         from models import serialize_results_for_chat
         scoped = FakeScopedIndex()
         adapter = CandidateRetrievalAdapter(active_index=FakeIndex(scoped), legacy_pipeline=FakePipeline())
@@ -351,7 +354,7 @@ class LiveRetrievalTests(unittest.TestCase):
         with patch.object(scoped, "list_original_reviews", return_value=[]):
             empty = adapter.rank(scope=self.scope, eligible=self.frame, rules=make_rules(), query=self.query())
         self.assertEqual(before_order, empty.dataframe["place_id"].tolist())
-        _, presented = finalize_evidence_response("", cards, {"retrieval_status": "complete"}, "English")
+        _, presented = fallback_response(cards, {"retrieval_status": "complete"}, "English")
         public = serialize_results_for_chat(presented, include_debug=False)
         original = next(card for card in public if card["place_id"] == "alpha")["retrieval_evidence"][0]
         self.assertEqual(original["text"], "친절해요")

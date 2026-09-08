@@ -79,35 +79,6 @@ class ProviderSelectionTests(unittest.TestCase):
             calls[0]["max_completion_tokens"],
         )
 
-    def test_text_completion_retries_empty_content(self):
-        calls = []
-
-        class Completions:
-            def create(self, **kwargs):
-                calls.append(kwargs)
-                content = None if len(calls) == 1 else "Grounded answer"
-                return SimpleNamespace(
-                    choices=[SimpleNamespace(
-                        message=SimpleNamespace(content=content)
-                    )]
-                )
-
-        client = SimpleNamespace(
-            chat=SimpleNamespace(completions=Completions())
-        )
-
-        content, _ = llm_client.request_text_completion(
-            client,
-            model="openai/gpt-oss-120b",
-            messages=[{"role": "system", "content": "Answer."}],
-            max_completion_tokens=512,
-            reasoning_effort="medium",
-        )
-
-        self.assertEqual(content, "Grounded answer")
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0]["reasoning_effort"], "medium")
-        self.assertEqual(calls[1]["reasoning_effort"], "low")
 
     def test_structured_completion_retries_missing_required_keys(self):
         calls = []

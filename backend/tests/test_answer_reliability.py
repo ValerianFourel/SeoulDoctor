@@ -354,7 +354,7 @@ class AnswerReliabilityTests(unittest.TestCase):
     def test_unaccounted_numeric_claim_fails_before_semantic_verification(self):
         complete = ScriptedCompletion(proposal(answer="This clinic is 827.4 km away. [1]"))
         outcome = self.answer(complete)
-        self.assertEqual(outcome.trace["reason"], "unaccounted_answer_number")
+        self.assertEqual(outcome.trace["reason"], "ambiguous_measurement_owner")
         self.assertEqual(len(complete.calls), 1)
         self.assert_originals(outcome, [review()])
 
@@ -405,6 +405,28 @@ class AnswerReliabilityTests(unittest.TestCase):
         self.assertNotIn("mixed", outcome.text)
         context = json.loads(complete.calls[1]["messages"][1]["content"])["search"]
         self.assertEqual(context["evidence"][0]["retrieval_roles"], ["disease", "support"])
+
+    def test_numeric_spelling_units_and_optional_radius_are_distinct(self):
+        cases = (
+            "Clinic alpha is 300 m away by straight-line distance.",
+            "The current search radius is within 5000 m.",
+            "The current search radius is within 5 km.",
+            "If you would like, we can narrow the radius to within 1 km.",
+            "You can compare 1 clinic at a time.",
+        )
+        current = state()
+        current.max_distance_km = 5.0
+        for answer in cases:
+            with self.subTest(answer=answer):
+                submitted = {"answer": answer, "assessments": [], "citations": []}
+                complete = ScriptedCompletion(submitted, {"accepted": True, "issues": []})
+                outcome = answer_search(
+                    question="What are my options?", state=current,
+                    cards=[card(distance=0.3), card([], owner="beta", distance=0.6)],
+                    metadata={"retrieval_execution_status": "complete"}, language="English", complete=complete,
+                )
+                self.assertEqual(outcome.text, answer)
+                self.assertEqual(current.max_distance_km, 5.0)
 
     def test_actual_partial_execution_and_missing_evidence_remain_distinct(self):
         complete = ScriptedCompletion(proposal(), {"accepted": True, "issues": []})

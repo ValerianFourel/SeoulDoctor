@@ -361,7 +361,7 @@ class LegacyRagScopeIntegrationTests(unittest.TestCase):
             patch.object(main, "client", object()),
             patch.object(
                 main,
-                "request_text_completion",
+                "request_answer_completion",
                 return_value=("검색 결과입니다.", None),
             ),
         ):
@@ -410,7 +410,7 @@ class LegacyRagScopeIntegrationTests(unittest.TestCase):
             patch.object(main, "client", object()),
             patch.object(
                 main,
-                "request_text_completion",
+                "request_answer_completion",
                 return_value=("검색 결과입니다.", None),
             ),
         ):
@@ -486,7 +486,7 @@ class LegacyRagScopeIntegrationTests(unittest.TestCase):
             patch.object(main, "client", object()),
             patch.object(
                 main,
-                "request_text_completion",
+                "request_answer_completion",
                 return_value=("검색 결과입니다.", None),
             ),
         ):

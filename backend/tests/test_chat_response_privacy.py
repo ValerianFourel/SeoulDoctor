@@ -153,15 +153,20 @@ class ChatResponsePrivacyTests(unittest.TestCase):
             self.assertNotIn(sentinel, str(serialized))
 
     def test_travel_preference_endpoint_uses_the_same_boundary(self):
-        source = (BACKEND_DIR / "main.py").read_text(encoding="utf-8")
-        endpoint = source[
-            source.index("async def set_travel_preference("):
-            source.index("# Seoul district names", source.index("async def set_travel_preference("))
-        ]
-
-        self.assertIn("state.clear_retrieval_telemetry()", endpoint)
-        self.assertIn("serialize_state_for_chat(", endpoint)
-        self.assertNotIn('"state": state.model_dump()', endpoint)
+        import asyncio
+        import main
+        from unittest.mock import patch
+        state = State(keywords=["clear explanations"],
+                      last_retrieval_metadata={"planner": "private-sentinel"})
+        with patch.object(main, "ENABLE_RETRIEVAL_DEBUG", False):
+            body = asyncio.run(main.set_travel_preference(
+                {"travel_label": "Nearby", "current_state": state.model_dump()},
+                cookieConsent=None, consent_header=None,
+            ))
+        self.assertEqual(body["state"]["max_distance_km"], 1.0)
+        self.assertEqual(body["state"]["keywords"], ["clear explanations"])
+        self.assertNotIn("last_retrieval_metadata", body["state"])
+        self.assertNotIn("private-sentinel", str(body))
 
     def test_debug_mode_preserves_existing_observability(self):
         state = State(

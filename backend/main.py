@@ -108,6 +108,7 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(line_buffering=True)
 
 import json
+from functools import partial
 from hashlib import sha256
 from uuid import uuid4
 import pandas as pd
@@ -132,17 +133,15 @@ from models import (
     serialize_state_for_chat,
 )
 from utils import (
-    safe_convert_to_python, DISTANCE_MAPPING, clean_llm_response,
-    standardize_and_fill_state,detect_search_mode, fuzzy_keyword_match,
-    smart_cleanse_state,detect_field_changes,print_separator, normalize_seoul_to_null,
+    safe_convert_to_python, DISTANCE_MAPPING,
+    standardize_and_fill_state,detect_search_mode,
+    print_separator,
     has_vague_medical_term,user_wants_any_specialty, ensure_city_wide_defaults,
     validate_distance_criteria,download_and_cache_parquet, DEFAULT_MAX_DISTANCE,
     LOCAL_PARQUET_PATH,
 )
 from prompt import (
     ROUTER_PROMPT, 
-    EXTRACTION_PROMPT_V2, 
-    GENERATION_PROMPT,
     SPECIALTY_MAPPING
     )
 from deterministic import (
@@ -162,7 +161,7 @@ from cookies import (
 
 # Import RAG Pipeline
 from rag_pipeline import RAGPipeline
-from evidence_response import finalize_evidence_response
+from evidence_response import answer_search
 from review_presentation import response_language
 from raw_review_store import ensure_raw_review_parquet
 from config import (
@@ -189,7 +188,7 @@ from config import (
 from llm_client import (
     build_llm_client,
     request_json_completion,
-    request_text_completion,
+    request_answer_completion,
 )
 from query_facets import (
     augment_extracted_facets,
@@ -420,6 +419,9 @@ async def lifespan(app: FastAPI):
         logger.info(f"✅ Loaded {len(df_facilities)} facilities from parquet")
         
         raw_reviews_path = ensure_raw_review_parquet()
+        raw_review_source_sha256 = (
+            sha256_file(Path(raw_reviews_path)) if raw_reviews_path else None
+        )
         if raw_reviews_path:
             df_filtered = df_facilities.copy()
             logger.info(f"✅ Search coverage expanded to all {len(df_filtered)} facilities")
@@ -444,7 +446,7 @@ async def lifespan(app: FastAPI):
                     sha256_file(Path(LOCAL_PARQUET_PATH))
                     != candidate_release.manifest.facility_source_sha256
                     or not raw_reviews_path
-                    or sha256_file(Path(raw_reviews_path))
+                    or raw_review_source_sha256
                     != candidate_release.manifest.review_source_sha256
                 ):
                     raise IndexLoadError(
@@ -507,6 +509,7 @@ async def lifespan(app: FastAPI):
             collection_name="seoul_med_agentic_v2",
             embedding_model="text-embedding-3-small",
             raw_reviews_path=raw_reviews_path,
+            raw_review_source_sha256=raw_review_source_sha256,
         )
         
         rag_pipeline.initialize_collection(df_filtered, force_recreate=False)
@@ -691,12 +694,12 @@ Return a DELTA for this user turn, not a rewritten conversation state.
 
 **Return JSON with:**
 - operation: "refine" or "replace_context"
-- specialty: matched Korean specialty or null (default: 병원,의원 if unclear)
+- specialty: matched Korean specialty only when this turn explicitly requests or changes it; otherwise null. Never emit a generic default on a follow-up.
 - specialty_confidence: 0.0-1.0
 - location: extracted location or null (null if not mentioned)
 - distance_km: exact numeric distance or null
 - travel_label: one from travel labels list, or null when travel is not mentioned
-- hard_keywords: factual must-haves (parking, MRI, insurance, weekend hours, English-speaking)
+- hard_keywords: explicitly mandatory factual requirements only. A question about availability is not a requirement.
 - soft_keywords: subjective qualities user WANTS (can include unfriendly, rude, cold, expensive, etc.)
 - negative_hard_keywords: factual exclusions (without parking, no weekend hours)
 - negative_keywords: qualities to AVOID (avoid friendly, not polite)
@@ -705,7 +708,15 @@ Return a DELTA for this user turn, not a rewritten conversation state.
 - disease_terms: diseases, conditions, or symptoms to treat
 - comment_terms: qualities that should be supported by patient comments/reviews
 - required_hours: canonical availability constraints
-- remove_terms: concepts to delete from every positive and negative collection
+- remove_terms: explicitly withdrawn concepts. Waiting being acceptable withdraws a prior short-wait preference.
+- visit_reason: current visit purpose, including a routine checkup, or null when unchanged
+- inquiries: exact current-turn clauses asking factual questions without imposing a requirement
+- term_operations: explicit changes with action add/remove/replace, field, term, optional replacement, and exact source_span
+  Fields: keywords, hard_keywords, negative_keywords, negative_hard_keywords, comment_terms, gender_terms, disease_terms, required_hours.
+  Removal and replacement require a clause explicitly withdrawing or replacing that concept.
+  Do not classify words in "check directly" as a doctor-personality preference.
+  Interpret polarity within each clause. Do not apply one clause's negation to the entire message.
+  Retain restrained-prescribing preferences, staff roles and the distinction between questions and mandatory requirements.
 
 **Format:**
 {{
@@ -727,7 +738,10 @@ Return a DELTA for this user turn, not a rewritten conversation state.
   "disease_terms": [],
   "comment_terms": [],
   "required_hours": [],
-  "remove_terms": []
+  "remove_terms": [],
+  "visit_reason": null,
+  "inquiries": [],
+  "term_operations": []
 }}
 """
     
@@ -762,102 +776,6 @@ Return a DELTA for this user turn, not a rewritten conversation state.
         privacy_safe_log(consent, f"   ⛔ Negative Hard: {extracted.get('negative_hard_keywords', [])}")
         privacy_safe_log(consent, f"   🚫 Negative Keywords: {extracted.get('negative_keywords', [])}")
         privacy_safe_log(consent, "=" * 60)
-        
-        # ============================================
-        # POST-PROCESSING: INTENT-BASED KEYWORD CORRECTION
-        # ============================================
-        # If LLM still misclassifies (puts "unfriendly" in negative when user said "I want unfriendly"),
-        # we fix it here by checking the actual user message intent
-        
-        message_lower = user_message.lower()
-        
-        # Positive intent markers
-        positive_markers = ['i want', 'i need', 'find', 'looking for', 'show me', 'find me', 'search for']
-        has_positive_intent = any(marker in message_lower for marker in positive_markers)
-        
-        # Negative intent markers
-        negative_markers = ['avoid', 'not ', 'without', "don't want", 'dont want', 'skip', 'exclude', 'except']
-        has_negative_intent = any(marker in message_lower for marker in negative_markers)
-        
-        # List of "unconventional" qualities that LLM might misclassify
-        unconventional_qualities = [
-            'unfriendly', 'rude', 'impolite', 'cold', 'direct', 'blunt', 'curt', 'abrupt',
-            'rushed', 'quick', 'fast', 'brief', 'hurried', 'expensive', 'costly', 'pricey',
-            'premium', 'crowded', 'busy', 'packed', 'impersonal', 'clinical', 'detached',
-            'no-nonsense', 'brusque', 'discourteous', 'uncivil', 'distant', 'aloof',
-            '무례', '불친절', '무뚝뚝', '차가운', '냉담', '직설적', '빠른', '급한', '비싼', '고가', '붐비는'
-        ]
-        
-        # If user has POSITIVE intent and LLM put unconventional quality in negative → move to soft
-        if has_positive_intent and not has_negative_intent:
-            if extracted.get('negative_keywords'):
-                moved_keywords = []
-                remaining_negative = []
-                
-                for kw in extracted['negative_keywords']:
-                    kw_lower = kw.lower()
-                    # Check if this is an unconventional quality that should be positive
-                    if any(qual in kw_lower for qual in unconventional_qualities):
-                        moved_keywords.append(kw)
-                        # Move to soft keywords
-                        if 'soft_keywords' not in extracted:
-                            extracted['soft_keywords'] = []
-                        extracted['soft_keywords'].append(kw)
-                    else:
-                        remaining_negative.append(kw)
-                
-                extracted['negative_keywords'] = remaining_negative
-                
-                if moved_keywords:
-                    privacy_safe_log(consent, f"✅ CORRECTED: Moved {moved_keywords} from negative → soft (user has positive intent)")
-        
-        # If user has NEGATIVE intent but LLM put quality in soft → check if it should be negative
-        if has_negative_intent and not has_positive_intent:
-            if extracted.get('soft_keywords'):
-                moved_keywords = []
-                remaining_soft = []
-                
-                for kw in extracted['soft_keywords']:
-                    # Check if this keyword appears after "avoid" or "not" in the message
-                    if f'avoid {kw.lower()}' in message_lower or f'not {kw.lower()}' in message_lower:
-                        moved_keywords.append(kw)
-                        # Move to negative keywords
-                        if 'negative_keywords' not in extracted:
-                            extracted['negative_keywords'] = []
-                        extracted['negative_keywords'].append(kw)
-                    else:
-                        remaining_soft.append(kw)
-                
-                extracted['soft_keywords'] = remaining_soft
-                
-                if moved_keywords:
-                    privacy_safe_log(consent, f"✅ CORRECTED: Moved {moved_keywords} from soft → negative (user has negative intent)")
-        
-        # ============================================
-        # FALLBACK: If no keywords but message has quality adjectives, extract them
-        # ============================================
-        if not extracted.get('soft_keywords') and not extracted.get('negative_keywords'):
-            # Simple word extraction for common adjectives
-            quality_words = [
-                'unfriendly', 'rude', 'impolite', 'cold', 'direct', 'blunt', 'friendly',
-                'kind', 'warm', 'polite', 'professional', 'experienced', 'skilled',
-                'clean', 'modern', 'expensive', 'cheap', 'affordable', 'rushed', 'thorough',
-                'crowded', 'busy', 'quiet', 'impersonal', 'personal', 'clinical'
-            ]
-            
-            found_qualities = []
-            for word in quality_words:
-                if word in message_lower:
-                    found_qualities.append(word)
-            
-            if found_qualities:
-                # Determine if positive or negative based on context
-                if has_negative_intent:
-                    extracted['negative_keywords'] = found_qualities
-                    privacy_safe_log(consent, f"✅ FALLBACK: Extracted {found_qualities} as negative keywords")
-                else:
-                    extracted['soft_keywords'] = found_qualities
-                    privacy_safe_log(consent, f"✅ FALLBACK: Extracted {found_qualities} as soft keywords")
         
         # ============================================
         # STANDARD PROCESSING: SPECIALTY, TRAVEL, LOCATION
@@ -933,112 +851,14 @@ Return a DELTA for this user turn, not a rewritten conversation state.
         record_shadow_rule_compilation(user_message, fallback)
         return fallback
 
-def quick_extract_location_change(user_message: str, consent: Optional[CookieConsent] = None) -> Dict[str, Any]:
-    """SHORTER extraction for when user is just changing location OR travel distance."""
-    if not consent:
-        consent = CookieConsent()
-    
-    travel_labels_list = ", ".join([f'"{label}"' for label in DISTANCE_MAPPING.keys()])
-    
-    extraction_prompt = f"""Extract location AND travel preference from: "{user_message}"
-
-Available travel labels: {travel_labels_list}
-
-Return JSON: {{
-    "location": "extracted location or null",
-    "travel_label": "extracted travel preference or null"
-}}
-"""
-    
-    extraction_messages = [{"role": "system", "content": extraction_prompt}]
-    
-    try:
-        extracted, _ = request_json_completion(
-            client,
-            model=GROQ_CHAT_MODEL,
-            messages=extraction_messages,
-            temperature=0.0,
-            max_completion_tokens=512,
-            required_keys=("location", "travel_label"),
-        )
-        
-        if extracted.get('travel_label') and extracted['travel_label'] in DISTANCE_MAPPING:
-            privacy_safe_log(consent, 
-                f"🚶 Quick travel update: '{extracted['travel_label']}' → {DISTANCE_MAPPING[extracted['travel_label']]}km")
-        
-        if extracted.get('location'):
-            verified = verify_and_standardize_address(extracted['location'], consent=consent)
-            
-            if verified:
-                extracted['latitude'] = verified['lat']
-                extracted['longitude'] = verified['lon']
-                extracted['address_korean'] = verified['address_korean']
-                extracted['district'] = verified['district']
-                extracted['dong'] = verified['dong']
-                privacy_safe_log(consent, f"✅ Quick location change: {verified['district']}")
-            else:
-                logger.warning("Could not verify an extracted location")
-        
-        return extracted
-        
-    except Exception as e:
-        logger.error(f"Quick extraction error: {e}", exc_info=True)
-        return {}
-
-
-def quick_extract_specialty_change(user_message: str, consent: Optional[CookieConsent] = None) -> Dict[str, Any]:
-    """SHORTER extraction for when user is just changing specialty."""
-    if not consent:
-        consent = CookieConsent()
-    
-    specialty_list = ", ".join(available_specialties[:50]) if available_specialties else ""
-    
-    extraction_prompt = f"""Match user intent to specialty from: "{user_message}"
-
-AVAILABLE: {specialty_list}
-
-Return JSON: {{
-  "specialty": "matched specialty or null",
-  "specialty_confidence": 0.0-1.0
-}}
-"""
-    
-    extraction_messages = [{"role": "system", "content": extraction_prompt}]
-    
-    try:
-        extracted, _ = request_json_completion(
-            client,
-            model=GROQ_CHAT_MODEL,
-            messages=extraction_messages,
-            temperature=0.0,
-            max_completion_tokens=512,
-            required_keys=("specialty", "specialty_confidence"),
-        )
-        
-        if extracted.get('specialty'):
-            privacy_safe_log(consent,
-                f"✅ Quick specialty change: '{extracted['specialty']}' ({extracted.get('specialty_confidence', 0):.2f})")
-        
-        return extracted
-        
-    except Exception as e:
-        logger.error(f"Quick extraction error: {e}", exc_info=True)
-        return {}
-
-
 def merge_extraction_into_state(
     state: State,
     extracted: Dict[str, Any],
-    replace_keywords: bool = True,
     user_message: str = "",
 ) -> State:
     """Apply one model proposal through the server-owned state reducer."""
     delta = compile_turn_delta(user_message, extracted)
-    next_state = reduce_search_state(
-        state,
-        delta,
-        replace_keywords=replace_keywords,
-    )
+    next_state = reduce_search_state(state, delta)
     logger.info("Applied validated search-state delta")
     return next_state
 
@@ -1262,6 +1082,11 @@ def filter_by_zone(df: pd.DataFrame, district: str, dong: Optional[str] = None) 
     
     logger.warning("Using fuzzy matching")
     return fuzzy_match_location(district, df)
+
+
+def select_optimal_result_count(frame: pd.DataFrame) -> int:
+    count = len(frame)
+    return min(count, 5) if count <= 5 or count > 10 else 4
 
 
 def execute_search(
@@ -1752,6 +1577,10 @@ def execute_search(
         working_df = df_filtered.iloc[0:0].copy()
         final_df = working_df.copy()
         has_distance_data = False
+        state.last_retrieval_metadata = {
+            "retrieval_execution_status": "not_run",
+            "retrieval_reason_codes": ["scope_unresolved"],
+        }
     else:
         authoritative_rules = scope_compilation.rules
         scope_selection = ScopeBuilder().build(
@@ -1768,8 +1597,9 @@ def execute_search(
         if isinstance(geography, DistanceRule):
             authoritative_max_distance = geography.max_km
             state.max_distance_km = geography.max_km
-            has_distance_data = True
-            working_df = working_df.sort_values("distance_km")
+            has_distance_data = "distance_km" in working_df.columns
+            if has_distance_data:
+                working_df = working_df.sort_values("distance_km")
             location_context = "near your location"
             is_citywide = False
         else:
@@ -1791,6 +1621,8 @@ def execute_search(
             "run_id": state.last_retrieval_run_id,
             **scope_metadata,
             "retrieval_status": "scope_built",
+            "retrieval_execution_status": "not_run",
+            "retrieval_reason_codes": [],
         }
         privacy_safe_log(
             consent,
@@ -1807,18 +1639,20 @@ def execute_search(
     # ===== AGENTIC RAG: LLM → SEARCH → OBSERVATION LOOP =====
 
     exact_retrieval_terms = retrieval_terms_from_state(state)
-    has_retrieval_preferences = bool(state.keywords or exact_retrieval_terms)
-    should_run_rag = search_precision != "LOW" or has_retrieval_preferences
+    has_retrieval_preferences = bool(state.keywords or exact_retrieval_terms or state.inquiries or state.visit_reason)
+    should_run_rag = search_index_release is not None or search_precision != "LOW" or has_retrieval_preferences
 
     if should_run_rag:
-        query_components = [user_message]
-        if state.specialty:
-            query_components.append(state.specialty)
+        query_components = [state.specialty or "medical facility"]
+        if state.visit_reason:
+            query_components.append(state.visit_reason)
+        query_components.extend(state.place_terms)
+        query_components.extend(state.inquiries)
         query_components.extend(state.keywords)
         query_components.extend(exact_retrieval_terms)
         query_text = " ".join(dict.fromkeys(part for part in query_components if part))
         
-        if len(query_text.strip()) > 2 and len(final_df) > 0 and rag_pipeline:
+        if query_text.strip() and len(final_df) > 0 and rag_pipeline:
             # Give agentic retrieval the complete specialty/location/distance
             # scope, not only the 3-5 legacy heuristic finalists. This makes
             # every eligible facility's comments reachable by the multilingual
@@ -1862,6 +1696,7 @@ def execute_search(
                         exact_terms=tuple(exact_retrieval_terms),
                         target_language=language,
                         manual_mode=state.manual_search_mode,
+                        display_limit=select_optimal_result_count(final_df),
                     ),
                 )
                 final_df = retrieval.dataframe
@@ -1904,6 +1739,8 @@ def execute_search(
                     "run_id": state.last_retrieval_run_id,
                     **scope_metadata,
                     "retrieval_status": "error",
+                    "retrieval_execution_status": "failed",
+                    "retrieval_reason_codes": ["retrieval_exception"],
                     "termination_reason": type(e).__name__,
                 }
                 final_df['relevance_rank'] = 9999
@@ -1914,6 +1751,11 @@ def execute_search(
             state.query_intent = None
             state.suggested_alpha = None
             state.hybrid_alpha = None
+            state.last_retrieval_metadata = {
+                "run_id": state.last_retrieval_run_id, **scope_metadata,
+                "retrieval_execution_status": "failed" if len(final_df) and not rag_pipeline else "not_run",
+                "retrieval_reason_codes": ["retrieval_unavailable"] if len(final_df) and not rag_pipeline else (["scope_unresolved"] if scope_selection is None else []),
+            }
     else:
         # Truly general request with no textual preferences: distance is enough.
         privacy_safe_log(consent, "📍 General request → distance-only ranking")
@@ -1931,22 +1773,11 @@ def execute_search(
             "run_id": state.last_retrieval_run_id,
             **scope_metadata,
             "retrieval_status": "not_run",
+            "retrieval_execution_status": "not_run",
+            "retrieval_reason_codes": [],
             "termination_reason": "general_distance_only",
             "candidate_scope_count": int(len(final_df)),
         }
-    
-    # ===== ENGLISH FILTER =====
-    
-    pre_english_df = final_df.copy()
-    
-    if language == "English" and 'has_english' in final_df.columns:
-        before = len(final_df)
-        final_df = final_df[final_df['has_english'] == True]
-        privacy_safe_log(consent, f"🌐 English filter: {before} → {len(final_df)}")
-        
-        if len(final_df) < 3:
-            final_df = pre_english_df
-            relaxed_filters.append("included facilities with limited English")
     
     # ===== FINAL SCOPE VALIDATION =====
 
@@ -1956,120 +1787,12 @@ def execute_search(
     
     # ===== RESULT SELECTION =====
     
-    def select_optimal_result_count(df: pd.DataFrame, min_results: int = 3, max_results: int = 5) -> int:
-        total = len(df)
-        if total < min_results:
-            return total
-        elif total <= max_results:
-            return total
-        elif total <= 10:
-            return 4
-        else:
-            return max_results
-    
     # ===== GENERATE RESPONSE =====
     
     results = []
-    response_text = ""
-    
     if len(final_df) > 0:
-        n_results = select_optimal_result_count(final_df, min_results=3, max_results=5)
+        n_results = select_optimal_result_count(final_df)
         privacy_safe_log(consent, f"✓ Selecting {n_results} results from {len(final_df)} facilities")
-        retrieval_owns_response = (
-            state.last_retrieval_metadata.get("retrieval_status")
-            not in {None, "not_run"}
-        )
-        
-        if retrieval_owns_response:
-            facilities_context = ""
-        else:
-            try:
-                facilities_context = rag_pipeline.build_context_for_llm(
-                    final_df,
-                    n_results=n_results,
-                    language=language,
-                )
-            except Exception as e:
-                logger.error(f"Context building error: {e}", exc_info=True)
-                facilities_context = "Error building context"
-        
-        gen_messages = [{
-            "role": "system",
-            "content": GENERATION_PROMPT.format(
-                user_query=user_message,
-                location_context=location_context,
-                language=language,
-                facilities_context=facilities_context,
-                hard_keywords=", ".join(retrieval_terms_from_state(state)) or "none",
-                soft_keywords=", ".join([*state.keywords, *state.comment_terms]) or "none"
-            )
-        }]
-
-        generation_started = perf_counter()
-        try:
-            if retrieval_owns_response:
-                response_text = ""
-            else:
-                response_text, _ = request_text_completion(
-                    client,
-                    model=GROQ_CHAT_MODEL,
-                    messages=gen_messages,
-                    temperature=0.4,
-                    max_completion_tokens=768,
-                    reasoning_effort="low",
-                )
-            response_text = re.sub(r'[\u0400-\u04FF]+', 'Seoul', response_text)
-            response_text = re.sub(r'대한민국 서울특별시 중구 세종대로 110', 'Seoul', response_text)
-            response_text = re.sub(r'Seoul, 서울특별시 대한민국', '', response_text)
-
-
-            # Add contextual disclaimers
-            if search_precision == "LOW" and len(results) > 0:
-                if language == "English":
-                    response_text += "\n\n💡 Showing nearby facilities sorted by distance. These are general medical facilities that can help assess your needs or provide referrals."
-                else:
-                    response_text += "\n\n💡 거리순으로 근처 시설을 표시합니다. 진료 후 필요시 전문의에게 의뢰됩니다."
-            
-            elif search_precision == "MEDIUM" and len(general_fallback_df) > 0:
-                if language == "English":
-                    response_text += f"\n\n💡 I included some general clinics nearby since there were limited {state.specialty} options in your area."
-                else:
-                    response_text += f"\n\n💡 해당 지역에 {state.specialty} 시설이 제한적이어서 일반 병원도 포함했습니다."
-            
-            elif len(relaxed_filters) > 0 and n_results >= 3:
-                if language == "English":
-                    if any("expanded" in f for f in relaxed_filters):
-                        response_text += "\n\n💡 I expanded the search area to find more options."
-                    else:
-                        response_text += "\n\n💡 To show you 3+ options, I " + " and ".join(relaxed_filters) + "."
-                else:
-                    response_text += "\n\n💡 더 많은 옵션을 위해 검색 범위를 조정했습니다."
-            
-            elif n_results < 3:
-                if language == "English":
-                    response_text += f"\n\n⚠️ Limited availability: Only {n_results} facilities found. Consider expanding your search area or criteria."
-                else:
-                    response_text += f"\n\n⚠️ 제한된 옵션: {n_results}개만 찾았습니다. 검색 범위를 확대해 보세요."
-            
-            # City-wide search disclaimer
-            elif is_citywide:
-                if language == "English":
-                    response_text += "\n\n🌆 City-wide search - facilities shown from across Seoul's 25 districts."
-                else:
-                    response_text += "\n\n🌆 서울 전역 검색 - 25개 구에서 검색된 결과입니다."
-            
-        except Exception as e:
-            logger.error(f"Response generation error: {e}", exc_info=True)
-            if language == "English":
-                response_text = f"I found {len(final_df)} facilities. Here are the top {n_results}:"
-            else:
-                response_text = f"{len(final_df)}개의 시설을 찾았습니다. 상위 {n_results}개:"
-        
-        if not retrieval_owns_response:
-            state.last_retrieval_metadata.setdefault("stage_timings_ms", {})[
-                "answer_generation"
-            ] = (perf_counter() - generation_started) * 1000
-
         # ===== PREPARE RESULTS FOR FRONTEND =====
         
         for idx, (_, row) in enumerate(final_df.head(n_results).iterrows(), start=1):
@@ -2081,7 +1804,7 @@ def execute_search(
                 "category": safe_convert_to_python(row['category']),
             }
             
-            simple_fields = ['address', 'phone', 'business_hours', 'english_confidence_score']
+            simple_fields = ['address', 'phone', 'business_hours']
             for field in simple_fields:
                 if field in row.index:
                     value = safe_convert_to_python(row[field])
@@ -2102,15 +1825,6 @@ def execute_search(
                 result['website'] = safe_convert_to_python(row['website'])
             elif 'url' in row.index and pd.notna(row['url']):
                 result['website'] = safe_convert_to_python(row['url'])
-            
-            if 'Summaries' in row.index and isinstance(row['Summaries'], (list, np.ndarray)):
-                result['Summaries'] = safe_convert_to_python(row['Summaries'])
-            
-            if 'Summaries_Korean' in row.index and isinstance(row['Summaries_Korean'], (list, np.ndarray)):
-                result['Summaries_Korean'] = safe_convert_to_python(row['Summaries_Korean'])
-            
-            if 'Key_Highlights' in row.index and isinstance(row['Key_Highlights'], (list, np.ndarray)):
-                result['Key_Highlights'] = safe_convert_to_python(row['Key_Highlights'])
             
             if 'amenities' in row.index:
                 result['amenities'] = safe_convert_to_python(row['amenities'])
@@ -2139,7 +1853,6 @@ def execute_search(
             if rag_trace:
                 result['retrieval_trace'] = safe_convert_to_python(rag_trace)
             
-            result['has_english'] = safe_convert_to_python(row.get('has_english', False))
             
             # ⭐ CRITICAL: Only include distance if it exists in the data
             if has_distance_data and 'distance_km' in row.index:
@@ -2173,23 +1886,6 @@ def execute_search(
                 distance_value = result.get('distance_km', 0)
                 privacy_safe_log(consent, f"   #{idx}: {result['name']} ({result['category']}) {distance_value:.1f}km{boost_info}")
     
-    else:
-        logger.warning("⚠️ No facilities found")
-        
-        if state.specialty and search_precision == "HIGH":
-            if language == "English":
-                response_text = (
-                    f"I couldn't find any {state.specialty} facilities in your search area.\n\n"
-                    f"Try:\n• Expanding your search radius\n• Searching 'any doctor' to see general facilities"
-                )
-            else:
-                response_text = f"검색 지역에서 {state.specialty} 시설을 찾을 수 없습니다.\n\n검색 범위를 확대하거나 '아무 의사'로 검색해 보세요."
-        else:
-            if language == "English":
-                response_text = "I couldn't find any facilities matching your criteria.\n\nTry adjusting your location or search area."
-            else:
-                response_text = "조건에 맞는 시설을 찾을 수 없습니다.\n\n위치나 검색 범위를 조정해 보세요."
-    
     # ===== UPDATE STATE METADATA =====
     
     state.last_results_count = len(results)
@@ -2208,15 +1904,18 @@ def execute_search(
         privacy_safe_log(consent, f"   ⚠️ WARNING: Only {len(results)} results")
     privacy_safe_log(consent, "=" * 60 + "\n")
 
-    response_text = clean_llm_response(response_text)
-    if state.last_retrieval_metadata.get("retrieval_status") not in {None, "not_run"}:
-        response_text, results = finalize_evidence_response(
-            response_text, results, state.last_retrieval_metadata, language,
-            state=state,
-            translation_api_key=os.getenv("GOOGLE_TRANSLATE_API_KEY", ""),
-        )
-    return response_text, serialize_results_for_chat(
-        results, include_debug=ENABLE_RETRIEVAL_DEBUG
+    outcome = answer_search(
+        question=user_message,
+        state=state,
+        cards=results,
+        metadata=state.last_retrieval_metadata,
+        language=language,
+        complete=partial(request_answer_completion, client, model=GROQ_CHAT_MODEL) if client else None,
+        translation_api_key=os.getenv("GOOGLE_TRANSLATE_API_KEY", ""),
+    )
+    state.last_retrieval_metadata["answer"] = {"model": GROQ_CHAT_MODEL, **outcome.trace}
+    return outcome.text, serialize_results_for_chat(
+        outcome.cards, include_debug=ENABLE_RETRIEVAL_DEBUG,
     )
 
 # ==========================================
@@ -2306,25 +2005,6 @@ async def set_travel_preference(
     }
 
 
-# Seoul district names for early detection
-SEOUL_DISTRICTS = {
-    "gangnam", "songpa", "mapo", "jongno", "yongsan", "seodaemun", 
-    "dongdaemun", "jungnang", "seongbuk", "gangbuk", "dobong", "nowon",
-    "eunpyeong", "jung", "seongdong", "gwangjin", "gangseo", "yangcheon", 
-    "guro", "geumcheon", "yeongdeungpo", "dongjak", "gwanak", "seocho", "gangdong",
-    "강남", "송파", "마포", "종로", "용산", "서대문", "동대문", "중랑",
-    "성북", "강북", "도봉", "노원", "은평", "중구", "성동", "광진",
-    "강서", "양천", "구로", "금천", "영등포", "동작", "관악", "서초", "강동",
-    "gangnam-gu", "songpa-gu", "mapo-gu", "jongno-gu", "강남구", "송파구", "마포구"
-}
-
-CITY_WIDE_KEYWORDS = {
-    "citywide", "city wide", "city-wide", "anywhere", "all seoul", 
-    "entire seoul", "전체", "서울전체", "서울 전체", "아무데나", "어디든", 
-    "어디든지", "상관없", "just citywide", "doesnt matter", "doesn't matter"
-}
-
-
 @app.post("/chat")
 def chat_endpoint(
     req: ChatRequest,
@@ -2386,154 +2066,6 @@ def chat_endpoint(
     current_turn = enriched_state.turn_count + 1
     
     # ============================================
-    # ⭐ EARLY DETECTION: City-wide or district responses
-    # ============================================
-    message_lower = req.message.lower().strip()
-    message_normalized = message_lower.replace("-", "").replace(" ", "").replace("gu", "").replace("구", "")
-    
-    is_city_wide_response = any(kw in message_lower for kw in CITY_WIDE_KEYWORDS)
-    
-    # ⭐ Also detect if user just said "Seoul" (after normalization it becomes None)
-    is_just_seoul = normalize_seoul_to_null(req.message.strip()) is None and req.message.strip().lower() in [
-        "seoul", "서울", "서울시", "서울특별시", "seoul city"
-    ]
-    
-    is_simple_district = (
-        message_normalized in {d.replace("-", "").replace(" ", "").replace("gu", "").replace("구", "") for d in SEOUL_DISTRICTS} or
-        message_lower in SEOUL_DISTRICTS
-    )
-    
-    # ===== HANDLE CITY-WIDE RESPONSE (including "Seoul" alone) =====
-    if is_city_wide_response or is_just_seoul:
-        privacy_safe_log(consent, "🌆 EARLY DETECTION: City-wide response")
-        
-        if is_just_seoul:
-            privacy_safe_log(consent, "   Trigger: User said generic 'Seoul' → treating as city-wide")
-        
-        new_state = enriched_state.model_copy()
-        new_state.turn_count = current_turn
-        new_state.language_pref = language
-        
-        # ⭐ CRITICAL: Set ALL location fields to None for true city-wide
-        new_state.location = None  # ← Not "Seoul", but None
-        new_state.latitude = None
-        new_state.longitude = None
-        new_state.district = None
-        new_state.dong = None
-        new_state.address_korean = None
-        
-        new_state.max_distance_km = 25.0
-        new_state.travel_label = "Anywhere in Seoul"
-        new_state.travel_confidence = 0.6
-        new_state.search_mode = 'distance'
-        new_state.is_citywide_search = True  # ⭐ Mark as city-wide
-        
-        privacy_safe_log(consent, "   ✓ City-wide: All location fields NULL")
-        
-        # Check if we can proceed with search
-        can_proceed = (
-            (new_state.specialty and new_state.specialty_confidence >= 0.5) or
-            (not new_state.specialty and new_state.specialty_confidence >= 0.3)
-        )
-        
-        if can_proceed:
-            new_state.ready_to_search = True
-            new_state.conversation_phase = "searching"
-            
-            response_text, results = execute_search(
-                new_state,
-                req.message,
-                max_distance=new_state.max_distance_km,
-                consent=consent
-            )
-            new_state.search_executed = True
-            
-            return {
-                "response": response_text,
-                "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                "results": results
-            }
-        else:
-            if language == "English":
-                response_text = "I'll search all of Seoul. What type of doctor do you need? (or say 'any' for all facilities)"
-            else:
-                response_text = "서울 전역에서 검색하겠습니다. 어떤 종류의 의사가 필요하신가요? (또는 '상관없음'이라고 말씀하세요)"
-            
-            return {
-                "response": response_text,
-                "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                "results": []
-            }
-
-    
-    # ===== HANDLE SIMPLE DISTRICT RESPONSE =====
-    if is_simple_district:
-        privacy_safe_log(consent, f"📍 EARLY DETECTION: District response '{req.message}'")
-        
-        new_state = enriched_state.model_copy()
-        new_state.turn_count = current_turn
-        new_state.language_pref = language
-        new_state.location = req.message.strip()
-        
-        verified = verify_and_standardize_address(f"서울 {req.message.strip()}", consent=consent)
-        
-        if verified:
-            new_state.latitude = verified['lat']
-            new_state.longitude = verified['lon']
-            new_state.district = verified['district']
-            new_state.dong = verified.get('dong')
-            new_state.address_korean = verified['address_korean']
-            new_state.search_mode = 'zone'
-            privacy_safe_log(consent, f"✓ Geocoded to: {new_state.district}")
-        else:
-            new_state.search_mode = 'distance'
-            new_state.max_distance_km = 10.0
-        
-        # ⭐ FIX: Allow null specialty
-        can_proceed = (
-            (new_state.specialty and new_state.specialty_confidence >= 0.5) or
-            (not new_state.specialty and new_state.specialty_confidence >= 0.3)
-        )
-        
-        if can_proceed:
-            new_state.ready_to_search = True
-            new_state.conversation_phase = "searching"
-            
-            response_text, results = execute_search(
-                new_state,
-                req.message,
-                max_distance=new_state.max_distance_km,
-                consent=consent
-            )
-            new_state.search_executed = True
-            
-            return {
-                "response": response_text,
-                "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                "results": results
-            }
-        else:
-            district_name = new_state.district or req.message.strip()
-            if language == "English":
-                response_text = f"Got it, I'll search in {district_name}. What type of doctor do you need? (or 'any')"
-            else:
-                response_text = f"{district_name}에서 검색하겠습니다. 어떤 종류의 의사가 필요하신가요? (또는 '상관없음')"
-            
-            return {
-                "response": response_text,
-                "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                "results": []
-            }
-    
-    # ============================================
     # NORMAL ROUTING
     # ============================================
     
@@ -2572,6 +2104,17 @@ def chat_endpoint(
         logger.error(f"Router Error: {e}", exc_info=True)
         intent = "PROVIDE_INFO"
     
+    if intent == "NEW_SEARCH":
+        plain_reset = re.fullmatch(
+            r"(?:reset|restart|start over|new search|reset (?:the |my )?search|새로 시작|처음부터|다시 시작)[.!\s]*",
+            req.message.strip(), re.I,
+        )
+        if not plain_reset or compile_turn_delta(req.message, {}).operation != "replace_context":
+            intent = "PROVIDE_INFO"
+
+    if intent in {"CONFIRMATION", "CHANGE_CRITERIA"}:
+        intent = "PROVIDE_INFO"
+
     # ===== CONTROLLER =====
     
     # EMERGENCY
@@ -2607,248 +2150,6 @@ def chat_endpoint(
             "results": results
         }
     
-    # CONFIRMATION
-    # CONFIRMATION
-    elif intent == "CONFIRMATION":
-        privacy_safe_log(consent, "✅ BRANCH: CONFIRMATION")
-        
-        new_state = enriched_state.model_copy()
-        new_state.turn_count = current_turn
-        new_state.language_pref = language
-        
-        # ===== DETECT TRUE "ANY" KEYWORDS (NOT FACILITY TYPES) =====
-        
-        # Pure vague/random keywords (no semantic content)
-        PURE_ANY_KEYWORDS = {
-            # English - true vagueness
-            "any", "anything", "whatever", "doesn't matter", "doesnt matter", 
-            "don't care", "dont care", "no preference", "surprise me", "random",
-            "just show me", "i don't mind", "i dont mind", "up to you",
-            
-            # Korean - true vagueness
-            "아무거나", "상관없어", "상관없음", "아무", "랜덤", "아무데나",
-            "다 좋아", "괜찮아", "뭐든지", "상관 없어요", "아무거나 좋아요"
-        }
-        
-        # Facility type keywords (these are NOT random - they're specifications)
-        FACILITY_TYPE_KEYWORDS = {
-            "hospital", "hospitals", "clinic", "clinics", "doctor", "doctors",
-            "의원", "병원", "한의원", "의사", "치과", "약국"
-        }
-        
-        message_lower = req.message.lower().strip()
-        message_words = set(message_lower.split())
-        
-        # Check if this is a pure "any" request
-        is_pure_any = any(kw == message_lower for kw in PURE_ANY_KEYWORDS)  # Exact match
-        is_any_phrase = any(phrase in message_lower for phrase in [
-            "any doctor", "any clinic", "any hospital", "any facility",
-            "any type", "any kind", "아무 의사", "아무 병원"
-        ])
-        
-        # Check if user is specifying a facility type (NOT random)
-        is_facility_type_request = any(kw in message_words for kw in FACILITY_TYPE_KEYWORDS)
-        
-        # Determine if this is truly a random request
-        is_any_request = (is_pure_any or is_any_phrase) and not is_facility_type_request
-        
-        # ===== HANDLE TRUE "ANY" REQUEST → RANDOM/GENERAL SEARCH =====
-        
-        if is_any_request:
-            privacy_safe_log(consent, "🎲 TRUE 'ANY' detected → Random/General search mode")
-            
-            # Clear specialty info for true random search
-            new_state.specialty = None
-            new_state.specialty_confidence = 0.2  # Low confidence triggers distance-first ranking
-            new_state.is_general_search = True  # Explicit flag for general search
-            
-            # Clear keywords if this is a pure "any" request (not refinement)
-            if is_pure_any or len(message_lower.split()) <= 3:
-                new_state.keywords = []
-                new_state.hard_keywords = []
-                privacy_safe_log(consent, "   Cleared keywords (pure random search)")
-            
-            privacy_safe_log(consent, "   Mode: Distance-first, all facility types")
-            
-            # Ensure location is set (default to city-wide if missing)
-            new_state = ensure_city_wide_defaults(new_state, consent)
-            
-            # ALWAYS proceed with random search
-            new_state.ready_to_search = True
-            new_state.conversation_phase = "searching"
-            
-            response_text, results = execute_search(
-                new_state, 
-                req.message, 
-                max_distance=new_state.max_distance_km, 
-                consent=consent
-            )
-            new_state.search_executed = True
-            
-            return {
-                "response": response_text,
-                "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                "results": results
-            }
-        
-        # ===== HANDLE FACILITY TYPE REQUEST (병원/의원/한의원) =====
-        
-        elif is_facility_type_request and not new_state.specialty:
-            privacy_safe_log(consent, "🏥 Facility type request detected")
-            
-            # Map common facility type requests to categories
-            if any(kw in message_lower for kw in ["hospital", "병원"]):
-                # User wants actual hospitals (not clinics)
-                new_state.specialty = "병원"
-                new_state.specialty_confidence = 0.7
-                privacy_safe_log(consent, "   Mapped to: 병원 (hospitals)")
-            
-            elif any(kw in message_lower for kw in ["clinic", "의원"]):
-                # User wants clinics
-                new_state.specialty = "의원"
-                new_state.specialty_confidence = 0.7
-                privacy_safe_log(consent, "   Mapped to: 의원 (clinics)")
-            
-            elif any(kw in message_lower for kw in ["한의원", "oriental medicine", "korean medicine"]):
-                # User wants traditional Korean medicine
-                new_state.specialty = "한의원"
-                new_state.specialty_confidence = 0.9
-                privacy_safe_log(consent, "   Mapped to: 한의원")
-            
-            else:
-                # Generic "doctor" - treat as general search
-                new_state.specialty = "병원,의원"
-                new_state.specialty_confidence = 0.5
-                privacy_safe_log(consent, "   Mapped to: 병원,의원 (general medical facilities)")
-            
-            # Ensure location defaults
-            new_state = ensure_city_wide_defaults(new_state, consent)
-            
-            # Proceed with search
-            new_state.ready_to_search = True
-            new_state.conversation_phase = "searching"
-            
-            response_text, results = execute_search(
-                new_state, 
-                req.message, 
-                max_distance=new_state.max_distance_km, 
-                consent=consent
-            )
-            new_state.search_executed = True
-            
-            return {
-                "response": response_text,
-                "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                "results": results
-            }
-        
-        # ===== HANDLE NORMAL CONFIRMATION (WITH SPECIALTY) =====
-        
-        else:
-            # Boost existing specialty confidence (user confirmed their intent)
-            if new_state.specialty and new_state.specialty_confidence < 1.0:
-                old_confidence = new_state.specialty_confidence
-                
-                # Boost confidence based on current level
-                if new_state.specialty_confidence < 0.5:
-                    # Low confidence → moderate boost (to medium precision)
-                    new_state.specialty_confidence = min(0.6, new_state.specialty_confidence + 0.3)
-                else:
-                    # Medium confidence → small boost (to high precision)
-                    new_state.specialty_confidence = min(0.9, new_state.specialty_confidence + 0.2)
-                
-                privacy_safe_log(consent, f"📈 Confidence boosted: {old_confidence:.2f} → {new_state.specialty_confidence:.2f}")
-            
-            # Ensure location defaults
-            new_state = ensure_city_wide_defaults(new_state, consent)
-            
-            # ===== DETERMINE IF WE CAN PROCEED =====
-            
-            # Check if we have enough information to search
-            has_location = bool(new_state.location or new_state.latitude or new_state.district)
-            has_specialty = bool(new_state.specialty)
-            has_keywords = bool(
-                new_state.keywords or new_state.hard_keywords
-                or new_state.gender_terms or new_state.disease_terms or new_state.comment_terms
-            )
-            
-            # We can proceed if we have ANY of: location, specialty, or keywords
-            can_proceed = has_location or has_specialty or has_keywords
-            
-            if can_proceed:
-                new_state.ready_to_search = True
-                new_state.conversation_phase = "searching"
-                
-                # Log search type
-                if has_specialty:
-                    precision = "HIGH" if new_state.specialty_confidence >= 0.7 else "MEDIUM" if new_state.specialty_confidence >= 0.3 else "LOW"
-                    privacy_safe_log(consent, f"✓ Proceeding with {precision} precision specialty search")
-                elif has_keywords:
-                    privacy_safe_log(consent, f"✓ Proceeding with keyword-based search")
-                else:
-                    privacy_safe_log(consent, f"✓ Proceeding with general location-based search")
-                
-                response_text, results = execute_search(
-                    new_state, 
-                    req.message, 
-                    max_distance=new_state.max_distance_km, 
-                    consent=consent
-                )
-                new_state.search_executed = True
-                
-                return {
-                    "response": response_text,
-                    "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                    "results": results
-                }
-            
-            # ===== NEED MORE INFORMATION =====
-            
-            else:
-                # We have NOTHING - need at least location OR specialty
-                new_state.conversation_phase = "gathering"
-                
-                privacy_safe_log(consent, "⚠️ Insufficient information - requesting clarification")
-                
-                if language == "English":
-                    response_text = (
-                        "I'd be happy to help! To find the right facility, I need:\n\n"
-                        "**Where?**\n"
-                        "• Share your location (button below)\n"
-                        "• Or tell me a district (e.g., 'Gangnam')\n"
-                        "• Or say 'citywide' for all Seoul\n\n"
-                        "**What type?**\n"
-                        "• Specialty (e.g., 'dermatologist', 'dentist', 'internal medicine')\n"
-                        "• Or facility type ('hospital' vs 'clinic')\n"
-                        "• Or say 'any doctor' to see nearby options"
-                    )
-                else:
-                    response_text = (
-                        "도와드리겠습니다! 다음 정보가 필요합니다:\n\n"
-                        "**어디?**\n"
-                        "• 위치 공유 (아래 버튼)\n"
-                        "• 또는 구 이름 (예: '강남')\n"
-                        "• 또는 '서울 전체'\n\n"
-                        "**어떤 종류?**\n"
-                        "• 전문 분야 (예: '피부과', '치과', '내과')\n"
-                        "• 또는 시설 유형 ('병원' 또는 '의원')\n"
-                        "• 또는 '아무 의사'라고 말씀하세요"
-                    )
-                
-                return {
-                    "response": response_text,
-                    "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                    "results": []
-                }
-
     # NEW_SEARCH
     elif intent == "NEW_SEARCH":
         privacy_safe_log(consent, "🔄 BRANCH: NEW_SEARCH")
@@ -2875,464 +2176,22 @@ def chat_endpoint(
             "results": []
         }
 
-    # CHANGE_CRITERIA
-    elif intent == "CHANGE_CRITERIA":
-        privacy_safe_log(consent, "🔀 BRANCH: CHANGE_CRITERIA")
-        
-        message_lower = req.message.lower()
-        
-        is_negation = message_lower.startswith("no ") or message_lower.startswith("not ") or message_lower.startswith("아니")
-        
-        if is_negation:
-            privacy_safe_log(consent, "⛔ Negation detected - user correcting previous info")
-            
-            extracted = extract_entities(req.message, consent)
-            
-            new_state = enriched_state.model_copy()
-            new_state.turn_count = current_turn
-            new_state.language_pref = language
-            
-            if extracted.get('specialty'):
-                new_state.specialty = extracted['specialty']
-                new_state.specialty_confidence = extracted.get('specialty_confidence', 0.9)
-                privacy_safe_log(consent, f"✓ Corrected specialty: {new_state.specialty}")
-            
-            if extracted.get('location'):
-                new_state = merge_extraction_into_state(
-                    new_state, extracted, user_message=req.message
-                )
-                new_state = standardize_and_fill_state(new_state, consent)
-                privacy_safe_log(consent, f"✓ Updated location: {new_state.district or new_state.location}")
-            
-            if extracted.get('travel_label'):
-                new_state.travel_label = extracted['travel_label']
-                new_state.travel_confidence = 0.6  # Text-based
-                if new_state.travel_label in DISTANCE_MAPPING:
-                    new_state.max_distance_km = DISTANCE_MAPPING[new_state.travel_label]
-            
-            new_state = ensure_city_wide_defaults(new_state, consent)
-            
-            # ⭐ FIX: Allow null specialty
-            can_proceed = (
-                (new_state.specialty and new_state.specialty_confidence >= 0.5) or
-                (not new_state.specialty and new_state.specialty_confidence >= 0.3)
-            )
-            
-            if can_proceed:
-                new_state.ready_to_search = True
-                new_state.conversation_phase = "searching"
-                
-                response_text, results = execute_search(
-                    new_state,
-                    req.message,
-                    max_distance=new_state.max_distance_km,
-                    consent=consent
-                )
-                new_state.search_executed = True
-                
-                return {
-                    "response": response_text,
-                    "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                    "results": results
-                }
-            elif new_state.specialty and new_state.specialty_confidence < 0.3:
-                response_text = ask_for_specialty_clarification(new_state)
-                return {
-                    "response": response_text,
-                    "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                    "results": []
-                }
-            
-            new_state.conversation_phase = "gathering"
-            if language == "English":
-                response_text = "What type of medical facility are you looking for? (or 'any')"
-            else:
-                response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (또는 '상관없음')"
-            
-            return {
-                "response": response_text,
-                "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                "results": []
-            }
-        
-        # City-wide request detection (backup)
-        is_city_wide_request = any(phrase in message_lower for phrase in CITY_WIDE_KEYWORDS)
-        
-        if is_city_wide_request:
-            privacy_safe_log(consent, "🌆 City-wide search requested")
-            
-            new_state = enriched_state.model_copy()
-            new_state.turn_count = current_turn
-            new_state.language_pref = language
-            
-            # ⭐ CRITICAL: Set ALL location fields to None
-            new_state.location = None  # ← Not "Seoul", but None
-            new_state.latitude = None
-            new_state.longitude = None
-            new_state.district = None
-            new_state.dong = None
-            new_state.address_korean = None
-            
-            new_state.search_mode = 'distance'
-            new_state.max_distance_km = 25.0
-            new_state.travel_label = "Anywhere in Seoul"
-            new_state.travel_confidence = 0.6
-            new_state.is_citywide_search = True
-            
-            privacy_safe_log(consent, "   ✓ City-wide: All location fields NULL")
-            
-            # ⭐ FIX: Allow null specialty
-            can_proceed = (
-                (new_state.specialty and new_state.specialty_confidence >= 0.5) or
-                (not new_state.specialty and new_state.specialty_confidence >= 0.3)
-            )
-            
-            if can_proceed:
-                new_state.ready_to_search = True
-                new_state.conversation_phase = "searching"
-                
-                response_text, results = execute_search(
-                    new_state,
-                    req.message,
-                    max_distance=new_state.max_distance_km,
-                    consent=consent
-                )
-                new_state.search_executed = True
-                
-                return {
-                    "response": response_text,
-                    "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                    "results": results
-                }
-            else:
-                if language == "English":
-                    response_text = "I'll search all of Seoul. What type of doctor do you need? (or 'any')"
-                else:
-                    response_text = "서울 전역에서 검색하겠습니다. 어떤 종류의 의사가 필요하신가요? (또는 '상관없음')"
-                
-                return {
-                    "response": response_text,
-                    "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                    "results": []
-                }
-        
-        privacy_safe_log(consent, "🤖 Detecting which fields to change...")
-        change_detection = detect_field_changes(enriched_state, req.message, consent)
-        
-        cleansed_state = smart_cleanse_state(enriched_state, change_detection)
-        cleansed_state.turn_count = current_turn
-        cleansed_state.language_pref = language
-        
-        specialty_will_change = change_detection.get('specialty') == 'change'
-        location_will_change = change_detection.get('location') == 'change'
-        
-        if location_will_change and not specialty_will_change:
-            privacy_safe_log(consent, "🚀 Quick location extraction")
-            extracted = quick_extract_location_change(req.message, consent)
-        elif specialty_will_change and not location_will_change:
-            privacy_safe_log(consent, "🚀 Quick specialty extraction")
-            extracted = quick_extract_specialty_change(req.message, consent)
-        else:
-            privacy_safe_log(consent, "🔍 Full extraction")
-            extracted = extract_entities(req.message, consent)
-        
-        new_state = merge_extraction_into_state(
-            cleansed_state, extracted, user_message=req.message
-        )
-        
-        if change_detection.get('specialty') == 'keep' and enriched_state.specialty:
-            new_state.specialty = enriched_state.specialty
-            new_state.specialty_confidence = enriched_state.specialty_confidence
-            privacy_safe_log(consent, f"✓ Preserved specialty: {new_state.specialty}")
-        
-        if change_detection.get('location') == 'keep':
-            if enriched_state.location:
-                new_state.location = enriched_state.location
-            if enriched_state.latitude:
-                new_state.latitude = enriched_state.latitude
-                new_state.longitude = enriched_state.longitude
-            if enriched_state.district:
-                new_state.district = enriched_state.district
-                new_state.dong = enriched_state.dong
-            if enriched_state.address_korean:
-                new_state.address_korean = enriched_state.address_korean
-            privacy_safe_log(consent, f"✓ Preserved location: {new_state.district or new_state.location}")
-        
-        if change_detection.get('distance') == 'keep':
-            new_state.max_distance_km = enriched_state.max_distance_km
-            new_state.travel_label = enriched_state.travel_label
-            new_state.travel_confidence = enriched_state.travel_confidence
-            privacy_safe_log(consent, f"✓ Preserved distance: {new_state.max_distance_km}km")
-        
-        new_state = standardize_and_fill_state(new_state, consent)
-        new_state.language_pref = language
-        
-        new_state = ensure_city_wide_defaults(new_state, consent)
-        
-        # ⭐ FIX: Allow null specialty
-        can_proceed = (
-            (new_state.specialty and new_state.specialty_confidence >= 0.5) or
-            (not new_state.specialty and new_state.specialty_confidence >= 0.3)
-        )
-        
-        if can_proceed:
-            new_state.ready_to_search = True
-            new_state.conversation_phase = "searching"
-            
-            response_text, results = execute_search(
-                new_state, 
-                req.message, 
-                max_distance=new_state.max_distance_km, 
-                consent=consent
-            )
-            new_state.search_executed = True
-            
-            return {
-                "response": response_text,
-                "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                "results": results
-            }
-        elif new_state.specialty and new_state.specialty_confidence < 0.3:
-            response_text = ask_for_specialty_clarification(new_state)
-            return {
-                "response": response_text,
-                "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                "results": []
-            }
-        else:
-            new_state.conversation_phase = "gathering"
-            if language == "English":
-                response_text = "What type of medical facility are you looking for? (or 'any')"
-            else:
-                response_text = "어떤 종류의 의료 시설을 찾고 계신가요? (또는 '상관없음')"
-            
-            return {
-                "response": response_text,
-                "state": serialize_state_for_chat(
-                    new_state, include_debug=ENABLE_RETRIEVAL_DEBUG
-                ),
-                "results": []
-            }
-
-
-# ==========================================
-# REPLACE THE ENTIRE PROVIDE_INFO BRANCH
-# ==========================================
-
     elif intent == "PROVIDE_INFO":
         privacy_safe_log(consent, "📝 BRANCH: PROVIDE_INFO")
         
         # ============================================
         # STEP 1: EXTRACT ENTITIES FROM USER MESSAGE
         # ============================================
-        extracted = extract_entities(req.message, consent)
-        
-        # Check if this is a refinement (adding criteria) vs replacement
-        is_refinement = any(word in req.message.lower() for word in 
-                            ["also", "and", "additionally", "plus", "as well", 
-                            "그리고", "또한", "추가로", "와", "과"])
+        plain_confirmation = re.fullmatch(r"(?:yes|ok|okay|sure|네|예|응)[.!\s]*", req.message.strip(), re.I)
+        extracted = {} if plain_confirmation else extract_entities(req.message, consent)
         
         new_state = enriched_state.model_copy()
         new_state.turn_count = current_turn
         new_state.language_pref = language
         
-        # ============================================
-        # STEP 2: VALIDATE & CLEAN EXTRACTED KEYWORDS (FUZZY MATCHING)
-        # ============================================
-        # Remove hallucinated keywords that don't semantically appear in user message
-        if extracted.get('hard_keywords'):
-            validated_hard = []
-            for kw in extracted['hard_keywords']:
-                if fuzzy_keyword_match(kw, req.message):
-                    validated_hard.append(kw)
-                else:
-                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated hard keyword: '{kw}' (not in: '{req.message}')")
-            extracted['hard_keywords'] = validated_hard
-        
-        if extracted.get('soft_keywords'):
-            validated_soft = []
-            for kw in extracted['soft_keywords']:
-                if fuzzy_keyword_match(kw, req.message):
-                    validated_soft.append(kw)
-                else:
-                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated soft keyword: '{kw}' (not in: '{req.message}')")
-            extracted['soft_keywords'] = validated_soft
-        
-        # Validate negative keywords
-        if extracted.get('negative_hard_keywords'):
-            validated_neg_hard = []
-            for kw in extracted['negative_hard_keywords']:
-                if fuzzy_keyword_match(kw, req.message):
-                    validated_neg_hard.append(kw)
-                else:
-                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated negative hard keyword: '{kw}'")
-            extracted['negative_hard_keywords'] = validated_neg_hard
-        
-        if extracted.get('negative_keywords'):
-            validated_neg = []
-            for kw in extracted['negative_keywords']:
-                if fuzzy_keyword_match(kw, req.message):
-                    validated_neg.append(kw)
-                else:
-                    privacy_safe_log(consent, f"⚠️ REMOVED hallucinated negative keyword: '{kw}'")
-            extracted['negative_keywords'] = validated_neg
-        
-        # ============================================
-        # STEP 3: OVERRIDE LLM FOR PURE FACILITY TYPE REQUESTS
-        # ============================================
-        message_lower = req.message.lower().strip()
-        message_words = set(message_lower.split())
-        
-        # Pure facility type keywords (should override LLM)
-        PURE_FACILITY_TYPES = {
-            "clinic": ("의원", 0.8),
-            "clinics": ("의원", 0.8),
-            "hospital": ("병원", 0.8),
-            "hospitals": ("병원", 0.8),
-            "doctor": ("병원,의원", 0.7),
-            "doctors": ("병원,의원", 0.7),
-            "의원": ("의원", 0.9),
-            "병원": ("병원", 0.9),
-            "의사": ("병원,의원", 0.8),
-            "한의원": ("한의원", 0.9)
-        }
-        
-        # Specialty modifiers that indicate this is NOT a pure facility request
-        SPECIALTY_MODIFIERS = [
-            # English
-            "dental", "derm", "cardio", "ortho", "pediatric", "eye", "heart", 
-            "skin", "bone", "child", "mental", "foot", "ear", "nose", "throat", 
-            "brain", "lung", "stomach", "kidney", "plastic", "cosmetic",
-            # Korean
-            "치과", "피부과", "내과", "정형외과", "소아과", "안과", "심장", 
-            "피부", "뼈", "소아", "정신", "발", "귀", "코", "목", "뇌", 
-            "폐", "위", "신장", "성형", "미용"
-        ]
-        
-        # Check if this is a pure facility type request
-        is_pure_facility_request = (
-            len(message_lower.split()) <= 2 and
-            not any(modifier in message_lower for modifier in SPECIALTY_MODIFIERS)
-        )
-        
-        if is_pure_facility_request:
-            for keyword, (specialty, confidence) in PURE_FACILITY_TYPES.items():
-                if keyword in message_words:
-                    extracted['specialty'] = specialty
-                    extracted['specialty_confidence'] = confidence
-                    extracted['hard_keywords'] = []  # Clear any hallucinated keywords
-                    extracted['soft_keywords'] = []
-                    privacy_safe_log(consent, f"   🎯 OVERRIDE: Pure '{keyword}' → {specialty} (conf={confidence})")
-                    break
-        
-        # ============================================
-        # STEP 3.5: POST-EXTRACTION VALIDATION FOR "DOCTOR"
-        # ============================================
-        # Catch cases where LLM hallucinated a specialty for simple "doctor" queries
-        if ("doctor" in message_words or "의사" in message_words):
-            word_count = len(message_words)
-            
-            # Check if this is a simple "doctor" request (not "eye doctor", "heart doctor", etc.)
-            is_simple_doctor_request = (
-                word_count <= 3 and  # Max 3 words (e.g., "find a doctor")
-                not any(modifier in message_lower for modifier in SPECIALTY_MODIFIERS)
-            )
-            
-            if is_simple_doctor_request:
-                # Check if LLM extracted a specific specialty incorrectly
-                current_specialty = extracted.get('specialty', '')
-                is_general_specialty = current_specialty in ["병원,의원", "병원", "의원", ""]
-                
-                if not is_general_specialty:
-                    # LLM hallucinated a specific specialty for "doctor" - override it
-                    old_specialty = current_specialty
-                    extracted['specialty'] = "병원,의원"
-                    extracted['specialty_confidence'] = 0.7
-                    extracted['hard_keywords'] = []
-                    extracted['soft_keywords'] = []
-                    privacy_safe_log(consent, 
-                        f"   ⚠️ VALIDATION: Simple 'doctor' request detected, "
-                        f"overriding '{old_specialty}' → 병원,의원")
-        
-        # ============================================
-        # STEP 4: PRESERVE EXISTING SPECIALTY IF NOT REPLACED
-        # ============================================
-        if not extracted.get('specialty') and enriched_state.specialty:
-            extracted['specialty'] = enriched_state.specialty
-            extracted['specialty_confidence'] = enriched_state.specialty_confidence
-            privacy_safe_log(consent, f"✓ Preserved existing specialty: {enriched_state.specialty}")
-        
-        # ============================================
-        # STEP 5: ENHANCED FALLBACK DETECTION
-        # ============================================
-        # Only run if LLM didn't extract specialty or confidence is low
-        if not extracted.get('specialty') or (extracted.get('specialty_confidence', 0) < 0.3):
-            
-            # PRIORITY CHECK: "doctor" or "의사" (highest priority)
-            if ("doctor" in message_words or "의사" in message_words):
-                # Double-check this isn't a specialty-modified request
-                is_general_doctor = not any(modifier_phrase in message_lower for modifier_phrase in [
-                    "eye doctor", "heart doctor", "skin doctor", "pediatric doctor",
-                    "dental doctor", "foot doctor", "ear doctor", "brain doctor",
-                    "안과의사", "심장의사", "피부과의사", "소아과의사", "치과의사"
-                ])
-                
-                if is_general_doctor:
-                    extracted['specialty'] = "병원,의원"
-                    extracted['specialty_confidence'] = 0.7
-                    privacy_safe_log(consent, "   Mapped 'doctor/의사' → 병원,의원 (general)")
-            
-            # Check for "hospital"
-            elif "hospital" in message_words and "병원" not in message_lower:
-                extracted['specialty'] = "병원"
-                extracted['specialty_confidence'] = 0.7
-                privacy_safe_log(consent, "   Mapped 'hospital' → 병원")
-            
-            # Check for "clinic"
-            elif "clinic" in message_words and "의원" not in message_lower:
-                extracted['specialty'] = "의원"
-                extracted['specialty_confidence'] = 0.7
-                privacy_safe_log(consent, "   Mapped 'clinic' → 의원")
-            
-            # Check for traditional Korean medicine
-            elif any(kw in message_lower for kw in ["한의원", "oriental medicine", "korean medicine"]):
-                extracted['specialty'] = "한의원"
-                extracted['specialty_confidence'] = 0.9
-                privacy_safe_log(consent, "   Mapped to 한의원")
-            
-            # Check for Korean "병원"
-            elif "병원" in message_words:
-                extracted['specialty'] = "병원"
-                extracted['specialty_confidence'] = 0.8
-                privacy_safe_log(consent, "   Mapped '병원' → 병원")
-            
-            # Check for Korean "의원"
-            elif "의원" in message_words:
-                extracted['specialty'] = "의원"
-                extracted['specialty_confidence'] = 0.8
-                privacy_safe_log(consent, "   Mapped '의원' → 의원")
-        
-        # ============================================
-        # STEP 6: MERGE EXTRACTION INTO STATE
-        # ============================================
         new_state = merge_extraction_into_state(
             new_state, 
             extracted, 
-            replace_keywords=(not is_refinement),
             user_message=req.message,
         )
         new_state = standardize_and_fill_state(new_state, consent)

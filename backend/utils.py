@@ -6,7 +6,6 @@ from models import State
 from cookies import (
     CookieConsent, should_log_analytics, privacy_safe_log
 )
-from prompt import FIELD_CHANGE_DETECTION_PROMPT
 import sys
 import os
 from pathlib import Path
@@ -18,8 +17,7 @@ from location import (
     google_maps_place_details, kakao_geocode, kakao_reverse_geocode,
     verify_and_standardize_address
 )
-from config import DISTANCE_MAPPING, GROQ_CHAT_MODEL
-from llm_client import build_llm_client, request_json_completion
+from config import DISTANCE_MAPPING
 LOCAL_PARQUET_PATH = os.getenv(
     "FACILITIES_CACHE_PATH",
     str(Path(__file__).resolve().parent / "local_facilities_cache.parquet"),
@@ -39,7 +37,6 @@ HF_REPO_ID = "ValerianFourel/seoul-medical-facilities"
 HF_FILENAME = "facilities_metareviews_rag_ready.parquet"
 
 
-client = build_llm_client()
 
 
 HF_TOKEN = os.getenv("HF_TOKEN") 
@@ -88,69 +85,6 @@ logger = logging.getLogger(__name__)
 # ==========================================
 # ADD THIS HELPER FUNCTION AT THE TOP OF main.py (after imports, before lifespan)
 # ==========================================
-
-def fuzzy_keyword_match(keyword: str, message: str) -> bool:
-    """
-    Check if keyword semantically appears in message.
-    More lenient than exact substring matching.
-    
-    Returns True if:
-    1. Exact substring match (original behavior)
-    2. All significant words from keyword appear in message
-    3. Synonym match for common terms
-    """
-    keyword_lower = keyword.lower().strip()
-    message_lower = message.lower()
-    
-    # Fast path: exact substring match
-    if keyword_lower in message_lower:
-        return True
-    
-    # Word-level matching (e.g., "English support" matches "English-speaking staff")
-    keyword_words = set(keyword_lower.split())
-    
-    # Remove common stopwords that don't affect meaning
-    stopwords = {'with', 'and', 'or', 'the', 'a', 'an', 'in', 'on', 'at', 'for', 'to', 'of'}
-    keyword_words = keyword_words - stopwords
-    
-    # Check if all significant words from keyword appear in message
-    if keyword_words and all(word in message_lower for word in keyword_words):
-        return True
-    
-    # Synonym matching for common medical terms
-    synonyms = {
-        'parking': ['parking lot', 'car park', 'garage', '주차', '주차장'],
-        'wheelchair': ['wheelchair accessible', 'handicap', 'disability access', '휠체어', '장애인'],
-        'english': ['english-speaking', 'english support', 'speak english', 'speaks english', '영어', '영어가능'],
-        'insurance': ['health insurance', 'accepts insurance', 'takes insurance', '보험', '건강보험'],
-        'weekend': ['weekend hours', 'saturday', 'sunday', 'weekends', '주말', '토요일', '일요일'],
-        'emergency': ['urgent', 'urgent care', 'er', '응급', '긴급'],
-        'elevator': ['lift', '엘리베이터', '승강기'],
-        'mri': ['magnetic resonance', 'imaging', 'scan'],
-        'colonoscopy': ['colon', 'endoscopy', '대장내시경', '내시경'],
-        'ultrasound': ['sonogram', 'echo', '초음파'],
-        'xray': ['x-ray', 'radiograph', '엑스레이'],
-        'clean': ['cleanliness', 'sanitary', 'hygienic', '깨끗', '청결'],
-        'friendly': ['kind', 'welcoming', 'warm', '친절', '상냥'],
-        'professional': ['skilled', 'competent', '전문', '전문적'],
-        'modern': ['contemporary', 'up-to-date', 'new', '현대', '최신'],
-        'experienced': ['veteran', 'seasoned', 'expert', '경험', '숙련'],
-    }
-    
-    # Check if keyword has synonyms in message
-    for base, syn_list in synonyms.items():
-        if base in keyword_lower:
-            if any(syn in message_lower for syn in syn_list):
-                return True
-    
-    # Check reverse (if message word is synonym of keyword)
-    for base, syn_list in synonyms.items():
-        if any(syn in keyword_lower for syn in syn_list):
-            if base in message_lower:
-                return True
-    
-    return False
-# Add this function near the top of utils.py, after imports and before other functions
 
 def normalize_seoul_to_null(location: Optional[str]) -> Optional[str]:
     """
@@ -245,191 +179,6 @@ def ensure_city_wide_defaults(state: State, consent: CookieConsent) -> State:
 def print_separator(char='=', length=100):
     """Print a visual separator."""
     logger.info(char * length)
-
-def detect_field_changes(
-    current_state: State, 
-    user_message: str,
-    consent: Optional[CookieConsent] = None
-) -> Dict[str, str]:
-    """
-    Use LLM to intelligently detect which fields user wants to change.
-    Returns dict with keys: specialty, location, distance (values: "change" or "keep")
-    """
-    if not consent:
-        consent = CookieConsent()
-    
-    detection_prompt = FIELD_CHANGE_DETECTION_PROMPT.format(
-        specialty=current_state.specialty or "None",
-        location=current_state.location or "None",
-        district=current_state.district or "None",
-        dong=current_state.dong or "None",
-        max_distance_km=current_state.max_distance_km,
-        search_mode=current_state.search_mode or "auto",
-        keywords=", ".join(current_state.keywords) if current_state.keywords else "None",
-        hard_keywords=", ".join(current_state.hard_keywords) if current_state.hard_keywords else "None",
-        negative_keywords=", ".join(current_state.negative_keywords) if current_state.negative_keywords else "None",  # ← ADD
-        negative_hard_keywords=", ".join(current_state.negative_hard_keywords) if current_state.negative_hard_keywords else "None",  # ← ADD
-        user_message=user_message
-    )
-    
-    detection_messages = [{"role": "system", "content": detection_prompt}]
-    
-    try:
-        result, _ = request_json_completion(
-            client,
-            model=GROQ_CHAT_MODEL,
-            messages=detection_messages,
-            temperature=0.0,
-            max_completion_tokens=768,
-            required_keys=("specialty", "location", "distance"),
-        )
-        
-        privacy_safe_log(consent, "🔍 Field change detection:")
-        privacy_safe_log(consent, f"   Specialty: {result.get('specialty', 'keep')}")
-        privacy_safe_log(consent, f"   Location: {result.get('location', 'keep')}")
-        privacy_safe_log(consent, f"   Distance: {result.get('distance', 'keep')}")
-        privacy_safe_log(consent, f"   Reasoning: {result.get('reasoning', 'N/A')}")
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Field change detection error: {e}", exc_info=True)
-        return {
-            "specialty": "keep",
-            "location": "keep", 
-            "distance": "keep",
-            "reasoning": "Error in detection, preserving all fields"
-        }
-
-def smart_cleanse_state(
-    current_state: State, 
-    change_detection: Dict[str, str],
-    consent: Optional[CookieConsent] = None
-) -> State:
-    """
-    Cleanse state based on LLM-detected field changes.
-    Only clears fields that were marked as "change".
-    
-    Strategy:
-    - Specialty change: Clear specialty + ALL keywords (major context shift)
-    - Location change: Clear location fields (will be re-enriched by standardize_and_fill_state)
-    - Distance change: Reset to default travel preferences
-    - Keywords change: Clear keywords but preserve specialty (preference refinement)
-    """
-    if not consent:
-        consent = CookieConsent()
-    
-    new_state = current_state.model_copy()
-    cleared_fields = []
-    
-    privacy_safe_log(consent, "🧹 STATE CLEANSING STARTED")
-    
-    # ===== SPECIALTY CHANGE =====
-    if change_detection.get('specialty') == 'change':
-        privacy_safe_log(consent, "   ✂️ Specialty change detected")
-        
-        old_specialty = new_state.specialty
-        new_state.specialty = None
-        new_state.specialty_confidence = 0.0
-        cleared_fields.append(f"specialty (was: {old_specialty})")
-        
-        # ⭐ Clear ALL keywords when specialty changes (major context shift)
-        if new_state.keywords or new_state.hard_keywords:
-            new_state.keywords = []
-            new_state.hard_keywords = []
-            new_state.negative_keywords = []
-            new_state.negative_hard_keywords = []
-            cleared_fields.append("all keywords (specialty changed)")
-    
-    # ===== LOCATION CHANGE =====
-    if change_detection.get('location') == 'change':
-        privacy_safe_log(consent, "   ✂️ Location change detected")
-        
-        # Clear all location-related fields
-        # (standardize_and_fill_state will re-enrich from new location)
-        location_fields = []
-        
-        if new_state.location:
-            location_fields.append(f"location (was: {new_state.location})")
-            new_state.location = None
-        
-        if new_state.latitude:
-            location_fields.append(f"GPS (was: {new_state.latitude:.4f}, {new_state.longitude:.4f})")
-            new_state.latitude = None
-            new_state.longitude = None
-        
-        if new_state.address_korean:
-            new_state.address_korean = None
-            location_fields.append("address_korean")
-        
-        if new_state.district:
-            location_fields.append(f"district (was: {new_state.district})")
-            new_state.district = None
-        
-        if new_state.dong:
-            location_fields.append(f"dong (was: {new_state.dong})")
-            new_state.dong = None
-        
-        if new_state.search_mode:
-            location_fields.append(f"search_mode (was: {new_state.search_mode})")
-            new_state.search_mode = None
-        
-        cleared_fields.extend(location_fields)
-    
-    # ===== DISTANCE CHANGE =====
-    if change_detection.get('distance') == 'change':
-        privacy_safe_log(consent, "   ✂️ Distance/travel preference change detected")
-        
-        old_distance = new_state.max_distance_km
-        old_label = new_state.travel_label
-        
-        new_state.max_distance_km = DEFAULT_MAX_DISTANCE
-        new_state.travel_label = "Moderate"
-        
-        cleared_fields.append(f"distance (was: {old_distance}km '{old_label}' → default: 5km 'Moderate')")
-    
-    # ===== KEYWORD CHANGE (INDEPENDENT OF SPECIALTY) =====
-    # This handles cases where user refines preferences but keeps same specialty
-    # Example: "I need a clinic with parking" → "Actually, I need one with evening hours"
-    if change_detection.get('keywords') == 'change' and change_detection.get('specialty') != 'change':
-        privacy_safe_log(consent, "   ✂️ Keyword/preference change detected (specialty unchanged)")
-        
-        keyword_count = len(new_state.keywords) + len(new_state.hard_keywords)
-        
-        if keyword_count > 0:
-            new_state.keywords = []
-            new_state.hard_keywords = []
-            new_state.negative_keywords = []
-            new_state.negative_hard_keywords = []
-            cleared_fields.append(f"keywords (cleared {keyword_count} preferences)")
-    
-    # ===== REVALIDATION CHECK =====
-    # If critical fields changed, state needs revalidation before search
-    needs_revalidation = any(
-        change_detection.get(field) == 'change' 
-        for field in ['specialty', 'location']
-    )
-    
-    if needs_revalidation:
-        old_phase = new_state.conversation_phase
-        new_state.ready_to_search = False
-        new_state.search_executed = False
-        new_state.conversation_phase = "gathering"
-        
-        privacy_safe_log(consent, f"   🔄 State requires revalidation (phase: {old_phase} → gathering)")
-        cleared_fields.append("ready_to_search, search_executed")
-    else:
-        privacy_safe_log(consent, "   ✓ No critical fields changed, preserving search state")
-    
-    # ===== SUMMARY =====
-    if cleared_fields:
-        privacy_safe_log(consent, f"✅ Cleared: {', '.join(cleared_fields)}")
-    else:
-        privacy_safe_log(consent, "✅ No fields needed clearing")
-    
-    privacy_safe_log(consent, "=" * 60 + "\n")
-    
-    return new_state
 
 def detect_language(message: str) -> str:
     """
@@ -583,18 +332,9 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
             
             privacy_safe_log(consent, f"✅ Filled from address: {', '.join(filled_fields)}")
         else:
-            logger.warning("Could not geocode location; treating search as city-wide")
-            # Geocoding failed → treat as city-wide to avoid errors
-            enriched_state.is_citywide_search = True
-            enriched_state.location = None
-            enriched_state.latitude = None
-            enriched_state.longitude = None
-            enriched_state.district = None
-            enriched_state.dong = None
-            enriched_state.address_korean = None
-            enriched_state.max_distance_km = 25.0
-            enriched_state.search_mode = 'distance'
-    
+            logger.warning("Could not geocode location; preserving requested scope")
+            enriched_state.is_citywide_search = False
+
     # -------------------------------------------------------------------
     # ENRICHMENT CASE 2: Have GPS, need address data
     # -------------------------------------------------------------------
@@ -878,56 +618,3 @@ def state_to_extraction_context_json(state: State) -> str:
     
     import json
     return f"**CURRENT PARAMETERS:**\n```json\n{json.dumps(context, ensure_ascii=False, indent=2)}\n```\n\n**NOTE:** Extract ALL changes from user message. Multiple parameters can update simultaneously."
-
-
-
-def clean_llm_response(response_text: str) -> str:
-    """
-    Remove common LLM formatting issues that break the output.
-    
-    ⭐ Fixes:
-    - "Introduction" headers
-    - Excessive bold formatting
-    - Code blocks
-    - Multiple blank lines
-    """
-    import re
-    
-    # Remove "Introduction" or "Facilities:" headers
-    response_text = re.sub(r'^#+\s*(Introduction|Facilities|Options|Results).*?\n', '', response_text, flags=re.MULTILINE | re.IGNORECASE)
-    
-    # Remove excessive bold formatting (keep some for emphasis)
-    # Only remove bold from first line (intro)
-    lines = response_text.split('\n')
-    if lines:
-        lines[0] = re.sub(r'\*\*([^*]+)\*\*', r'\1', lines[0])
-    response_text = '\n'.join(lines)
-    
-    # Remove code blocks (```python, ```typescript, etc.)
-    response_text = re.sub(r'```[a-z]*\n?', '', response_text)
-    response_text = re.sub(r'```', '', response_text)
-    
-    # Remove inline code formatting for non-technical content
-    response_text = re.sub(r'`([^`]+)`', r'\1', response_text)
-    
-    # Remove multiple blank lines (keep max 2)
-    response_text = re.sub(r'\n{3,}', '\n\n', response_text)
-    
-    # Remove leading/trailing whitespace
-    response_text = response_text.strip()
-    
-    # Remove checkmarks/crosses if they appear outside of lists
-    lines = response_text.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        # Keep checkmarks in numbered lists
-        if re.match(r'^\d+\.', line.strip()):
-            cleaned_lines.append(line)
-        else:
-            # Remove checkmarks from intro/outro
-            line = re.sub(r'[✓✗❌✅⭐]', '', line)
-            cleaned_lines.append(line)
-    
-    response_text = '\n'.join(cleaned_lines)
-    
-    return response_text

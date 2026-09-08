@@ -57,6 +57,7 @@ class RAGPipeline:
         collection_name: str = "seoul_med_agentic_v2",
         embedding_model: str = "text-embedding-3-small",
         raw_reviews_path: Optional[str] = None,
+        raw_review_source_sha256: Optional[str] = None,
     ):
         """
         Initialize the RAG pipeline with hybrid search capabilities.
@@ -75,7 +76,9 @@ class RAGPipeline:
         self.raw_review_store = None
         if raw_reviews_path:
             try:
-                self.raw_review_store = RawReviewStore(raw_reviews_path)
+                self.raw_review_store = RawReviewStore(
+                    raw_reviews_path, source_sha256=raw_review_source_sha256
+                )
             except Exception:
                 logger.exception(
                     "Raw review store unavailable; continuing with meta-reviews"
