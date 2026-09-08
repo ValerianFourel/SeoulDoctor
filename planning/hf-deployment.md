@@ -11,9 +11,10 @@ skipped the disabled automatic sync. The response changes are not live yet.
 The followup push `67dce71fab57f0a0ba61fff15fd590f1640e6779` used the explicit
 deployment marker described below. Actions run `34214729943` executed but
 failed before any upload because `NCS_HF_TOKEN` supplied no process credential.
-Configure that Actions secret for this repository and rerun the failed job,
-or supply an approved process `HF_TOKEN` for direct sync. The Space remains
-on the earlier revision; a GitHub push is not proof of a Hugging Face update.
+The user subsequently specified the existing `HF_TOKEN` secret for deployment;
+the workflow reference has been corrected to use it. A new explicit deployment
+push is required. Until its running revision is verified, the response changes
+must not be described as live.
 
 For the already public target, run the following from a clean, committed `ncs`
 checkout with an approved `HF_TOKEN` in the process environment:
@@ -25,7 +26,7 @@ backend/venv/bin/python scripts/sync_ncs_spaces.py app --apply --allow-public
 
 For one deployment through GitHub Actions, prefix the pushed `ncs` commit title
 with `[deploy ncs] `. This explicit request runs the existing workflow using
-`NCS_HF_TOKEN`, even when automatic sync is disabled. Normal pushes still require
+`HF_TOKEN`, even when automatic sync is disabled. Normal pushes still require
 `NCS_HF_SYNC_ENABLED=true`. Checkout remains pinned to the pushed revision and
 the workflow only deploys `ncs` to the fixed NCS Space. It does not modify `main`.
 

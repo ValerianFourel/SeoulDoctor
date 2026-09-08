@@ -1,5 +1,21 @@
 # SeoulDoc project state
 
+## NCS deployment credential correction, 2026-09-08
+
+The user explicitly instructed deployment with `HF_TOKEN` and live verification
+of the response fix. Root owns the NCS workflow and this handoff record in
+`/tmp/seouldoc-response-polish`, based on published NCS
+`0adcb93b2bcbce4ccf127f8f6e447a9e838653b4`. The workflow now reads the GitHub
+Actions secret `HF_TOKEN`, replacing its unavailable `NCS_HF_TOKEN` reference.
+The fixed NCS Space, NCS-only branch restriction, explicit deployment marker,
+pinned source revision, and existing hardware remain unchanged. Main stays
+separate at `e6b40d5782e04abe97383d459c4aff6eec40a287`.
+
+The next action is to push the credential-reference correction with the explicit
+deployment marker, verify the new running Space revision, and run the four-call
+API regression plus a browser check. The previous failed deployment and live
+before-test remain recorded below; they are not evidence of the new deployment.
+
 ## NCS response deployment and API regressions, 2026-09-08
 
 The user authorized publishing and deploying the response change on `ncs`,
