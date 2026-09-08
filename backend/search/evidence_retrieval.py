@@ -16,6 +16,7 @@ from query_facets import expand_multilingual_retrieval_terms
 from search.contracts import EvidenceRole, SearchRules, validate_evidence_source_types
 from search.indexes.repository import EvidenceHit
 from search.reranker import RerankOutcome
+from search.rules import SPECIALTY_IDS
 from search.semantic_retriever import (
     SemanticCellQuery,
     SemanticEvidenceSource,
@@ -246,6 +247,8 @@ def _execution_reasons(
 
 def compile_evidence_constraints(
     rules: SearchRules,
+    *,
+    review_query: str | None = None,
 ) -> tuple[EvidenceConstraint, ...]:
     constraints: list[EvidenceConstraint] = []
     seen: set[str] = set()
@@ -282,6 +285,22 @@ def compile_evidence_constraints(
             priority=len(constraints),
         ))
         seen.add(constraint_id)
+    if not constraints:
+        terms = expand_multilingual_retrieval_terms((
+            review_query or rules.original_query,
+            *(identity.replace("_", " ") for identity in sorted(rules.hard.specialty_ids)),
+            *(name for name, identity in SPECIALTY_IDS.items()
+              if identity in rules.hard.specialty_ids),
+        ))
+        constraints.append(EvidenceConstraint(
+            constraint_id="review:visit_context",
+            role="disease",
+            terms_en=_clean_terms(tuple(term for term in terms if not _contains_hangul(term))),
+            terms_ko=_clean_terms(tuple(term for term in terms if _contains_hangul(term))),
+            source_types=("verbatim_review",),
+            required=False,
+            priority=0,
+        ))
     return tuple(constraints)
 
 
@@ -452,6 +471,7 @@ class ConstraintEvidenceRetriever:
         shortlisted_facility_ids: Sequence[str],
         displayed_facility_ids: Sequence[str],
         attachment_facility_ids: Sequence[str] | None = None,
+        review_query: str | None = None,
     ) -> EvidenceRecallResult:
         shortlist = tuple(dict.fromkeys(shortlisted_facility_ids))[
             :self.policy.shortlist_limit
@@ -467,16 +487,7 @@ class ConstraintEvidenceRetriever:
         if not set(attachment_facilities).issubset(shortlist):
             raise ValueError("attachment facilities must be inside the frozen shortlist")
 
-        constraints = compile_evidence_constraints(rules)
-        if not constraints:
-            empty_groups = {
-                facility_id: EvidenceGroups((), (), (), ())
-                for facility_id in attachment_facilities
-            }
-            return EvidenceRecallResult(
-                empty_groups, (), (), (), "complete", False, "no_constraints", False,
-                semantic_status="not_applicable", execution_status="not_run",
-            )
+        constraints = compile_evidence_constraints(rules, review_query=review_query)
 
         search_started = perf_counter()
         first_search = self._search(
