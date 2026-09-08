@@ -28,6 +28,7 @@ def main():
     gpu_enabled = os.environ.get("NCS_ENABLE_GPU") == "true"
     if gpu_enabled:
         os.environ["BGE_M3_RETRIEVER_URL"] = "http://127.0.0.1:7861"
+        os.environ["RERANKER_URL"] = "http://127.0.0.1:7861"
     restore_release()
     stopped = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):

@@ -40,6 +40,8 @@ app.router.routes = [
     if getattr(route, "endpoint", None) is not root_status
 ]
 if os.environ.get("NCS_ENABLE_GPU") == "true":
+    from inference_gateway import router as inference_router
+    app.include_router(inference_router)
     @app.get("/ready/gpu")
     def gpu_readiness():
         try:
