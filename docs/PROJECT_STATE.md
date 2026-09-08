@@ -662,3 +662,21 @@ No token was used or embedded. No infrastructure was provisioned or removed.
 The temporary test-browser outage simulation and local dependency symlink
 were removed. Existing retrieval degradation remains separate from routing.
 Next action: use the live website; retrieval readiness remains a separate task.
+
+## Review panel restoration, 2026-09-09
+
+Owner: review_restore_design subagent. Branch `local/restore-review-panels-20260909`, base `f6b20e50`. Owns frontend/components/ReviewEvidence.tsx, frontend/components/ChatInterface.tsx, and frontend/tests/review-visibility.cjs. Restores existing NCS originals and translations with bounded pagination and removes the generic card warning. No backend or routing edits.
+
+Root took ownership of final regression checks and integration after the
+implementation agent was interrupted. The existing NCS component was reused;
+only pagination changed to avoid a singleton trailing page. Live NCS returns
+10–12 original comments per clinic with translation presentation fields.
+Before-fix browser replay: originals=0, translations=0, generic warning=true.
+Production build and 218 backend tests passed. The first browser run passed
+38 checks. Additional 4- and 11-review pagination cases are being verified.
+
+Final local checks: 48/48 browser assertions passed at desktop and mobile
+widths, including original ownership, translation display, long original
+expansion, warning removal, and pagination 4→4 and 11→3/6/2. Independent
+review found no blocking bug or new comment/suppression issue. Root accepted
+the requested additional pagination tests. No backend deployment is required.

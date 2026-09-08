@@ -4,6 +4,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, MapPin, Sparkles, Globe, Bug, ChevronDown, ChevronUp, X } from "lucide-react";
 import Link from 'next/link';
+import ReviewEvidence, { type ReviewEvidenceRecord } from './ReviewEvidence';
 import { getApiBases, postJson } from '../lib/api';
 
 const ENABLE_DEBUG_MODE =
@@ -85,18 +86,8 @@ type FacilityResult = {
   retrieval_methods?: string[];
   retrieval_matched_terms?: string[];
   recommendation_status?: "not_established" | "requires_review" | "evidence_available";
-  retrieval_evidence?: Array<{
-    evidence_id?: string;
-    text: string;
-    source_type: string;
-    source_field?: string;
-    language?: string;
-    translated_text?: string;
-    relevance_reason?: string;
-    visit_date?: string;
-    matched_terms?: string[];
-    is_verbatim?: boolean;
-  }>;
+  review_language?: string;
+  retrieval_evidence?: ReviewEvidenceRecord[];
   retrieval_trace?: Record<string, unknown>[];
 };
 
@@ -1219,15 +1210,6 @@ export default function ChatInterface() {
                                   </div>
                                 )}
 
-                                {(facility.recommendation_status === "not_established" ||
-                                  facility.recommendation_status === "requires_review") && (
-                                  <p className="my-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                                    {currentState.language_pref === "Korean"
-                                      ? "요청하신 조건이 모두 확인되지는 않았습니다. 방문 전에 시설에 확인해 주세요."
-                                      : "Some requirements are unconfirmed. Please check with the facility before visiting."}
-                                  </p>
-                                )}
-
                                 {summary && (
                                   <div className="my-3">
                                     <p className={`text-sm sm:text-base text-slate-600 leading-relaxed break-words ${
@@ -1286,6 +1268,14 @@ export default function ChatInterface() {
                                   </div>
                                 )}
                                                                             
+                                {facility.retrieval_evidence && (
+                                  <ReviewEvidence
+                                    facilityId={facility.place_id}
+                                    reviews={facility.retrieval_evidence}
+                                    language={facility.review_language ?? currentState.language_pref}
+                                  />
+                                )}
+
                                 {/* Debug: Show place_id */}
                                 {ENABLE_DEBUG_MODE && debugMode && (
                                   <div className="mt-2 pt-2 border-t border-slate-200 space-y-2">
