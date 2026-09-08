@@ -113,10 +113,19 @@ def detect_language_hint(text: Any) -> str:
 class RawReviewStore:
     """Read-only, parameterized search over the raw-review Parquet snapshot."""
 
-    def __init__(self, parquet_path: str):
+    def __init__(self, parquet_path: str, *, source_sha256: Optional[str] = None):
         self.parquet_path = str(Path(parquet_path).resolve())
         if not Path(self.parquet_path).is_file():
             raise FileNotFoundError(self.parquet_path)
+        if source_sha256 is not None and (
+            not isinstance(source_sha256, str)
+            or re.fullmatch(r"[a-f0-9]{64}", source_sha256) is None
+        ):
+            raise ValueError("source_sha256 must be a caller-verified file SHA256")
+        if source_sha256 is None:
+            from search.indexes.manifest import sha256_file
+            source_sha256 = sha256_file(Path(self.parquet_path))
+        self.source_sha256 = source_sha256
 
         escaped_path = self.parquet_path.replace("'", "''")
         self.connection = duckdb.connect(database=":memory:", read_only=False)
@@ -224,9 +233,9 @@ class RawReviewStore:
         records = []
         for row in rows:
             record = dict(zip(columns, row))
-            text = str(record.get("review_text") or "").strip()
+            text = str(record.get("review_text") or "")
             identity = (
-                f"{record.get('place_id')}|{record.get('review_index')}|{text}"
+                f"{record.get('place_id')}|{record.get('review_index')}|{text.strip()}"
             )
             records.append({
                 "evidence_id": f"review:{sha256(identity.encode('utf-8')).hexdigest()[:20]}",
@@ -237,6 +246,7 @@ class RawReviewStore:
                 "source_type": "verbatim_review",
                 "source_field": "review_text",
                 "source_index": int(record.get("review_index") or 0),
+                "review_source_sha256": self.source_sha256,
                 "visit_date": record.get("visit_date"),
                 "scraped_at": record.get("scraped_at"),
                 "is_verbatim": True,
