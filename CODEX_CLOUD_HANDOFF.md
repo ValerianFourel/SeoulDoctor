@@ -1,5 +1,15 @@
 # Codex Cloud handoff: SeoulDoc live evaluation
 
+## Fix-inference authorization, 2026-09-09
+
+The user explicitly authorizes reading needed backend/.env credentials into
+local task processes and removing the former prohibition from AGENTS.md. Never
+print credentials or include them in artifacts. This supersedes historical
+process-environment-only restrictions below. Work on fix-inference from the
+NCS repair checkpoint. Run real inference scenarios before publication, using
+existing resources and indexes. No new paid infrastructure is authorized.
+
+
 ## Current NCS implementation handoff, 2026-09-08
 
 For this task, the latest user instruction overrides the historical branch,

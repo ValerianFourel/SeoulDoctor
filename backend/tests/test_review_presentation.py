@@ -16,7 +16,7 @@ class ReviewPresentationTests(unittest.TestCase):
         source = review("The nurse explained the paperwork clearly.")
         reply, cards = fallback_response([{"place_id": "fixture-clinic",
              "retrieval_evidence": [source]}], {"retrieval_execution_status": "partial"}, "English")
-        self.assertIn("Review retrieval was incomplete", reply)
+        self.assertIn("I may have missed relevant patient reviews", reply)
         self.assertNotIn(source["text"], reply)
         self.assertNotIn("review:fixture", reply)
         self.assertNotIn("evidence:fixture", reply)

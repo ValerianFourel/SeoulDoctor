@@ -232,9 +232,13 @@ and give one useful next action. Do not repeat a question already answered, incl
 a routine visit reason. Report a radius expansion as completed only when search_progress
 records it. Otherwise ask permission to widen the area while preserving specialty.
 Use search_progress and available_next_actions to give a specific refinement. If review
-retrieval failed, offer to retry the same search; a narrower area does not repair a failed
-service. Do not use the generic sentence "Part of the search did not finish."
-Use [1], [2] citation markers for patient-report claims. Do not write review quotations
+retrieval timed out or failed temporarily, offer to retry the same search. If a required
+service is unavailable, explain the limited review comparison without promising a retry
+will fix it. A narrower area does not repair a failed service. Do not use the generic sentence "Part of the search did not finish."
+Put a matching [1], [2] marker directly after every patient-report claim in answer.
+Every citations entry must have its [marker] inside answer, and every marker must have
+a citations entry. For example: "A patient reported clear explanations [1]."
+Use no citation entries when answer makes no patient-report claims. Do not write review quotations
 into the answer; the server displays original excerpts separately. No Markdown formatting.
 assessments: array of {place_id, requirement, status, basis, staff_role, evidence_ids,
 explanation}. status is supports, contradicts, mixed, or unestablished. basis is
@@ -407,7 +411,9 @@ def _answer_context(question, state, cards, metadata, language):
             })
     execution = metadata.get("retrieval_execution_status", "not_run")
     next_actions = []
-    if execution in {"partial", "failed"}:
+    unavailable = any(reason.endswith(("_unavailable", "_service_expired"))
+                      for reason in metadata.get("retrieval_reason_codes", []))
+    if execution in {"partial", "failed"} and not unavailable:
         next_actions.append("retry the same search with the current specialty and location")
     if not (state.disease_terms or state.visit_reason):
         next_actions.append("ask what the patient needs the doctor to help with")
@@ -494,18 +500,18 @@ def _validate_proposal(proposal, context):
             if match.group(2).lower() in {"m", "미터"}:
                 value /= 1000
             named = [card for card in context["facilities"] if card["name"] and card["name"] in sentence]
-            if len(named) == 1:
+            suggested_change = re.search(
+                r"(?:\b(?:could|can|if you|would you like|try)\b|원하시면|원하신다면).*(?:expand|narrow|widen|extend|reduce|radius|넓|줄|조정|반경)",
+                sentence, re.I,
+            )
+            if not named and suggested_change and 0 < value <= 100:
+                allowed_numbers.add(float(match.group(1)))
+            elif len(named) == 1:
                 actual = named[0]["distance_km"]
                 if actual is None or value not in {actual, round(actual, 1)}:
                     raise ValueError("distance_owner_mismatch")
             elif not named and re.search(r"radius|within|범위|이내|반경", sentence, re.I):
-                proposal = re.search(
-                    r"(?:\b(?:could|can|if you|would you like)\b|원하시면|원하신다면).*(?:expand|narrow|widen|extend|reduce|넓|줄|조정)",
-                    sentence, re.I,
-                )
-                if proposal and 0 < value <= 100:
-                    allowed_numbers.add(float(match.group(1)))
-                elif value not in [context["active_state"]["max_distance_km"],
+                if value not in [context["active_state"]["max_distance_km"],
                                    *context["search_progress"]["attempted_radii_km"]]:
                     raise ValueError("radius_mismatch")
             else:
@@ -570,11 +576,18 @@ def _fallback(cards, state, metadata, language, reason):
             f"No eligible specialist was found within the initial {first:g} km radius, so I widened it to {last:g} km while keeping {specialty}."
         )
     if metadata.get("retrieval_execution_status") in {"partial", "failed"}:
-        paragraphs.append(
-            "후기 검색을 끝까지 완료하지 못해 비교에 필요한 후기가 빠져 있을 수 있습니다. 같은 진료과와 위치로 다시 검색해 달라고 요청해 주세요. 이미 반환된 후기는 아래에서 확인할 수 있습니다."
-            if korean else
-            "Review retrieval was incomplete, so relevant patient experiences may be missing. Ask me to retry with the same specialty and location to look for those reviews. Any reviews already returned remain available below."
-        )
+        reasons = metadata.get("retrieval_reason_codes", [])
+        ranking_only = bool(reasons) and all(reason.startswith("reranker_") for reason in reasons)
+        unavailable = any(reason.endswith(("_unavailable", "_service_expired")) for reason in reasons)
+        if ranking_only:
+            limitation = "후기를 찾았지만 비교를 완료하지 못했습니다." if korean else "I found patient reviews, but couldn’t finish comparing them."
+        else:
+            limitation = "관련 후기를 모두 확인하지 못했을 수 있습니다." if korean else "I may have missed relevant patient reviews."
+        if unavailable:
+            next_step = "확인된 후기를 바탕으로 특정 병원에 대해 질문해 주세요." if korean else "You can ask about a particular clinic using the reviews available."
+        else:
+            next_step = "같은 조건으로 다시 검색해 달라고 요청해 주세요." if korean else "You can ask me to retry this search."
+        paragraphs.append(limitation + " " + next_step)
     if not cards:
         return "\n\n".join(paragraphs)
     unverified = {
@@ -629,6 +642,7 @@ def answer_search(
                             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                         ],
                         max_completion_tokens=token_limit,
+                        response_schema=(_AnswerProposal if stage == "synthesis" else _Verification).model_json_schema(),
                         timeout_seconds=min(45.0 if stage == "synthesis" else 30.0, remaining),
                     )
                 finally:

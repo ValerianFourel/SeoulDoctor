@@ -263,26 +263,9 @@ def standardize_and_fill_state(state: State, consent: Optional[CookieConsent] = 
         enriched_state.location = None
         return enriched_state
     
-    # Case 2: No location data at all → city-wide
     if not enriched_state.location and not enriched_state.latitude and not enriched_state.district:
-        privacy_safe_log(consent, "=" * 60)
-        privacy_safe_log(consent, "🌆 NO LOCATION DATA → City-wide search")
-        privacy_safe_log(consent, "   Skipping geocoding (no bias)")
-        privacy_safe_log(consent, "=" * 60 + "\n")
-        
-        enriched_state.is_citywide_search = True
-        enriched_state.location = None
-        enriched_state.latitude = None
-        enriched_state.longitude = None
-        enriched_state.district = None
-        enriched_state.dong = None
-        enriched_state.address_korean = None
-        enriched_state.max_distance_km = 25.0
-        enriched_state.travel_label = "Anywhere in Seoul"
-        enriched_state.search_mode = 'distance'
-        
         return enriched_state
-    
+
     # ===================================================================
     # NORMAL ENRICHMENT FLOW (specific location provided)
     # ===================================================================

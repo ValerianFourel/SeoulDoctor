@@ -153,6 +153,14 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertEqual(second["state"]["max_distance_km"], 1)
         self.assertEqual(second["state"]["specialty"], "정형외과")
 
+    def test_review_translation_request_does_not_require_english_consultations(self):
+        self._model(["PROVIDE_INFO"], [
+            self._proposal(specialty="정형외과", location="Jonggak", visit_reason="ankle pain"),
+        ])
+        body = self._post("Find orthopedics near Jonggak for ankle pain and show English translations of reviews.")
+        self.assertNotIn("English-speaking", body["state"]["hard_keywords"])
+        self.assertTrue(body["results"])
+
     def test_ichon_care_preferences_survive_four_real_chat_turns(self):
         self.catalog["category"] = "소아청소년과"
         self._model(["PROVIDE_INFO", "CHANGE_CRITERIA", "PROVIDE_INFO", "CHANGE_CRITERIA"], [

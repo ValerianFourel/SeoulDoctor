@@ -412,6 +412,8 @@ class AnswerReliabilityTests(unittest.TestCase):
             "The current search radius is within 5000 m.",
             "The current search radius is within 5 km.",
             "If you would like, we can narrow the radius to within 1 km.",
+            "Would you like me to expand the search to 10 km?",
+            "Try a 1 km radius to focus on the nearest options.",
             "You can compare 1 clinic at a time.",
         )
         current = state()

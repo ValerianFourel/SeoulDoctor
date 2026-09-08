@@ -24,6 +24,8 @@ class AnswerCompletionTests(unittest.TestCase):
             client, model="synthetic-answer-model",
             messages=[{"role": "user", "content": "synthetic request"}],
             max_completion_tokens=3072, timeout_seconds=17.5,
+            response_schema={"type": "object", "properties": {"answer": {"type": "string"}},
+                             "required": ["answer"], "additionalProperties": False},
         )
 
     def test_valid_json_uses_explicit_timeout_and_disables_provider_retries(self):
@@ -35,6 +37,8 @@ class AnswerCompletionTests(unittest.TestCase):
         create.assert_called_once()
         self.assertEqual(create.call_args.kwargs["max_completion_tokens"], 3072)
         self.assertEqual(create.call_args.kwargs["temperature"], 0.0)
+        self.assertEqual(create.call_args.kwargs["response_format"]["type"], "json_schema")
+        self.assertTrue(create.call_args.kwargs["response_format"]["json_schema"]["strict"])
 
     def test_complete_json_with_nonstop_finish_reason_is_rejected_without_retry(self):
         for reason in ("length", "content_filter", "tool_calls", None):

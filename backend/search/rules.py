@@ -1005,20 +1005,19 @@ def compile_legacy_state_rules(
         "inquiries": list(getattr(state, "inquiries", ()) or ()),
         "visit_reason": getattr(state, "visit_reason", None),
     }
-    try:
-        travel_confidence = float(
-            getattr(state, "travel_confidence", 0.0) or 0.0
-        )
-    except (TypeError, ValueError):
-        travel_confidence = 0.0
-
     preserved_distance = None
-    if has_point and travel_confidence >= 0.6:
+    if has_point:
         try:
             inherited_distance = float(getattr(state, "max_distance_km"))
         except (TypeError, ValueError):
             inherited_distance = 0.0
-        if 0.0 < inherited_distance <= 100.0:
+        try:
+            travel_confidence = float(getattr(state, "travel_confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            travel_confidence = 0.0
+        if 0.0 < inherited_distance <= 100.0 and (
+            travel_confidence >= 0.6 or inherited_distance < 5.0
+        ):
             preserved_distance = inherited_distance
     return RulesCompiler(
         allowed_specialties=allowed_specialties,

@@ -82,6 +82,7 @@ GENDER_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
 )
 
 DISEASE_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
+    ("foot issue", ("foot issue", "foot problem", "발 문제")),
     ("foot pain", ("foot pain", "pain in my foot", "발 통증", "발이 아파")),
     ("ankle pain", ("ankle pain", "ankle hurts", "발목 통증", "발목이 아파")),
     ("ankle sprain", ("ankle sprain", "sprained ankle", "twisted my ankle", "발목 염좌", "발목 삐", "발목 겹질")),
@@ -307,6 +308,12 @@ def english_consultation_intent(query: str) -> str | None:
     intents = []
     for clause in intent_clauses(query):
         clinical = _RESPONSE_DIRECTIVE.sub("", clause)
+        clinical = re.sub(
+            r"\bEnglish\s+translations?\s+of\s+(?:the\s+)?(?:patient\s+)?(?:reviews|comments)\b"
+            r"|\btranslate\s+(?:the\s+)?(?:patient\s+)?(?:reviews|comments)\s+(?:into|to|in)\s+English\b"
+            r"|(?:후기|리뷰|댓글)(?:를|을)?\s*영어로\s*번역",
+            "", clinical, flags=re.I,
+        )
         if not re.search(r"\benglish\b|영어", clinical, re.I):
             continue
         if is_withdrawal(clinical):

@@ -63,13 +63,13 @@ class EvidenceResponseTests(unittest.TestCase):
         for cards in ([], [self.card()]):
             complete, _ = fallback_response(cards, {"retrieval_execution_status": "complete"}, "English")
             failed, _ = fallback_response(cards, {"retrieval_execution_status": "failed"}, "English")
-            self.assertNotIn("Review retrieval was incomplete", complete)
-            self.assertIn("Review retrieval was incomplete", failed)
+            self.assertNotIn("I may have missed relevant patient reviews", complete)
+            self.assertIn("I may have missed relevant patient reviews", failed)
 
     def test_partial_search_gives_retry_without_unrelated_radius_refinement(self):
         reply, _ = fallback_response([self.card()], {"retrieval_execution_status": "partial"},
                                      "English", state=self.state())
-        self.assertIn("retry with the same specialty and location", reply)
+        self.assertIn("retry this search", reply)
         self.assertNotIn("Part of the search did not finish", reply)
         self.assertNotIn("narrow", reply)
 

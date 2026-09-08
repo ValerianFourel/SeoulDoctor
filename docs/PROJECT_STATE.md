@@ -1510,3 +1510,7 @@ Application repair commit: c977fe68592274a988ffb4ae1d096c0e202df2d7 on
 local/ncs-search-repair-20260909. Root owns this handoff and the integrated file
 sets above. The worktree was clean at this commit; no temporary resources were
 created. The public NCS Space has not been updated by this repair task.
+
+## Fix-inference execution, 2026-09-09
+
+Root owns integration on fix-inference from bb1894490440b44cecb57140c75648a37ea9f17d, AGENTS.md, handoff/coordination records, candidate launch configuration and application fixes. User explicitly removes the .env read prohibition and authorizes real inference testing. Needed credentials may load privately into task processes. Existing artifacts/resources only. Evaluation review agents remain read-only until assigned isolated file ownership. Next action: inspect existing GPU/service readiness, launch candidate API, then fixed gate and adaptive conversations.

@@ -137,6 +137,7 @@ def request_answer_completion(
     messages: Sequence[Mapping[str, str]],
     max_completion_tokens: int,
     timeout_seconds: float,
+    response_schema: dict[str, Any],
 ) -> tuple[dict[str, Any], Any]:
     """Make one bounded request; incomplete output cannot become an answer."""
     if client is None:
@@ -148,7 +149,10 @@ def request_answer_completion(
         messages=list(messages),
         temperature=0.0,
         max_completion_tokens=max_completion_tokens,
-        response_format={"type": "json_object"},
+        response_format={"type": "json_schema", "json_schema": {
+            "name": "search_response", "strict": True, "schema": response_schema,
+        }},
+        extra_body={"provider": {"require_parameters": True}} if LLM_PROVIDER == "openrouter" else {},
         reasoning_effort="low",
     )
     if not completion.choices or completion.choices[0].finish_reason != "stop":
