@@ -1,6 +1,68 @@
 # SeoulDoc project state
 
-## NCS adaptive patient evaluation prepared, 2026-09-08
+## NCS adaptive targeted gate failed, 2026-09-08
+
+Root GPT-6 graded the Qwen3.8 27B patient run against the frozen location,
+facility and exact-comment targets. One journey completed and failed; one
+remained incomplete. The four conditional Korean, language-switch and mixed
+cases were held under the frozen targeted-gate rule. This is not a release
+pass or a production-wide success-rate estimate.
+
+The user explicitly approved loading only `OPENROUTER_API_KEY` and `HF_TOKEN`
+from `backend/.env` into the evaluation process without displaying values.
+Root owned the run and this record in `/tmp/seouldoc-response-polish`, branch
+`local/ncs-response-polish-20260908`, execution HEAD
+`85d0be248ed808144e3797ed36e359e09b81a416`. No application code, runtime
+configuration or hardware changed. NCS remained healthy and running at
+`b13d2bdb6eb12153a23453382244630e3746f240` on the existing T4. Fresh Git fetch
+confirmed `main` remains `e6b40d5782e04abe97383d459c4aff6eec40a287`.
+
+The final run is `.audit/ncs-inhabited-20260908T114700Z/` in the main local
+checkout. `REPORT.md`, `targeted-gpt6-grade.json` and
+`targeted-measurement.json` contain the findings. Jonggak completed two app
+turns and scored 3.60/5 against a minimum mean of 4 and minimum dimension of 3.
+It preserved the 1 km geography but did not answer the English-consultation
+question or identify the relevant review support. Ichon completed three app
+turns; its provisional app score is 3.05/5. It retained `short wait` after the
+patient accepted waiting, lost earlier explanation intent during refinement,
+and did not interpret the visible doctor/nurse conflict. The planned explicit
+hard nurse exclusion was not sent by the actor, so that behavior is untested.
+
+Both target facilities appeared in the final local lists. Exact decisive target
+comments appeared in one of two cases. All 247 checked review occurrences,
+covering 216 unique IDs, matched original text, canonical ID, source revision
+and owning facility. Independently calculated local distances matched. The
+five app request durations ranged from 12.60 to 25.55 seconds, median 17.30.
+Every reply disclosed incomplete search; hidden retrieval coverage was not
+available in the public API.
+
+The first attempt, `.audit/ncs-inhabited-20260908T112400Z/`, stopped after three
+app calls because the frozen actor schema rejected a closing message with
+`done=true`. It is retained, not relabeled as a pass. A separate v2 runner
+accepted that closing statement without another app request; nine offline
+tests passed. The repeated run kept identical scenarios, targets, rubric,
+model and sampling settings, and inherited the original budget and deadline.
+Ichon's final Qwen decision then exhausted 900 tokens as reasoning and returned
+no answer. That actor failure was retained without retry or invented choice.
+Across both attempts, eight app requests succeeded and 13 Qwen calls cost
+$0.03083423 according to provider usage. App/Space costs were not exposed.
+The actor ledger is idle and its lock is released. No new compute was created.
+
+The failed first attempt is checkpointed privately at Dataset commit
+`834b9b324d031efb7775a0086422fcbcb152e8bb`. The final 49-file checkpoint,
+including grades, failures and portable evaluator source snapshots, is at
+`ValerianFourel/seouldoc-eval-handoff` revision
+`1c11fa7febbfe1596db249c7751d25bc79246fab`, under
+`runs/ncs-inhabited-20260908T114700Z`.
+
+Code inspection confirmed that `finalize_evidence_response` rebuilds replies
+with cards using fixed summary, warning and followup paragraphs. One next
+action is to change that composition to answer the current evidence-specific
+question, alongside repairing refinement state, then rerun the unchanged
+cases under a separately frozen run. No application fix was made during this
+evaluation.
+
+## Earlier NCS adaptive patient evaluation preparation, 2026-09-08
 
 Root owns this record and the pending run
 `.audit/ncs-inhabited-20260908T112400Z/` in the main local checkout. Preparation
