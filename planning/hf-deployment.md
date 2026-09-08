@@ -1,5 +1,28 @@
 # Combined ncs GPU deployment
 
+## Current deployment checkpoint, 2026-09-08
+
+The NCS Space is public and running on `t4-medium`, verified at source and
+runtime revision `4138eb056b80f4689fb0ef87244cf128c44280b2`. The original
+application remains separate. PR #4 merged the response changes into `ncs` at
+`0bb08702bb07f3dc5ddbed943acfa2460c1db170`, but Actions run `34212865685`
+skipped the disabled automatic sync. The response changes are not live yet.
+
+For the already public target, run the following from a clean, committed `ncs`
+checkout with an approved `HF_TOKEN` in the process environment:
+
+```bash
+backend/venv/bin/python scripts/sync_ncs_spaces.py app
+backend/venv/bin/python scripts/sync_ncs_spaces.py app --apply --allow-public
+```
+
+`--allow-public` acknowledges the target's current visibility. It does not change
+visibility, hardware, or the fixed target. The source branch marker and parent
+revision checks still apply. The sections below record the earlier private
+deployment setup and its historical verification results.
+
+## Original combined deployment setup
+
 The active target is the private Space
 https://huggingface.co/spaces/ValerianFourel/SeoulDoctor-ncs-retriever.
 Despite its retained name, it now receives the complete application bundle.

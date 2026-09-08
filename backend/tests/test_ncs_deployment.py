@@ -1,8 +1,10 @@
 """Deployment boundaries for the isolated assessment Spaces."""
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
-from scripts.sync_ncs_spaces import destination, TARGETS
+from scripts.sync_ncs_spaces import destination, main, TARGETS
 
 
 class AssessmentDeploymentTests(unittest.TestCase):
@@ -35,3 +37,54 @@ class AssessmentDeploymentTests(unittest.TestCase):
 
     def test_targets_cannot_replace_original_application(self):
         self.assertNotIn("ValerianFourel/SeoulDoctor", TARGETS.values())
+
+    def test_public_deployment_requires_explicit_acknowledgment(self):
+        api = Mock()
+        api.space_info.return_value = SimpleNamespace(private=False)
+        with (
+            patch("sys.argv", ["sync_ncs_spaces.py", "app", "--apply"]),
+            patch("scripts.sync_ncs_spaces.bundle", return_value=("source-sha", {})),
+            patch.dict("os.environ", {"HF_TOKEN": "test-token"}),
+            patch("huggingface_hub.HfApi", return_value=api),
+            patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "requires --allow-public"):
+                main()
+        api.create_commit.assert_not_called()
+
+    def test_acknowledged_public_deployment_preserves_target_and_revision_guard(self):
+        api = Mock()
+        api.space_info.return_value = SimpleNamespace(private=False, sha="previous-sha", siblings=[])
+        api.get_space_variables.return_value = {"NCS_SOURCE_BRANCH": SimpleNamespace(value="ncs")}
+        api.create_commit.return_value = SimpleNamespace(oid="new-sha")
+        with (
+            patch("sys.argv", ["sync_ncs_spaces.py", "app", "--apply", "--allow-public"]),
+            patch("scripts.sync_ncs_spaces.bundle", return_value=("source-sha", {"backend/main.py": b"app"})),
+            patch.dict("os.environ", {"HF_TOKEN": "test-token"}),
+            patch("huggingface_hub.HfApi", return_value=api),
+            patch("builtins.print"),
+        ):
+            main()
+        api.create_commit.assert_called_once()
+        args, kwargs = api.create_commit.call_args
+        self.assertEqual(args, ("ValerianFourel/SeoulDoctor-ncs-retriever",))
+        self.assertEqual(kwargs["parent_commit"], "previous-sha")
+        self.assertEqual(kwargs["repo_type"], "space")
+        self.assertEqual([operation.path_in_repo for operation in kwargs["operations"]], ["backend/main.py"])
+        api.update_repo_settings.assert_not_called()
+        api.request_space_hardware.assert_not_called()
+
+    def test_public_acknowledgment_does_not_bypass_branch_marker(self):
+        api = Mock()
+        api.space_info.return_value = SimpleNamespace(private=False)
+        api.get_space_variables.return_value = {"NCS_SOURCE_BRANCH": SimpleNamespace(value="main")}
+        with (
+            patch("sys.argv", ["sync_ncs_spaces.py", "app", "--apply", "--allow-public"]),
+            patch("scripts.sync_ncs_spaces.bundle", return_value=("source-sha", {})),
+            patch.dict("os.environ", {"HF_TOKEN": "test-token"}),
+            patch("huggingface_hub.HfApi", return_value=api),
+            patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "NCS_SOURCE_BRANCH=ncs"):
+                main()
+        api.create_commit.assert_not_called()

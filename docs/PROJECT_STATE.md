@@ -1,5 +1,27 @@
 # SeoulDoc project state
 
+## NCS response deployment and API regressions, 2026-09-08
+
+The user authorized publishing and deploying the response change on `ncs`,
+with no change to `main`. PR #4 merged as
+`0bb08702bb07f3dc5ddbed943acfa2460c1db170`. GitHub Actions run
+`34212865685` skipped deployment because automatic NCS sync is not enabled.
+The existing public NCS Space still runs `4138eb056b80f4689fb0ef87244cf128c44280b2`.
+The original Space remains at `8909ff673d2e1b5e7df97010f9e309f6a9dc4c7b`.
+No Hugging Face credential is present in the process environment.
+
+Root owns deployment preparation in `/tmp/seouldoc-response-polish`, including
+`scripts/sync_ncs_spaces.py`, `backend/tests/test_ncs_deployment.py`, and this
+record. The explicit `--allow-public` deployment option acknowledges the
+existing public NCS target without changing visibility or hardware. Automatic
+sync remains opt-in. The API-test delegate owns only
+`backend/tests/test_chat_response_preservation.py` in the isolated worktree
+`/tmp/seouldoc-api-response-tests`, branch
+`local/ncs-api-response-tests-20260908`, based on the merge above. These tests
+exercise multiple requests through the API and check response preservation.
+The next action is to complete these checks, then deploy with an approved
+process credential and verify the running revision and Jonggak conversation.
+
 ## NCS response polish ownership, 2026-09-08
 
 Owner: root response-polish session. Branch:

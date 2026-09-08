@@ -59,7 +59,8 @@ def bundle(component):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("component", choices=TARGETS)
-    parser.add_argument("--apply", action="store_true", help="Upload to an existing private assessment Space")
+    parser.add_argument("--apply", action="store_true", help="Upload to the existing NCS Space")
+    parser.add_argument("--allow-public", action="store_true", help="Allow updating the existing NCS Space when it is public")
     args = parser.parse_args()
     revision, files = bundle(args.component)
     target = TARGETS[args.component]
@@ -72,8 +73,8 @@ def main():
     from huggingface_hub import HfApi, CommitOperationAdd, CommitOperationDelete
     api = HfApi(token=token)
     info = api.space_info(target)
-    if not info.private:
-        raise RuntimeError("Assessment deployment requires a private Space")
+    if not info.private and not args.allow_public:
+        raise RuntimeError("Public NCS deployment requires --allow-public")
     variables = api.get_space_variables(target)
     if variables.get("NCS_SOURCE_BRANCH") is None or variables["NCS_SOURCE_BRANCH"].value != "ncs":
         raise RuntimeError("Space must be explicitly provisioned with NCS_SOURCE_BRANCH=ncs")
