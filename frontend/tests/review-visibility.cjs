@@ -10,7 +10,7 @@ const exportDirectory = path.resolve(__dirname, '../out');
 const sourceHash = 'a'.repeat(64);
 const original = '간호사는 불친절했지만 의사는 설명을 잘해 주었습니다.';
 const longOriginal = '아이에게 설명을 천천히 해 주었습니다. '.repeat(35) + '마지막 문장까지 원문 그대로 남아 있어야 합니다.';
-const acceptedAnswer = 'The doctor and nurse reports concern different staff roles. [1]\n\nUnknown marker stays visible [9]. **Accepted text stays exact.**';
+const acceptedAnswer = 'The doctor and nurse reports concern different staff roles. [1] Another patient would return. [2]\n\nUnknown marker stays visible [9]. **Accepted text stays exact.**';
 
 function review(index, text, presentation) {
   return {
@@ -55,6 +55,7 @@ function facility(language = 'English') {
     retrieval_evidence: reviews,
     answer_citations: [
       { marker: 1, place_id: 'alpha', evidence_id: reviews[10].evidence_id, original_excerpt: longOriginal.slice(0, 40), review_source_sha256: sourceHash },
+      { marker: 2, place_id: 'alpha', evidence_id: reviews[11].evidence_id, original_excerpt: reviews[11].text, review_source_sha256: sourceHash },
       { marker: 9, place_id: 'beta', evidence_id: reviews[12].evidence_id, original_excerpt: 'WRONG_FACILITY_REVIEW' },
     ],
   };
@@ -99,13 +100,32 @@ async function main() {
       const label = `${viewport.width}px`;
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
-      await page.addInitScript(() => localStorage.setItem('cookieConsent', JSON.stringify({ necessary: true, analytics: false, advertising: false, timestamp: new Date().toISOString() })));
+      await page.addInitScript(() => {
+        localStorage.setItem('cookieConsent', JSON.stringify({ necessary: true, analytics: false, advertising: false, timestamp: new Date().toISOString() }));
+        navigator.geolocation.getCurrentPosition = success => {
+          window.deliverTestLocation = () => success({ coords: { latitude: 37.57, longitude: 126.98 } });
+        };
+      });
       let requestCount = 0;
+      const chatRequests = [];
+      const travelRequests = [];
+      let finishTravelRequest;
       await page.route('**/*', async route => {
         if (!route.request().url().startsWith(origin)) return route.abort();
-        if (new URL(route.request().url()).pathname !== '/chat') return route.continue();
+        const pathname = new URL(route.request().url()).pathname;
+        if (pathname === '/set_travel_preference') {
+          const request = route.request().postDataJSON();
+          travelRequests.push(request);
+          await new Promise(resolve => { finishTravelRequest = resolve; });
+          return route.fulfill({
+            contentType: 'application/json',
+            body: JSON.stringify({ state: { ...request.current_state, travel_label: request.travel_label, max_distance_km: 0.5 } }),
+          });
+        }
+        if (pathname !== '/chat') return route.continue();
         requestCount += 1;
         const request = route.request().postDataJSON();
+        chatRequests.push(request);
         if (request.message === 'transport failure') return route.fulfill({ status: 503, body: '{}' });
         if (request.message === 'slow request') await new Promise(resolve => setTimeout(resolve, 250));
         const fallback = request.message === 'fallback';
@@ -166,6 +186,13 @@ async function main() {
       await check(`${label} citation focuses correct review`, longReview.evaluate(element => document.activeElement === element));
       await page.screenshot({ path: path.join(outputDirectory, `${label}-citation.png`) });
       await send('fallback');
+      await page.getByRole('button', { name: 'Review 2 from Synthetic clinic', exact: true }).first().evaluate(button => button.click());
+      await page.waitForTimeout(700);
+      const shortCitedReview = panel.locator(`[data-evidence-id="${reviews[11].evidence_id}"]`);
+      await check(`${label} citation remains visible after pending scrolls`, shortCitedReview.evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        return document.activeElement === element && bounds.top >= 0 && bounds.bottom <= window.innerHeight;
+      }));
       await check(`${label} fallback retains originals`, page.locator('section[data-facility-id="alpha"]').nth(1).getByText(original, { exact: true }).isVisible());
       await send('한국어로 답해 주세요');
       const koreanPanel = page.locator('section[data-facility-id="alpha"]').nth(2);
@@ -183,6 +210,29 @@ async function main() {
       });
       await page.waitForTimeout(400);
       await check(`${label} rapid events produce one request`, requestCount === beforeRace + 1);
+      const beforeLocation = requestCount;
+      await input.fill('overlapping location message');
+      await page.getByRole('button', { name: 'Share current location', exact: true }).evaluate(button => button.click());
+      await input.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+      await page.waitForTimeout(100);
+      await check(`${label} pending geolocation blocks overlapping chat`, requestCount === beforeLocation);
+      await page.evaluate(() => window.deliverTestLocation());
+      await page.locator('.animate-bounce').first().waitFor({ state: 'hidden' });
+      const locationRequest = chatRequests.at(-1);
+      await check(`${label} geolocation sends one fresh coordinate state`, requestCount === beforeLocation + 1 && locationRequest.current_state.latitude === 37.57 && locationRequest.current_state.longitude === 126.98);
+      await page.getByRole('button', { name: 'Set acceptable travel distance', exact: true }).evaluate(button => button.click());
+      await input.fill('overlapping travel message');
+      const beforeTravel = requestCount;
+      await page.getByRole('button', { name: 'Search distance: On Foot, 0.5km', exact: true }).evaluate(button => button.click());
+      await input.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+      await page.waitForTimeout(100);
+      await check(`${label} pending travel change blocks overlapping chat`, requestCount === beforeTravel && travelRequests.length === 1);
+      assert.equal(typeof finishTravelRequest, 'function');
+      finishTravelRequest();
+      await page.locator('.animate-bounce').first().waitFor({ state: 'hidden' });
+      await send('Use my updated travel preference');
+      const travelState = chatRequests.at(-1).current_state;
+      await check(`${label} next chat retains committed distance and location`, requestCount === beforeTravel + 1 && travelState.max_distance_km === 0.5 && travelState.travel_label === travelRequests[0].travel_label && travelState.latitude === 37.57 && travelState.longitude === 126.98);
       await check(`${label} no script execution`, page.evaluate(() => window.reviewInjectionExecuted !== true));
       await check(`${label} no horizontal overflow`, page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
       await check(`${label} no page exceptions`, errors.length === 0);

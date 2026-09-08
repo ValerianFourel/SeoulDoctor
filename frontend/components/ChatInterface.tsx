@@ -2,7 +2,7 @@
 "use client";
 
 import ReviewEvidence, { canLocateCitation, type ReviewCitation, type ReviewEvidenceHandle, type ReviewEvidenceRecord } from "./ReviewEvidence";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Send, MapPin, Sparkles, Globe, Bug, ChevronDown, ChevronUp, X } from "lucide-react";
 import Link from 'next/link';
 import { postJson } from '../lib/api';
@@ -231,6 +231,22 @@ export default function ChatInterface() {
   const inputRef = useRef<HTMLInputElement>(null);
   const requestInFlight = useRef(false);
   const reviewPanels = useRef(new Map<string, ReviewEvidenceHandle>());
+  const scrollTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+
+  const cancelPendingScrolls = useCallback(() => {
+    scrollTimers.current.forEach(clearTimeout);
+    scrollTimers.current.clear();
+  }, []);
+
+  const scheduleScroll = useCallback((scroll: () => void, delay: number) => {
+    const timer = setTimeout(() => {
+      scrollTimers.current.delete(timer);
+      scroll();
+    }, delay);
+    scrollTimers.current.add(timer);
+  }, []);
+
+  useEffect(() => cancelPendingScrolls, [cancelPendingScrolls]);
 
   // Auto-dismiss disclaimer after 15 seconds
   useEffect(() => {
@@ -261,7 +277,7 @@ export default function ChatInterface() {
     const handleResize = () => {
       // Scroll input into view when keyboard appears on mobile
       if (document.activeElement === inputRef.current) {
-        setTimeout(() => {
+        scheduleScroll(() => {
           inputRef.current?.scrollIntoView({ 
             behavior: 'smooth', 
             block: 'nearest' 
@@ -277,17 +293,17 @@ export default function ChatInterface() {
         window.visualViewport?.removeEventListener('resize', handleResize);
       };
     }
-  }, []);
+  }, [scheduleScroll]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (messages.length > 1) {
       // Small delay to ensure content is rendered
-      setTimeout(() => {
+      scheduleScroll(() => {
         scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
       }, 100);
     }
-  }, [messages]);
+  }, [messages, scheduleScroll]);
 
   const [currentState, setCurrentState] = useState<State>({
     // Specialty
@@ -365,7 +381,7 @@ export default function ChatInterface() {
   };
 
   const scrollToBottom = () => {
-    setTimeout(() => {
+    scheduleScroll(() => {
       scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }, 100);
   };
@@ -571,7 +587,10 @@ export default function ChatInterface() {
           key={partIndex}
           className="rounded text-blue-700 underline underline-offset-2 hover:text-blue-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
           aria-label={facility.review_language === "Korean" ? `후기 ${citation.marker}, ${facility.name}` : `Review ${citation.marker} from ${facility.name}`}
-          onClick={() => reviewPanels.current.get(`${messageIndex}:${facility.place_id}`)?.showReview(citation.evidence_id)}
+          onClick={() => {
+            cancelPendingScrolls();
+            reviewPanels.current.get(`${messageIndex}:${facility.place_id}`)?.showReview(citation.evidence_id);
+          }}
         >
           {part}
         </button>
@@ -588,7 +607,7 @@ export default function ChatInterface() {
 
   const handleInputFocus = () => {
     // Ensure input stays visible on mobile when keyboard appears
-    setTimeout(() => {
+    scheduleScroll(() => {
       inputRef.current?.scrollIntoView({ 
         behavior: 'smooth', 
         block: 'nearest' 
