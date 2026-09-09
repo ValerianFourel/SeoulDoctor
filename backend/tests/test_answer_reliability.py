@@ -531,12 +531,16 @@ class AnswerReliabilityTests(unittest.TestCase):
         complete = ScriptedCompletion({"answer": answer, "assessments": [], "citations": []},
                                       {"accepted": True, "issues": []})
         outcome = self.answer(complete, metadata={"retrieval_execution_status": "complete",
-                            "search_attempted_radii_km": [1, 2, 5], "search_radius_expanded": True})
+                            "search_attempted_radii_km": [1, 2, 5], "search_radius_expanded": True,
+                            "review_backed_selection": {
+                                "minimum_reviews": 2, "eligible_candidates": 5, "selected_candidates": 2,
+                            }})
         self.assertEqual(outcome.text, answer)
         search = json.loads(complete.calls[1]["messages"][1]["content"])["search"]
         self.assertEqual(search["search_progress"]["attempted_radii_km"], [1, 2, 5])
         self.assertTrue(search["search_progress"]["radius_expanded"])
         self.assertEqual(search["search_progress"]["displayed_original_count"], 1)
+        self.assertEqual(search["search_progress"]["review_backed_selection"]["selected_candidates"], 2)
 
     def test_translation_failure_cause_is_internal_and_original_survives(self):
         source = review("간호사는 친절했어요.")

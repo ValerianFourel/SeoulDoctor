@@ -236,6 +236,9 @@ Use search_progress and available_next_actions to give a specific refinement. If
 retrieval timed out or failed temporarily, offer to retry the same search. If a required
 service is unavailable, explain the limited review comparison without promising a retry
 will fix it. A narrower area does not repair a failed service. Do not use the generic sentence "Part of the search did not finish."
+When search_progress includes review_backed_selection, the cards are the reviewed subset of
+eligible candidates. Describe distance only among these reviewed options; do not call one the
+overall closest facility.
 Mention unknowns only when they affect the patient's stated needs. Do not add an English-service,
 credentials, or treatment checklist when the patient did not ask about those matters. When nearby
 matches exist, suggest comparing a named clinic or narrowing the area; do not widen it by default.
@@ -450,6 +453,7 @@ def _answer_context(question, state, cards, metadata, language):
             "attempted_radii_km": metadata.get("search_attempted_radii_km", []),
             "radius_expanded": metadata.get("search_radius_expanded", False),
             "displayed_original_count": sum(len(card["retrieval_evidence"]) for card in cards),
+            "review_backed_selection": metadata.get("review_backed_selection"),
         },
         "available_next_actions": next_actions,
         "retrieval_execution": execution,

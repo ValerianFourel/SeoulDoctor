@@ -1090,6 +1090,17 @@ def select_optimal_result_count(frame: pd.DataFrame) -> int:
     return min(count, 5) if count <= 5 or count > 10 else 4
 
 
+def prefer_review_backed_candidates(frame: pd.DataFrame, minimum_reviews: int = 2) -> pd.DataFrame:
+    """Use evidence-backed candidates when the retrieval found a useful reviewed set."""
+    if "retrieval_evidence" not in frame.columns:
+        return frame
+    evidence_counts = frame["retrieval_evidence"].map(
+        lambda value: len(value) if isinstance(value, list) else 0
+    )
+    reviewed = frame[evidence_counts >= minimum_reviews]
+    return reviewed if len(reviewed) else frame
+
+
 def execute_search(
     state: State, 
     user_message: str, 
@@ -1802,6 +1813,14 @@ def execute_search(
         final_df = scope_selection.restrict_dataframe(final_df)
     
     # ===== RESULT SELECTION =====
+    candidate_count_before_review_selection = len(final_df)
+    final_df = prefer_review_backed_candidates(final_df)
+    if len(final_df) < candidate_count_before_review_selection:
+        state.last_retrieval_metadata["review_backed_selection"] = {
+            "minimum_reviews": 2,
+            "eligible_candidates": candidate_count_before_review_selection,
+            "selected_candidates": len(final_df),
+        }
     
     # ===== GENERATE RESPONSE =====
     

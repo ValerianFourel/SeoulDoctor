@@ -301,6 +301,31 @@ class ScopeBuilderTests(unittest.TestCase):
 
 
 class LegacyRagScopeIntegrationTests(unittest.TestCase):
+    def test_result_selection_uses_review_backed_candidates_when_available(self):
+        import main
+
+        ranked = pd.DataFrame([
+            {"place_id": "closest-empty", "retrieval_evidence": []},
+            {"place_id": "reviewed", "retrieval_evidence": [{"text": "one"}, {"text": "two"}]},
+            {"place_id": "single-review", "retrieval_evidence": [{"text": "one"}]},
+        ])
+
+        selected = main.prefer_review_backed_candidates(ranked)
+
+        self.assertEqual(selected["place_id"].tolist(), ["reviewed"])
+
+    def test_result_selection_keeps_candidates_when_no_reviewed_set_exists(self):
+        import main
+
+        ranked = pd.DataFrame([
+            {"place_id": "closest-empty", "retrieval_evidence": []},
+            {"place_id": "single-review", "retrieval_evidence": [{"text": "one"}]},
+        ])
+
+        selected = main.prefer_review_backed_candidates(ranked)
+
+        self.assertEqual(selected["place_id"].tolist(), ["closest-empty", "single-review"])
+
     def test_execute_search_uses_active_index_version_for_live_retrieval(self):
         import main
         from models import State
