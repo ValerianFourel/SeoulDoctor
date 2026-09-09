@@ -285,6 +285,10 @@ class TranslationTests(unittest.TestCase):
             ("네 차례 정도 방문했습니다.", "I visited about four times."),
             ("상황을 처음 경험해서 불안하게 됩니다. 결국 일반적인 사례 중 하나입니다.",
              "Because it is experienced for the first time, it makes one anxious. It is just one common case."),
+            ("매회 꼼꼼하게 진찰했습니다.", "They examined me carefully every single session."),
+            ("리뷰를 잘 안 쓰지만 귀찮음을 무릅쓰고 작성합니다.",
+             "I rarely write reviews, but I am writing one."),
+            ("치료 잘해주세요.", "Please provide good treatment."),
         )
         for source, translation in examples:
             with self.subTest(source=source):
@@ -671,6 +675,34 @@ class OpenRouterTranslationTests(unittest.TestCase):
         cards, trace, _ = self.prepare(["The doctor was kind."], [{"index": 0, "text": "의사는 친절했어요."}], language="Korean")
         self.assertEqual(trace["translated"], 1)
         self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["language"], "Korean")
+
+    def test_rejected_first_page_translation_gets_one_bounded_retry(self):
+        import json
+        from unittest.mock import AsyncMock, patch
+        from review_presentation import prepare_review_presentations
+        source = "2시간 기다렸어요"
+        response = lambda identity, text: {
+            "id": identity, "model": "google/gemini-3.8-flash", "provider": "Google AI Studio",
+            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
+                "translations": [{"index": 0, "text": text}],
+            })}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.0001},
+        }
+        cards = [{"retrieval_evidence": [review(source)]}]
+        with patch("review_presentation._request_openrouter", new_callable=AsyncMock) as request, \
+                patch.dict("review_presentation.os.environ", {
+                    "REVIEW_TRANSLATION_MODEL": "google/gemini-3.8-flash",
+                }):
+            request.side_effect = [response("gen-first", "I waited three hours."),
+                                   response("gen-retry", "I waited two hours.")]
+            trace = prepare_review_presentations(
+                cards, "English", translation_provider="openrouter", openrouter_api_key="fixture-key",
+            )
+        self.assertEqual(request.await_count, 2)
+        self.assertEqual(trace["initial_rejected"], 1)
+        self.assertEqual(trace["retry_requested"], 1)
+        self.assertEqual(trace["retry_translated"], 1)
+        self.assertEqual(trace["rejected"], 0)
+        self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["text"], "I waited two hours.")
 
     def test_over_capacity_retains_original_without_dispatch(self):
         from review_presentation import MAX_OPENROUTER_TRANSLATION_CHARACTERS

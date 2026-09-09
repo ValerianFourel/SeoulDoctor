@@ -117,12 +117,13 @@ _NON_COUNT_ONE_PATTERN = re.compile(
     r"(?<=\bno )one\b|\bone(?=\s+thing\s+(?:left|remaining)\b"
     r"|\s+of\s+the\s+(?:best|worst|most|least)\b"
     r"|\s+(?:has|can|could|should|would|may|might|must|will|is|was|does|did)\b)"
-    r"|(?<=\bmakes )one\b|(?<=\bmade )one\b"
+    r"|(?<=\bmakes )one\b|(?<=\bmade )one\b|(?<=\bwrite )one\b"
+    r"|(?<=\bwriting )one\b|(?<=\bwrote )one\b"
     r"|\bone\s+by\s+one\b",
     re.I,
 )
 _IDIOMATIC_UNIT_ONE_PATTERN = re.compile(
-    r"\b(?:every\s+single\s+(time)|(?:(?:there\s+)?(?:was|is)\s+not|there\s+wasn't|"
+    r"\b(?:every\s+single\s+(time|session|visit|treatment)s?|(?:(?:there\s+)?(?:was|is)\s+not|there\s+wasn't|"
     r"there\s+isn't|never)\s+a\s+(?:single\s+)?(day))\b",
     re.I,
 )
@@ -259,6 +260,7 @@ text exactly unchanged."""
 
 _KOREAN_REQUEST_PATTERN = re.compile(
     r"(?:설명해|알려|봐|보아|진료해|치료해|확인해|도와|방문해)\s*주(?:세요|십시오)"
+    r"|(?:진료|치료)\s*잘\s*해\s*주(?:세요|십시오)"
     r"|(?:치료\s*)?받으세요|제발[^.!?\n]{0,80}(?:말자|마세요|말아)"
     r"|부탁(?:드려요|드립니다|합니다)"
 )
@@ -270,6 +272,22 @@ _ENGLISH_REQUEST_PATTERN = re.compile(
 
 def _request_modality(text):
     return bool(_KOREAN_REQUEST_PATTERN.search(text) or _ENGLISH_REQUEST_PATTERN.search(text))
+
+
+def _valid_translation(source, translation, language):
+    if not isinstance(translation, str) or not translation.strip():
+        return False
+    if _symbols(source) != _symbols(translation):
+        return False
+    if _numbers(source) != _numbers(translation):
+        return False
+    if _request_modality(source) != _request_modality(translation):
+        return False
+    if language == "English":
+        return not re.search(r"[가-힣]", translation) and bool(re.search(r"[A-Za-z]", translation))
+    if language == "Korean":
+        return bool(re.search(r"[가-힣]", translation))
+    return False
 
 
 async def _request_openrouter(request, key):
@@ -363,6 +381,11 @@ def prepare_review_presentations(
     max_characters = MAX_OPENROUTER_TRANSLATION_CHARACTERS if provider == "openrouter" else MAX_TRANSLATION_CHARACTERS
     max_reviews = MAX_OPENROUTER_TRANSLATION_REVIEWS if provider == "openrouter" else MAX_TRANSLATION_REVIEWS
     pending = {}
+    first_page_sources = {
+        item.get("text", "")
+        for card in cards
+        for item in card.get("retrieval_evidence", [])[:3]
+    }
     characters = 0
     trace = {"reason": None, "requested": 0, "translated": 0, "capacity_skipped": 0, "rejected": 0, "duration_ms": 0.0, "provider": provider, "model": model}
     for card in cards:
@@ -418,30 +441,43 @@ def prepare_review_presentations(
         if not isinstance(translations, list) or len(translations) != len(originals):
             trace["reason"] = "invalid_response"
             return trace
+        rejected_sources = []
         for source, result in zip(originals, translations):
             translation = result.get("translatedText") if isinstance(result, dict) else None
-            if not isinstance(translation, str) or not translation.strip():
-                trace["rejected"] += 1
-                continue
-            translation = unescape(translation)
-            if _symbols(source) != _symbols(translation):
-                trace["rejected"] += 1
-                continue
-            if _numbers(source) != _numbers(translation):
-                trace["rejected"] += 1
-                continue
-            if _request_modality(source) != _request_modality(translation):
-                trace["rejected"] += 1
-                continue
-            if language == "English" and (re.search(r"[가-힣]", translation) or not re.search(r"[A-Za-z]", translation)):
-                trace["rejected"] += 1
-                continue
-            if language == "Korean" and not re.search(r"[가-힣]", translation):
-                trace["rejected"] += 1
+            translation = unescape(translation) if isinstance(translation, str) else translation
+            if not _valid_translation(source, translation, language):
+                rejected_sources.append(source)
                 continue
             trace["translated"] += 1
             for item in pending[source]:
                 item["presentation"] = {"status": "translated", "language": language, "text": translation}
+        retry_sources = [source for source in rejected_sources if source in first_page_sources]
+        trace["initial_rejected"] = len(rejected_sources)
+        trace["retry_requested"] = len(retry_sources)
+        recovered = set()
+        if provider == "openrouter" and retry_sources:
+            try:
+                retried, retry_diagnostics = _openrouter_translations(retry_sources, language, key, model)
+                trace["retry"] = retry_diagnostics
+                for source, result in zip(retry_sources, retried):
+                    translation = result.get("translatedText") if isinstance(result, dict) else None
+                    translation = unescape(translation) if isinstance(translation, str) else translation
+                    if not _valid_translation(source, translation, language):
+                        continue
+                    recovered.add(source)
+                    trace["translated"] += 1
+                    for item in pending[source]:
+                        item["presentation"] = {
+                            "status": "translated", "language": language, "text": translation,
+                        }
+            except (requests.Timeout, httpx.TimeoutException, TimeoutError):
+                trace["retry_reason"] = "provider_timeout"
+            except (requests.RequestException, httpx.HTTPError):
+                trace["retry_reason"] = "provider_error"
+            except (ValueError, KeyError, TypeError, IndexError):
+                trace["retry_reason"] = "invalid_response"
+        trace["retry_translated"] = len(recovered)
+        trace["rejected"] = len(rejected_sources) - len(recovered)
     except (requests.Timeout, httpx.TimeoutException, TimeoutError):
         trace["reason"] = "provider_timeout"
     except (requests.RequestException, httpx.HTTPError):
