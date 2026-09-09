@@ -30,6 +30,7 @@ class ProviderSelectionTests(unittest.TestCase):
             kwargs["timeout"],
             llm_client.COMPLETION_TIMEOUT_SECONDS,
         )
+        self.assertLessEqual(llm_client.COMPLETION_TIMEOUT_SECONDS, 20.0)
 
     def test_openrouter_configuration_never_falls_back_to_groq(self) -> None:
         with (

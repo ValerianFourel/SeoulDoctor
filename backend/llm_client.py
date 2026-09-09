@@ -14,7 +14,9 @@ from config import GROQ_API_KEY, LLM_PROVIDER, OPENROUTER_API_KEY
 
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-COMPLETION_TIMEOUT_SECONDS = 60.0
+# Extraction and routing both have deterministic fallbacks. Keep either model
+# call short enough that one slow provider cannot consume the whole HTTP request.
+COMPLETION_TIMEOUT_SECONDS = 20.0
 _RETRYABLE_ERROR_NAMES = {
     "APIConnectionError",
     "APITimeoutError",
