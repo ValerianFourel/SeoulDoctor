@@ -89,7 +89,7 @@ for tens, prefix in enumerate(("", "십", "이십", "삼십", "사십", "오십"
             _NUMBER_WORDS[prefix + word] = tens * 10 + units
 _TIME_NUMBER_PATTERN = re.compile(
     r"(?<![A-Za-z가-힣])(" + "|".join(re.escape(word) for word in sorted(_NUMBER_WORDS, key=len, reverse=True))
-    + r")(?P<spacing>\s*)(?=(?:hours?|minutes?|days?|weeks?|months?|years?|people|persons?|tests?|sessions?|visits?|times?)\b|시간|분|일|주|개월|달|년|명|회|번|번째|개|천|만|원)",
+    + r")(?P<spacing>\s*)(?=(?:hours?|minutes?|days?|weeks?|months?|years?|people|persons?|tests?|sessions?|visits?|times?|x-rays?)\b|시간|분|일|주|개월|달|년|명|회|번|번째|개|(?:천|만)\s*원|원)",
     re.IGNORECASE,
 )
 
@@ -112,6 +112,13 @@ _ORDINAL_PATTERN = re.compile(
 _RETURN_AFTER_INTERVAL_PATTERN = re.compile(
     r"\bfirst(?=\s+time\s+in\s+(?:a\s+(?:while|long\s+time)|ages)\b)", re.I,
 )
+_NON_COUNT_ONE_PATTERN = re.compile(
+    r"(?<=\bno )one\b|\bone(?=\s+thing\s+(?:left|remaining)\b"
+    r"|\s+of\s+the\s+(?:best|worst|most|least)\b)", re.I,
+)
+_OCCASIONAL_VISIT_PATTERN = re.compile(
+    r"(?P<context>전에도\s+|이전에도\s+|가끔(?:씩)?\s+|종종\s+|이따금\s+)한번씩",
+)
 _VISIT_COUNT_PATTERN = re.compile(
     r"(?:병원|의원|클리닉|치과)\s*(?P<korean>\d+)\s*번"
     r"|\b(?P<english>\d+|a|single|the)\s+(?:hospital|clinic|doctor(?:['’]s)?)\s+visits?\b"
@@ -127,13 +134,16 @@ def _numbers(text):
     def counted_number(match):
         word = match.group(1).lower()
         if not match["spacing"]:
-            suffix = text[match.end():]
+            suffix = normalized[match.end():]
             if (word in "일이삼사오육칠팔구" and suffix.startswith("분")) or (
                 word == "이" and suffix.startswith(("번", "달"))
             ):
                 return match.group()
         return str(_NUMBER_WORDS[word]) + " "
-    normalized = _TIME_NUMBER_PATTERN.sub(counted_number, text)
+    normalized = _OCCASIONAL_VISIT_PATTERN.sub(r"\g<context>가끔", text)
+    normalized = _TIME_NUMBER_PATTERN.sub(counted_number, normalized)
+    normalized = _NON_COUNT_ONE_PATTERN.sub("", normalized)
+    normalized = re.sub(r"\b(not|never)(\s+even)?\s+once\b", r"\1 1 time", normalized, flags=re.I)
     normalized = _RETURN_AFTER_INTERVAL_PATTERN.sub("", normalized)
     normalized = _ORDINAL_PATTERN.sub(lambda match: str(_ORDINAL_WORDS[match.group(1).lower()]), normalized)
     normalized = _CARDINAL_WORD_PATTERN.sub(
@@ -180,7 +190,9 @@ identifies. Resolve omitted Korean subjects only when the local sentence makes t
 otherwise use wording that remains neutral. Keep clearly stated criticism of reception separate from
 criticism of a doctor. For English output, preserve English phrases already present. For Korean
 output, translate English review prose. Currency scales may be expressed as their equivalent full
-amount. Do not summarize or embellish. Do a silent final fidelity check before returning. Korean
+amount. Preserve who works at the clinic versus who attends it, including how long; staff tenure
+must not become patient attendance or added praise for staff quality. Do not summarize or embellish.
+Do a silent final fidelity check before returning. Korean
 frequently omits subjects. Never invent a first-person or third-person subject for an ambiguous
 clause: use a grammatical fragment or passive construction instead. In particular, an unclear
 proper-name reference must not become the patient's identity, or a statement that the patient did

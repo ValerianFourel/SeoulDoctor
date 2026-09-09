@@ -223,6 +223,60 @@ class TranslationTests(unittest.TestCase):
                 self.assertEqual(items[0]["presentation"]["status"], "unavailable")
                 self.assertEqual(items[0]["text"], source)
 
+    def test_spelled_currency_scale_requires_a_currency_unit(self):
+        for source, translation in (
+            ("이제 건강해질 일만 남았습니다.", "Now only getting healthy remains."),
+            ("이제 건강해질 일만 남았습니다.", "There is one thing left: getting healthy."),
+            ("일만원 냈어요.", "I paid 10,000 won."),
+            ("이천 원 냈어요.", "I paid 2,000 won."),
+            ("일주일 기다렸어요.", "I waited one week."),
+        ):
+            with self.subTest(source=source, translation=translation):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+                self.assertEqual(items[0]["text"], source)
+        for source, translation in (
+            ("일만원 냈어요.", "I paid 1,000 won."),
+            ("이천 원 냈어요.", "I paid 3,000 won."),
+            ("일주일 기다렸어요.", "I waited two weeks."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+
+    def test_pronouns_and_superlatives_do_not_create_a_count(self):
+        for source, translation in (
+            ("아무도 안내해주지 않았어요.", "No one told me where to go."),
+            ("정말 좋은 병원이에요.", "It is one of the best clinics."),
+            ("엑스레이 한번 찍자고 했고 세 명이 있었어요.", "They asked for an X-ray, and three people were there. No one helped."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+        for source, translation in (
+            ("한 명이 안내했어요.", "Two people guided me."),
+            ("세 명 중 한 명이 안내했어요.", "Two of the three people guided me."),
+            ("엑스레이 한번 찍었어요.", "They took two X-rays."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+
+    def test_occasional_and_never_once_preserve_literal_counts(self):
+        for source, translation in (
+            ("전에도 한번씩 왔었어요.", "I have visited occasionally before."),
+            ("가끔 한번씩 왔었어요.", "I came from time to time."),
+            ("한번을 불친절한 적이 없어요.", "Not once were they unkind."),
+            ("한번도 불친절하지 않았어요.", "They were never even once unkind."),
+            ("매주 한번씩 왔어요.", "I came one time every week."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+                self.assertEqual(items[0]["text"], source)
+        changed, _ = self.prepare(["매주 한번씩 왔어요."], ["I came two times every week."])
+        self.assertEqual(changed[0]["presentation"]["status"], "unavailable")
+
     def test_ordinary_korean_words_are_not_misread_as_nine_minutes(self):
         source = "치료를 구분해서 설명했고 구분도 명확했어요."
         items, _ = self.prepare([source], ["They explained the treatments separately and the distinction was clear."])
