@@ -28,6 +28,7 @@ type State = {
   max_distance_km: number;
   travel_label: string;
   travel_confidence: number;
+  radius_expansion_allowed?: boolean | null;
   
   // ===== KEYWORD FILTERING =====
   keywords: string[];
