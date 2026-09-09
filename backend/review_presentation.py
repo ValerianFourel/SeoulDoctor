@@ -110,7 +110,7 @@ _ORDINAL_PATTERN = re.compile(
     r"sessions?|treatments?|rounds?|floors?|times?|days?|weeks?|months?|years?)\b)", re.I,
 )
 _RETURN_AFTER_INTERVAL_PATTERN = re.compile(
-    r"\bfirst(?=\s+time\s+in\s+(?:a\s+(?:while|long\s+time)|ages)\b)", re.I,
+    r"\bfirst(?=\s+(?:time|visit|appointment)\s+in\s+(?:a\s+(?:while|long\s+time)|ages|\d+\s+(?:days?|weeks?|months?|years?))\b)", re.I,
 )
 _NON_COUNT_ONE_PATTERN = re.compile(
     r"(?<=\bno )one\b|\bone(?=\s+thing\s+(?:left|remaining)\b"

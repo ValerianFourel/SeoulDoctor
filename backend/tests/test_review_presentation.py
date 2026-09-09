@@ -306,6 +306,21 @@ class TranslationTests(unittest.TestCase):
         altered, _ = self.prepare(["구 분 기다렸어요."], ["I waited ten minutes."])
         self.assertEqual(altered[0]["presentation"]["status"], "unavailable")
 
+    def test_return_visit_interval_does_not_invent_a_first_visit_count(self):
+        for event in ("time", "visit", "appointment"):
+            for interval in ("a while", "a long time", "ages"):
+                source = "오랜만에 방문했는데 4층 직원이 기억해주셨어요."
+                translation = f"It was my first {event} in {interval}, and the fourth floor staff remembered me."
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+                altered, _ = self.prepare([source], [translation.replace("fourth", "third")])
+                self.assertEqual(altered[0]["presentation"]["status"], "unavailable")
+        source = "2년 만에 4층에 방문했어요."
+        valid, _ = self.prepare([source], ["It was my first visit in 2 years, on the fourth floor."])
+        self.assertEqual(valid[0]["presentation"]["status"], "translated")
+        changed, _ = self.prepare([source], ["It was my first visit in 3 years, on the fourth floor."])
+        self.assertEqual(changed[0]["presentation"]["status"], "unavailable")
+
     def test_ordinal_opinions_and_visits_keep_their_number(self):
         for source, translation in (("2차 의견을 들었어요.", "I got a second opinion."),
                                     ("첫 번째 방문이었어요.", "It was my first visit."),
