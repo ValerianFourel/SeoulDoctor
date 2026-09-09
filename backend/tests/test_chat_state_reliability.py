@@ -1,6 +1,7 @@
 """Sequential chat regressions at the router, state and retrieval boundaries."""
 
 from contextlib import ExitStack
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -38,6 +39,7 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.stack.enter_context(patch.object(main, "KAKAO_REST_API_KEY", ""))
         self.stack.enter_context(patch.object(main, "chat_rate_limiter", SlidingWindowRateLimiter(max_requests=100, window_seconds=60)))
         self.stack.enter_context(patch.object(review_presentation.requests, "post"))
+        self.stack.enter_context(patch.dict(os.environ, {"REVIEW_TRANSLATION_PROVIDER": "google"}))
         self.stack.enter_context(patch.object(main.app.router, "lifespan_context", fixtures._test_lifespan))
         # Answer failure is deliberate: it must not prevent validating the real
         # search route or discard the source cards available to that request.
