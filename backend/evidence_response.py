@@ -135,6 +135,78 @@ def _summary(cards, state, korean):
     return f"{opening} {closest}"
 
 
+def _fallback_review_guidance(cards, state, metadata, korean, question):
+    if metadata.get("retrieval_execution_status") in {"partial", "failed"}:
+        return None
+    reviewed = []
+    for card in cards:
+        name = _clean_label(card.get("name"))
+        evidence = card.get("retrieval_evidence")
+        if name and isinstance(evidence, list) and any(
+            isinstance(item, dict) and useful_review(item.get("text"))
+            for item in evidence
+        ):
+            reviewed.append((card, name))
+    if not reviewed:
+        return None
+    concern = _clean_label(
+        state.visit_reason or next(iter(state.disease_terms), None)
+    )
+    concern = concern[:120].rstrip(" .!?。！？") if concern else None
+    if not concern:
+        specialty = _specialty_label(state, korean)
+        clinician_requested = bool(re.search(
+            r"\b(?:doctor|physician|clinician|specialist)\b|(?:의사|전문의|의료진)",
+            question or "",
+            re.I,
+        ))
+        if korean:
+            if clinician_requested:
+                qualification = (
+                    f"표시된 시설은 {specialty} 시설 분류와 일치하지만, 이 정보만으로 개별 의료진의 자격을 확인할 수는 없습니다."
+                    if specialty else
+                    "표시된 카드에는 환자 후기가 있지만, 이 후기만으로 개별 의료진의 자격을 확인할 수는 없습니다."
+                )
+                return qualification + " 진료가 필요한 신체 부위나 증상을 알려 주시면 첨부된 후기를 더 관련성 있게 좁혀 드릴게요."
+            return "표시된 카드에는 환자 후기가 있습니다. 진료가 필요한 신체 부위나 증상을 알려 주시면 첨부된 후기를 더 관련성 있게 좁혀 드릴게요."
+        if clinician_requested:
+            qualification = (
+                f"The displayed facilities match the {specialty} facility category, but that alone does not confirm an individual clinician's qualification."
+                if specialty else
+                "The displayed cards include patient comments, but those comments do not confirm an individual clinician's qualification."
+            )
+            return qualification + " Tell me the body area or symptom and I can narrow the attached comments more meaningfully."
+        return "The displayed cards include patient comments. Tell me the body area or symptom and I can narrow the attached comments more meaningfully."
+    first = reviewed[0][1]
+    distances = [_card_distance(card) for card, _ in reviewed]
+    nearest = None
+    if (
+        _location_label(state, korean)
+        and distances
+        and all(distance is not None for distance in distances)
+    ):
+        nearest = reviewed[min(range(len(reviewed)), key=distances.__getitem__)][1]
+    if korean:
+        comparison = (
+            f" 거리도 중요하다면 후기가 첨부된 표시 후보 중 가장 가까운 {nearest}의 후기와 비교해 보세요."
+            if nearest and nearest != first else ""
+        )
+        return (
+            f"이번 답변에서는 후기 내용을 안전하게 요약하지 못했습니다. 말씀하신 증상({concern})과 관련해서는 {first} 카드에 첨부된 후기부터 확인해 보세요. "
+            f"이번 후기 검색에서 선별된 자료입니다.{comparison} "
+            "번역이 제공되면 원문 표현과 대조해 확인할 수 있습니다."
+        )
+    comparison = (
+        f" If distance matters, compare them with the attached comments for {nearest}, the closest displayed option with comments."
+        if nearest and nearest != first else ""
+    )
+    return (
+        f"I couldn't safely summarize the comments in this reply. For the stated concern ({concern}), start with the comments attached to {first}; "
+        f"they were selected during this review search.{comparison} "
+        "When a translation is available, compare it with the original wording."
+    )
+
+
 def _follow_up(state, korean, *, radius_expanded=False):
     default_distance = bool(
         state
@@ -592,9 +664,10 @@ def _completion_usage(completion):
     }
 
 
-def _fallback(cards, state, metadata, language, reason):
+def _fallback(cards, state, metadata, language, reason, question):
     korean = language == "Korean"
     paragraphs = []
+    review_guidance_added = False
     if not cards and "scope_unresolved" in metadata.get("retrieval_reason_codes", []):
         return (
             "요청하신 검색 위치를 확실히 확인하지 못했습니다. 정확한 역이나 주소를 알려 주시거나 위치를 공유해 주세요. 검색 조건은 유지했습니다."
@@ -610,16 +683,21 @@ def _fallback(cards, state, metadata, language, reason):
     else:
         paragraphs.append(_summary(cards, state, korean))
         if reason:
-            has_originals = any(card["retrieval_evidence"] for card in cards)
-            paragraphs.append((
-                "후기 비교 설명을 확인하지 못했습니다. 아래 원문 후기는 그대로 확인하실 수 있습니다."
-                if korean else
-                "I couldn't verify the review comparison for this reply. The original patient reviews are available below."
-            ) if has_originals else (
-                "후기 비교를 확인하지 못했습니다. 이 후보들의 확인 가능한 원문 후기가 반환되지 않았습니다."
-                if korean else
-                "I couldn't verify a review comparison. No usable original reviews were returned for these candidates."
-            ))
+            comparison = _fallback_review_guidance(cards, state, metadata, korean, question)
+            review_guidance_added = bool(comparison)
+            if comparison:
+                paragraphs.append(comparison)
+            elif metadata.get("retrieval_execution_status") not in {"partial", "failed"}:
+                has_originals = any(card["retrieval_evidence"] for card in cards)
+                paragraphs.append((
+                    "후기 내용을 안전하게 요약하지 못했습니다. 아래에서 확인 가능한 원문 후기를 직접 확인해 주세요."
+                    if korean else
+                    "I couldn't safely summarize the comments in this reply. Review the available originals below."
+                ) if has_originals else (
+                    "후기 비교를 확인하지 못했습니다. 이 후보들의 확인 가능한 원문 후기가 반환되지 않았습니다."
+                    if korean else
+                    "I couldn't verify a review comparison. No usable original reviews were returned for these candidates."
+                ))
     attempted_radii = metadata.get("search_attempted_radii_km", [])
     if metadata.get("search_radius_expanded") and len(attempted_radii) >= 2:
         first, last = attempted_radii[0], attempted_radii[-1]
@@ -657,7 +735,10 @@ def _fallback(cards, state, metadata, language, reason):
             if korean else
             "English consultations are unconfirmed. Ask the clinic whether an English consultation is available before booking."
         )
-    elif metadata.get("retrieval_execution_status") not in {"partial", "failed"}:
+    elif (
+        metadata.get("retrieval_execution_status") not in {"partial", "failed"}
+        and not review_guidance_added
+    ):
         paragraphs.append(_follow_up(state, korean, radius_expanded=bool(metadata.get("search_radius_expanded"))))
     return "\n\n".join(paragraphs)
 
@@ -737,7 +818,7 @@ def answer_search(
             reason = type(error).__name__
     trace["reason"] = reason
     if not text:
-        text = _fallback(prepared, state, metadata, language, reason)
+        text = _fallback(prepared, state, metadata, language, reason, question)
     for card in prepared:
         card["answer_status"] = trace["status"]
     trace["translation"] = prepare_review_presentations(
