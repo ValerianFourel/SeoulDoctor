@@ -44,6 +44,10 @@ class ChatStateReliabilityTests(unittest.TestCase):
         # Answer failure is deliberate: it must not prevent validating the real
         # search route or discard the source cards available to that request.
         self.stack.enter_context(patch.object(main, "request_answer_completion", side_effect=TimeoutError("synthetic answer timeout")))
+        self.stack.enter_context(patch.object(main, "prepare_review_presentations", return_value={
+            "reason": "synthetic_not_needed", "requested": 0, "translated": 0,
+            "capacity_skipped": 0, "rejected": 0, "duration_ms": 0,
+        }))
         self.geocoder = self.stack.enter_context(patch.object(main, "verify_and_standardize_address", side_effect=lambda location, **kwargs: {
             "lat": fixtures.ORIGIN_LAT, "lon": fixtures.ORIGIN_LON,
             "address_korean": f"서울특별시 종로구 {location}", "district": "종로구", "dong": "종로1가",
