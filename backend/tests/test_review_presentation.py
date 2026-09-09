@@ -259,6 +259,44 @@ class TranslationTests(unittest.TestCase):
                 items, _ = self.prepare([source], [changed])
                 self.assertEqual(items[0]["presentation"]["status"], "unavailable")
 
+    def test_recommendations_and_exhortations_keep_request_modality(self):
+        for source, translation in (
+            ("다들 치료사님께 치료받으세요.", "Everyone, please receive treatment from this therapist."),
+            ("여성분들은 참고 후 방문해주세요.", "Female patients, please keep this in mind before visiting."),
+            ("제발 속지말자!", "Please, let's not be fooled!"),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+
+    def test_idiomatic_ones_do_not_reject_faithful_real_review_phrasing(self):
+        examples = (
+            ("치료받을 때마다 매번 상태를 확인합니다.",
+             "They check my condition every single time I receive treatment."),
+            ("손목이 성할 날이 없었어요.", "There was not a single day when my wrist was fine."),
+            ("원인을 하나하나 설명했습니다.", "The cause was explained one by one."),
+            ("통증의학과는 처음 방문했고 세 번 치료받았습니다.",
+             "I visited a pain clinic for the first time and received treatment three times."),
+            ("또 한번 느꼈습니다.", "I felt it once again."),
+            ("네 원장님도 간호사분들도 모두 친절하세요.",
+             "Yes, the director and all the nurses are kind."),
+            ("전에도 한번씩 왔었어요.", "I had come once in a while before."),
+            ("처음 방문했을 때보다 편해졌어요.", "It is better than when I first visited."),
+            ("네 차례 정도 방문했습니다.", "I visited about four times."),
+            ("상황을 처음 경험해서 불안하게 됩니다. 결국 일반적인 사례 중 하나입니다.",
+             "Because it is experienced for the first time, it makes one anxious. It is just one common case."),
+        )
+        for source, translation in examples:
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+
+        items, _ = self.prepare(
+            ["그냥 시키는 대로 치료받으세요 라고 했습니다."],
+            ["They said, 'Just receive treatment as told.'"],
+        )
+        self.assertEqual(items[0]["presentation"]["status"], "translated")
+
     def test_translation_cannot_add_a_request(self):
         items, _ = self.prepare(["의사가 자세하게 설명했습니다."],
                                 ["Please ask the doctor to explain in detail."])

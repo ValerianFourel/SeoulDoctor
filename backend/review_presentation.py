@@ -89,7 +89,7 @@ for tens, prefix in enumerate(("", "십", "이십", "삼십", "사십", "오십"
             _NUMBER_WORDS[prefix + word] = tens * 10 + units
 _TIME_NUMBER_PATTERN = re.compile(
     r"(?<![A-Za-z가-힣])(" + "|".join(re.escape(word) for word in sorted(_NUMBER_WORDS, key=len, reverse=True))
-    + r")(?P<spacing>\s*)(?=(?:hours?|minutes?|days?|weeks?|months?|years?|people|persons?|tests?|sessions?|visits?|times?)\b|시간|분|일|주|개월|달|년|명|회|번|번째|개|(?:천|만)\s*원|원)",
+    + r")(?P<spacing>\s*)(?=(?:hours?|minutes?|days?|weeks?|months?|years?|people|persons?|tests?|sessions?|visits?|times?)\b|시간|분|일|주|개월|달|년|명|회|번|번째|차례|개|(?:천|만)\s*원|원(?![가-힣]))",
     re.IGNORECASE,
 )
 
@@ -107,7 +107,7 @@ _ORDINAL_WORDS = {word: number for number, word in enumerate((
 ), start=1)}
 _ORDINAL_PATTERN = re.compile(
     r"\b(" + "|".join(_ORDINAL_WORDS) + r")\b(?=[ -]+(?:opinions?|visits?|appointments?|"
-    r"sessions?|treatments?|rounds?|floors?|times?|days?|weeks?|months?|years?)\b)", re.I,
+    r"sessions?|treatments?|rounds?|floors?|beds?|visit(?:s|ed)?|times?|days?|weeks?|months?|years?)\b)", re.I,
 )
 _RETURN_AFTER_INTERVAL_PATTERN = re.compile(
     r"\b(?:first|a)(?=\s+(?:time|visit|appointment)\s+(?:in|after)\s+"
@@ -115,7 +115,16 @@ _RETURN_AFTER_INTERVAL_PATTERN = re.compile(
 )
 _NON_COUNT_ONE_PATTERN = re.compile(
     r"(?<=\bno )one\b|\bone(?=\s+thing\s+(?:left|remaining)\b"
-    r"|\s+of\s+the\s+(?:best|worst|most|least)\b)", re.I,
+    r"|\s+of\s+the\s+(?:best|worst|most|least)\b"
+    r"|\s+(?:has|can|could|should|would|may|might|must|will|is|was|does|did)\b)"
+    r"|(?<=\bmakes )one\b|(?<=\bmade )one\b"
+    r"|\bone\s+by\s+one\b",
+    re.I,
+)
+_IDIOMATIC_UNIT_ONE_PATTERN = re.compile(
+    r"\b(?:every\s+single\s+(time)|(?:(?:there\s+)?(?:was|is)\s+not|there\s+wasn't|"
+    r"there\s+isn't|never)\s+a\s+(?:single\s+)?(day))\b",
+    re.I,
 )
 _OCCASIONAL_VISIT_PATTERN = re.compile(
     r"(?P<context>전에도\s+|이전에도\s+|가끔(?:씩)?\s+|종종\s+|이따금\s+)한번씩",
@@ -126,6 +135,13 @@ _SUGGESTED_XRAY_PATTERN = re.compile(
 _ENGLISH_SUGGESTED_XRAY_ONCE_PATTERN = re.compile(
     r"(?P<context>\b(?:suggest(?:ed|ing)?|recommend(?:ed|ing)?)\b.{0,40}\b(?:an?\s+)?x-ray)\s+once\b",
     re.I,
+)
+_NON_COUNT_RETURN_PATTERN = re.compile(
+    r"(?:또|다시)\s*한\s*번|두\s*번\s*다신|\bonce\s+(?:again|in\s+a\s+while)\b", re.I,
+)
+_KOREAN_FIRST_EVENT_PATTERN = re.compile(r"처음(?=\s*(?:방문|내원|경험))")
+_KOREAN_CARDINAL_PARTICLE_PATTERN = re.compile(
+    r"(하나|둘|셋|넷)(?=(?:입니다|이다|일|뿐))"
 )
 _INDEFINITE_TIME_PATTERN = re.compile(
     r"\b(?:a|an)\s+(?=(?:hours?|minutes?|days?|weeks?|months?|years?)\b)", re.I,
@@ -157,7 +173,15 @@ def _numbers(text):
     normalized = _OCCASIONAL_VISIT_PATTERN.sub(r"\g<context>가끔", text)
     normalized = _SUGGESTED_XRAY_PATTERN.sub(r"\g<procedure>", normalized)
     normalized = _ENGLISH_SUGGESTED_XRAY_ONCE_PATTERN.sub(r"\g<context>", normalized)
+    normalized = _NON_COUNT_RETURN_PATTERN.sub("", normalized)
+    normalized = _KOREAN_FIRST_EVENT_PATTERN.sub("1 ", normalized)
+    normalized = _KOREAN_CARDINAL_PARTICLE_PATTERN.sub(
+        lambda match: str(_NUMBER_WORDS[match.group(1)]) + " ", normalized,
+    )
     normalized = _RETURN_AFTER_INTERVAL_PATTERN.sub("", normalized)
+    normalized = _IDIOMATIC_UNIT_ONE_PATTERN.sub(
+        lambda match: match.group(1) or match.group(2), normalized,
+    )
     normalized = _INDEFINITE_TIME_PATTERN.sub("1 ", normalized)
     normalized = _TIME_NUMBER_PATTERN.sub(counted_number, normalized)
     normalized = _NON_COUNT_ONE_PATTERN.sub("", normalized)
@@ -193,7 +217,7 @@ def _numbers(text):
         amounts.append("KRW:" + format(amount.normalize(), "f"))
         return " "
     normalized = _WON_PATTERN.sub(take_amount, normalized)
-    return [*re.findall(r"\d+(?:[.,]\d+)*", normalized), *sorted(amounts), *sorted(visit_counts)]
+    return sorted([*re.findall(r"\d+(?:[.,]\d+)*", normalized), *amounts, *visit_counts])
 
 
 OPENROUTER_TRANSLATION_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -234,10 +258,13 @@ references ambiguous and retain fragments where necessary. For English output, k
 text exactly unchanged."""
 
 _KOREAN_REQUEST_PATTERN = re.compile(
-    r"(?:설명해|알려|봐|보아|진료해|치료해|확인해|도와)\s*주(?:세요|십시오)|부탁(?:드려요|드립니다|합니다)"
+    r"(?:설명해|알려|봐|보아|진료해|치료해|확인해|도와|방문해)\s*주(?:세요|십시오)"
+    r"|(?:치료\s*)?받으세요|제발[^.!?\n]{0,80}(?:말자|마세요|말아)"
+    r"|부탁(?:드려요|드립니다|합니다)"
 )
 _ENGLISH_REQUEST_PATTERN = re.compile(
-    r"\b(?:please|could\s+you|would\s+you|i\s+(?:ask|request|would\s+like|want)\b)", re.I,
+    r"\b(?:please|could\s+you|would\s+you|just\s+(?:receive|visit|look|check|tell|explain)\b"
+    r"|i\s+(?:ask|request|would\s+like|want)\b)", re.I,
 )
 
 
