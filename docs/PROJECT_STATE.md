@@ -1,5 +1,30 @@
 # SeoulDoc project state
 
+## Fix-inference refinement ownership, 2026-09-09
+
+At `314b5d8b`, root's answer request compatibility and explicit staff-attribution
+instructions passed 490 backend tests and independent code review. The answer
+model default is unchanged; GPT-5.4 answer quality has not been measured.
+
+The `inference-eval` owner now has an isolated branch based on that commit and
+owns `backend/query_facets.py`, `backend/search/turn_delta.py`, and
+`backend/tests/test_turn_delta.py`. Its task is to preserve explicit conditional
+widening consent and parse a Korean radius such as `2km이내`, while retaining
+hard limits. These defects were reproduced offline; no adaptive patient run or
+frozen scenario changes have occurred. Root owns integration and the evaluator.
+Root will inspect intermediate adaptive turns because the current automated
+hard-radius-after-request assertion checks the final turn only.
+
+The translation owner remains on bounded model diagnostics. GPT-5.4 low
+reasoning passed four of six difficult originals; high reasoning exceeded the
+30-second deadline and has unknown cost. Neither is a passing translation gate.
+No production translation verifier or model switch has been implemented.
+
+The latest 63-file redacted checkpoint upload is Dataset revision
+`a5880d196dc61b19c0bbe49474ff7413118d8238`, path
+`runs/fix-inference-checkpoint-20260909T021653Z`. It preserves newer failed
+fixed runs and source/browser evidence. No full application deployment has run.
+
 ## Fix-inference translation fidelity gate, 2026-09-09
 
 Root continues on `fix-inference` in `.worktrees/ncs-translation-first`, application
