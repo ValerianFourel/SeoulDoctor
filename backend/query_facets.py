@@ -509,6 +509,43 @@ def _facility_request_only(text: str, location: Any) -> bool:
     return found and words <= request_words
 
 
+def _requested_specialties(query: str) -> List[str]:
+    requested: List[Tuple[int, str]] = []
+    offset = 0
+    for clause in intent_clauses(query):
+        normalized = clause.casefold()
+        mentions: List[Tuple[int, int, str]] = []
+        for canonical, aliases in SPECIALTY_ALIASES:
+            for alias in aliases:
+                pattern = re.escape(alias.casefold())
+                if re.fullmatch(r"[a-z0-9][a-z0-9 /-]*", alias.casefold()):
+                    pattern = rf"(?<![a-z0-9]){pattern}(?![a-z0-9])"
+                for match in re.finditer(pattern, normalized):
+                    mentions.append((match.start(), match.end(), canonical))
+        for start, end, canonical in mentions:
+            if any(other_start <= start and end <= other_end and other_end - other_start > end - start
+                   for other_start, other_end, _ in mentions):
+                continue
+            before = normalized[max(0, start - 90):start]
+            after = normalized[end:end + 45]
+            withdrawn = bool(re.search(
+                r"(?:don['’]?t|do not|no longer)\s+(?:need|want|require)\b[^.!?;]{0,45}$"
+                r"|\b(?:not|instead of)\s*$|필요\s*없[^.!?;]{0,20}$",
+                before, re.I,
+            ))
+            asserted = bool(re.search(
+                r"\b(?:need|want|require|find|looking\s+for|search(?:ing)?\s+for)\b[^.!?;]{0,75}$",
+                before, re.I,
+            ) or re.search(
+                r"^[^.!?;]{0,35}\b(?:find|search)\b|(?:찾아|검색해|필요)",
+                after, re.I,
+            ))
+            if asserted and not withdrawn:
+                requested.append((offset + start, canonical))
+        offset += len(clause) + 1
+    return [canonical for _, canonical in sorted(requested)]
+
+
 def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> Dict[str, Any]:
     """Merge model output with conservative bilingual literal safeguards."""
     result = dict(payload or {})
@@ -528,7 +565,8 @@ def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> D
     result["comment_terms"] = _merge_terms(proposed_comments, comment_terms)
 
     if specialties:
-        result["specialty"] = specialties[0]
+        requested_specialties = _requested_specialties(query)
+        result["specialty"] = requested_specialties[-1] if requested_specialties else specialties[0]
         result["specialty_confidence"] = 0.95
     elif (parts := re.split(r"[,/|\s]+", str(result.get("specialty") or "").strip().casefold())) and all(
         part in GENERIC_FACILITY_NOUNS for part in parts

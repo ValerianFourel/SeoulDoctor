@@ -143,6 +143,16 @@ class AgenticRetrievalContractTests(unittest.TestCase):
                 )
                 self.assertIsNone(extracted["specialty"])
 
+    def test_explicit_specialty_correction_wins_over_the_withdrawn_specialty(self):
+        messages = (
+            "Actually, I don't need a dermatology clinic after all. I'm looking for an orthopedics clinic near Jonggak instead.",
+            "The results still show dermatology clinics (피부과), but I need an orthopedics clinic (정형외과). Could you search for orthopedics instead?",
+        )
+        for message in messages:
+            with self.subTest(message=message):
+                extracted = augment_extracted_facets(message, {"specialty": "피부과"})
+                self.assertEqual(extracted["specialty"], "정형외과")
+
     def test_numeric_distance_is_recovered_in_english_and_korean(self):
         for query in (
             "Find a dermatologist within 2 km",
