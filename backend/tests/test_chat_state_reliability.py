@@ -167,6 +167,13 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertEqual(second["state"]["specialty"], "정형외과")
 
     def test_conditional_consent_widens_only_empty_specialty_scope(self):
+        self.catalog["file_district"] = "노원구"
+        self.catalog["address"] = "서울특별시 노원구"
+        self.geocoder.side_effect = lambda location, **kwargs: {
+            "lat": fixtures.ORIGIN_LAT, "lon": fixtures.ORIGIN_LON,
+            "address_korean": f"서울특별시 노원구 {location}",
+            "district": "노원구", "dong": "상계동",
+        }
         self.catalog["lat"] = fixtures.ORIGIN_LAT + 0.0135
         self.catalog.loc[self.catalog.index[0], "category"] = "피부과"
         self.catalog.loc[self.catalog.index[0], "lat"] = fixtures.ORIGIN_LAT
@@ -191,6 +198,13 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertIs(hard["state"]["radius_expansion_allowed"], False)
 
     def test_conditional_consent_does_not_widen_nonempty_nearby_scope(self):
+        self.catalog["file_district"] = "노원구"
+        self.catalog["address"] = "서울특별시 노원구"
+        self.geocoder.side_effect = lambda location, **kwargs: {
+            "lat": fixtures.ORIGIN_LAT, "lon": fixtures.ORIGIN_LON,
+            "address_korean": f"서울특별시 노원구 {location}",
+            "district": "노원구", "dong": "상계동",
+        }
         self._model(["PROVIDE_INFO"], [
             self._proposal(specialty="정형외과", location="Nowon Station"),
         ])
