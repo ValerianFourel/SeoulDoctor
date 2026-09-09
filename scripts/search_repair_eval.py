@@ -39,7 +39,7 @@ def visible_turn(turn):
     for card in body.get("results", []):
         reviews = []
         displayable = [review for review in card.get("retrieval_evidence", [])
-                       if review.get("presentation", {}).get("status") != "hidden"]
+                       if review.get("presentation", {}).get("status") not in {"hidden", "unavailable"}]
         for review in displayable[:3]:
             presentation = review.get("presentation", {})
             reviews.append({"original": review.get("text", "")[:1200],

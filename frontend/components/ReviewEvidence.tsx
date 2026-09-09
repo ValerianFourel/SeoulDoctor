@@ -46,7 +46,7 @@ function isDisplayableOriginal(review: ReviewEvidenceRecord, facilityId: string)
     && review.place_id === facilityId
     && typeof review.evidence_id === "string" && review.evidence_id.length > 0
     && review.source_type === "verbatim_review" && review.is_verbatim === true
-    && review.presentation?.status !== "hidden"
+    && (review.presentation?.status === "translated" || review.presentation?.status === "original")
     && typeof review.text === "string" && review.text.trim().length > 0;
 }
 
@@ -131,8 +131,6 @@ const ReviewEvidence = forwardRef<ReviewEvidenceHandle, {
         ) : (
           <div className="space-y-3">
             {pageReviews.map(({ review, translatedText }) => {
-              const unavailable = review.presentation?.status === "unavailable"
-                || (review.presentation?.status === "translated" && !translatedText);
               const fullOriginal = fullReviewIds.has(review.evidence_id);
               const originalPreview = Array.from(review.text).slice(0, ORIGINAL_PREVIEW_LENGTH).join("");
               const longOriginal = originalPreview.length < review.text.length;
@@ -190,16 +188,10 @@ const ReviewEvidence = forwardRef<ReviewEvidenceHandle, {
                       </details>
                     </>
                   ) : originalContent}
-                  {unavailable && (
-                    <p className="mt-2 text-xs text-slate-500">{korean ? "번역을 제공할 수 없어 원문을 표시합니다." : "Translation unavailable. Showing the original."}</p>
-                  )}
                 </article>
               );
             })}
           </div>
-        )}
-        {visible.length < reviews.length && (
-          <p className="mt-2 text-xs text-slate-600">{korean ? "출처를 확인할 수 없는 일부 후기는 표시하지 않습니다." : "Some reviews could not be shown because their source could not be verified."}</p>
         )}
         {visible.length > FIRST_PAGE_SIZE && (
           <nav className="mt-3 flex items-center justify-between text-xs" aria-label={korean ? "후기 페이지" : "Review pages"}>
