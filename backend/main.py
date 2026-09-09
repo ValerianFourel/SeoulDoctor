@@ -1589,10 +1589,13 @@ def execute_search(
             authoritative_rules,
             allow_expansion=(
                 isinstance(authoritative_rules.hard.geography, DistanceRule)
-                and authoritative_rules.hard.geography.provenance.source in {"default_5km", "verified_context"}
                 and (
                     state.radius_expansion_allowed is True
-                    or (state.radius_expansion_allowed is None and state.travel_confidence < 0.6)
+                    or (
+                        state.radius_expansion_allowed is None
+                        and authoritative_rules.hard.geography.provenance.source in {"default_5km", "verified_context"}
+                        and state.travel_confidence < 0.6
+                    )
                 )
             ),
             index_version=(
