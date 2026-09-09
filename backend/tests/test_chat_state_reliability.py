@@ -154,6 +154,73 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertEqual(body["state"]["specialty"], "정형외과")
         self.assertIn("ankle pain", body["state"]["disease_terms"])
 
+    def test_symptom_inference_does_not_replace_an_established_specialty(self):
+        self._model(["PROVIDE_INFO"], [
+            self._proposal(
+                specialty=None,
+                specialty_confidence=0,
+                disease_terms=["ankle pain"],
+            ),
+        ])
+        previous = State(
+            specialty="소아청소년과",
+            specialty_confidence=0.95,
+            location="Jonggak",
+            latitude=fixtures.ORIGIN_LAT,
+            longitude=fixtures.ORIGIN_LON,
+            turn_count=1,
+        )
+        body = self._post(
+            "My child says their ankle hurts",
+            previous.model_dump(),
+            expect_results=False,
+        )
+        self.assertEqual(body["state"]["specialty"], "소아청소년과")
+        self.assertEqual(body["state"]["specialty_confidence"], 0.95)
+
+    def test_explicit_symptom_replacement_updates_the_inferred_specialty(self):
+        self._model(["PROVIDE_INFO"], [
+            self._proposal(
+                specialty=None,
+                specialty_confidence=0,
+                disease_terms=["ankle pain"],
+                visit_reason="ankle pain",
+            ),
+        ])
+        previous = State(
+            specialty="피부과",
+            specialty_confidence=0.95,
+            visit_reason="acne",
+            disease_terms=["acne"],
+            location="Jonggak",
+            latitude=fixtures.ORIGIN_LAT,
+            longitude=fixtures.ORIGIN_LON,
+            turn_count=1,
+        )
+        body = self._post(
+            "Actually, I need help with ankle pain now",
+            previous.model_dump(),
+        )
+        self.assertEqual(body["state"]["specialty"], "정형외과")
+        self.assertEqual(body["state"]["specialty_confidence"], 0.85)
+        self.assertEqual(body["state"]["disease_terms"], ["ankle pain"])
+
+    def test_korean_ankle_pain_searches_orthopedics_without_reasking_the_symptom(self):
+        self._model(["PROVIDE_INFO"], [
+            self._proposal(
+                specialty=None,
+                specialty_confidence=0,
+                location="종각역 근처",
+                disease_terms=["ankle pain"],
+            ),
+        ])
+        body = self._post("걸을 때 발목이 아파요. 종각역 근처 병원 찾아주세요.")
+        self.assertEqual(body["state"]["specialty"], "정형외과")
+        self.assertEqual(body["state"]["specialty_confidence"], 0.85)
+        self.assertTrue(body["state"]["ready_to_search"])
+        self.assertTrue(all(card["category"] == "정형외과" for card in body["results"]))
+        self.assertNotIn("어떤 증상인가요", body["response"])
+
     def test_api_expands_default_radius_without_changing_specialty(self):
         self.catalog["lat"] = fixtures.ORIGIN_LAT + 0.063
         self.catalog["lon"] = fixtures.ORIGIN_LON

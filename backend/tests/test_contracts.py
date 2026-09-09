@@ -183,6 +183,34 @@ class AgenticRetrievalContractTests(unittest.TestCase):
         self.assertIn("female", extracted["gender_terms"])
         self.assertIn("endometriosis", extracted["disease_terms"])
 
+    def test_clear_ankle_pain_infers_orthopedics_but_vague_foot_issue_does_not(self):
+        for query in (
+            "My ankle hurts when I walk.",
+            "걸을 때 발목이 아파요.",
+        ):
+            with self.subTest(query=query):
+                extracted = augment_extracted_facets(
+                    query,
+                    {"specialty": None, "specialty_confidence": 0},
+                )
+                self.assertEqual(extracted["specialty"], "정형외과")
+                self.assertEqual(extracted["specialty_confidence"], 0.85)
+                self.assertIn("ankle pain", extracted["disease_terms"])
+
+        vague = augment_extracted_facets(
+            "i have a foot issue im in myeondong",
+            {"specialty": None, "specialty_confidence": 0},
+        )
+        self.assertIsNone(vague["specialty"])
+        self.assertEqual(vague["specialty_confidence"], 0)
+
+        explicit_model_match = augment_extracted_facets(
+            "I need rheumatology care for ankle pain.",
+            {"specialty": "류마티스내과", "specialty_confidence": 0.9},
+        )
+        self.assertEqual(explicit_model_match["specialty"], "류마티스내과")
+        self.assertEqual(explicit_model_match["specialty_confidence"], 0.9)
+
     def test_retrieval_terms_include_korean_and_english_aliases(self):
         state = State(
             hard_keywords=["fast treatment"],

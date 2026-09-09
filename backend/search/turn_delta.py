@@ -399,6 +399,7 @@ class SearchDelta:
     user_message: str
     extraction_source: str | None
     extraction_error: str | None
+    specialty_inferred_from_symptom: bool = False
 
 
 def compile_turn_delta(message: str, proposal: Mapping[str, Any] | None) -> SearchDelta:
@@ -451,6 +452,9 @@ def compile_turn_delta(message: str, proposal: Mapping[str, Any] | None) -> Sear
         user_message=message,
         extraction_source=_optional_text(augmented.get("extraction_source")),
         extraction_error=_optional_text(augmented.get("extraction_error")),
+        specialty_inferred_from_symptom=(
+            augmented.get("_specialty_inferred_from_symptom") is True
+        ),
     )
 
 
@@ -519,7 +523,41 @@ def reduce_search_state(
     if delta.operation == "replace_context":
         _clear_search_context(state)
 
-    if delta.specialty is not None:
+    changed_purpose = bool(
+        delta.visit_reason is not None
+        and current.visit_reason
+        and delta.visit_reason != current.visit_reason
+    )
+    purpose_clauses = [
+        clause for clause in intent_clauses(delta.user_message)
+        if delta.visit_reason is not None
+        and delta.visit_reason.casefold() in clause.casefold()
+    ]
+    adding_symptom = any(
+        re.search(
+            r"\b(?:also|additionally|as well)\b|\btoo(?=\s*[.!?;]?\s*$)|추가로|또한|[가-힣]+도\s*(?:아파|아프|불편|문제|통증|진료|치료)",
+            clause,
+            re.I,
+        )
+        and not re.search(r"\b(?:instead|replace|rather)\b|대신", clause, re.I)
+        for clause in purpose_clauses
+    )
+    explicit_replacement = bool(re.search(
+        r"\b(?:actually|instead|rather)\b|대신|사실은",
+        delta.user_message,
+        re.I,
+    ))
+    replaces_visit_purpose = not adding_symptom and (
+        changed_purpose
+        or bool(current.specialty and not current.visit_reason and explicit_replacement)
+    )
+    preserve_established_specialty = bool(
+        delta.specialty_inferred_from_symptom
+        and delta.operation == "refine"
+        and current.specialty
+        and not replaces_visit_purpose
+    )
+    if delta.specialty is not None and not preserve_established_specialty:
         state.specialty = delta.specialty
         state.specialty_confidence = delta.specialty_confidence or 0.7
 
@@ -624,15 +662,7 @@ def reduce_search_state(
             setattr(state, edit.field, _merge_terms(getattr(state, edit.field), (addition,)))
 
     if delta.visit_reason is not None:
-        changed_purpose = bool(current.visit_reason) and delta.visit_reason != current.visit_reason
-        purpose_clauses = [clause for clause in intent_clauses(delta.user_message)
-                           if delta.visit_reason.casefold() in clause.casefold()]
-        adding_symptom = any(
-            re.search(r"\b(?:also|additionally|as well)\b|추가로|또한", clause, re.I)
-            and not re.search(r"\b(?:instead|replace|rather)\b|대신", clause, re.I)
-            for clause in purpose_clauses
-        )
-        if changed_purpose and not adding_symptom:
+        if replaces_visit_purpose:
             state.disease_terms = list(delta.disease_terms)
             if delta.specialty is None:
                 state.specialty = None

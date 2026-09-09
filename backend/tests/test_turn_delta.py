@@ -37,6 +37,56 @@ class SearchTurnDeltaTests(unittest.TestCase):
                 current = self.apply(message, location="종각역", visit_reason=message)
                 self.assertEqual(current.visit_reason, message)
 
+    def test_additive_ankle_symptom_does_not_replace_established_specialty(self):
+        prior = State(
+            visit_reason="acne",
+            disease_terms=["acne"],
+            specialty="피부과",
+            specialty_confidence=0.95,
+        )
+        for message, visit_reason in (
+            ("My ankle hurts too", "My ankle hurts"),
+            ("발목도 아파요", "발목도 아파요"),
+        ):
+            with self.subTest(message=message):
+                current = self.apply(
+                    message,
+                    prior,
+                    specialty=None,
+                    specialty_confidence=0,
+                    disease_terms=["ankle pain"],
+                    visit_reason=visit_reason,
+                )
+                self.assertEqual(current.specialty, "피부과")
+                self.assertEqual(current.specialty_confidence, 0.95)
+                self.assertEqual(current.disease_terms, ["acne", "ankle pain"])
+
+        replacement = self.apply(
+            "Actually, I need help because my ankle pain is too severe now",
+            prior,
+            specialty=None,
+            specialty_confidence=0,
+            disease_terms=["ankle pain"],
+            visit_reason="my ankle pain is too severe",
+        )
+        self.assertEqual(replacement.specialty, "정형외과")
+        self.assertEqual(replacement.disease_terms, ["ankle pain"])
+
+        no_prior_reason = self.apply(
+            "Actually, I need help with ankle pain now",
+            State(
+                specialty="피부과",
+                specialty_confidence=0.95,
+                disease_terms=["acne"],
+            ),
+            specialty=None,
+            specialty_confidence=0,
+            disease_terms=["ankle pain"],
+            visit_reason="ankle pain",
+        )
+        self.assertEqual(no_prior_reason.specialty, "정형외과")
+        self.assertEqual(no_prior_reason.disease_terms, ["ankle pain"])
+
     def test_local_station_without_distance_resets_citywide_radius_to_5km(self):
         state = State(
             location=None,

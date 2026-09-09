@@ -100,6 +100,12 @@ DISEASE_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
     ("back pain", ("back pain", "lower back pain", "허리 통증", "요통")),
 )
 
+SYMPTOM_SPECIALTIES: Mapping[str, str] = {
+    "foot pain": "정형외과",
+    "ankle pain": "정형외과",
+    "ankle sprain": "정형외과",
+}
+
 DISTANCE_PATTERN = re.compile(
     r"(?P<value>\d+(?:[.,]\d+)?)\s*"
     r"(?P<unit>km|kilometers?|kilometres?|킬로미터|m|meters?|metres?|미터)"
@@ -549,6 +555,7 @@ def _requested_specialties(query: str) -> List[str]:
 def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> Dict[str, Any]:
     """Merge model output with conservative bilingual literal safeguards."""
     result = dict(payload or {})
+    result["_specialty_inferred_from_symptom"] = False
 
     specialties = _find_aliases(query, SPECIALTY_ALIASES)
     places = _find_aliases(query, PLACE_ALIASES)
@@ -564,13 +571,28 @@ def augment_extracted_facets(query: str, payload: Mapping[str, Any] | None) -> D
                          if not _inquiry_only_term(query, term)]
     result["comment_terms"] = _merge_terms(proposed_comments, comment_terms)
 
+    inferred_specialties = {
+        specialty for disease in diseases
+        if (specialty := SYMPTOM_SPECIALTIES.get(disease))
+    }
+    proposed_specialty = str(result.get("specialty") or "").strip()
+    proposed_parts = re.split(r"[,/|\s]+", proposed_specialty.casefold())
+    generic_proposal = bool(proposed_specialty) and all(
+        part in GENERIC_FACILITY_NOUNS for part in proposed_parts
+    )
     if specialties:
         requested_specialties = _requested_specialties(query)
         result["specialty"] = requested_specialties[-1] if requested_specialties else specialties[0]
         result["specialty_confidence"] = 0.95
-    elif (parts := re.split(r"[,/|\s]+", str(result.get("specialty") or "").strip().casefold())) and all(
-        part in GENERIC_FACILITY_NOUNS for part in parts
-    ):
+    elif len(inferred_specialties) == 1:
+        inferred_specialty = next(iter(inferred_specialties))
+        if not proposed_specialty or generic_proposal:
+            result["specialty"] = inferred_specialty
+            result["specialty_confidence"] = 0.85
+            result["_specialty_inferred_from_symptom"] = True
+        elif proposed_specialty == inferred_specialty:
+            result["_specialty_inferred_from_symptom"] = True
+    elif generic_proposal:
         result["specialty"] = None
     if not result.get("location") and places:
         result["location"] = places[0]
