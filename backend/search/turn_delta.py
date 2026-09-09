@@ -11,6 +11,7 @@ from config import DISTANCE_MAPPING
 from models import State
 from query_facets import (
     DISTANCE_PATTERN, augment_extracted_facets, english_consultation_intent,
+    radius_expansion_intent,
     intent_clauses, is_exclusion, is_inquiry, is_withdrawal, requests_citywide_search, term_in_clause,
 )
 from review_presentation import response_language
@@ -381,6 +382,7 @@ class SearchDelta:
     citywide: bool | None
     distance_km: float | None
     travel_label: str | None
+    radius_expansion_allowed: bool | None
     hard_keywords: tuple[str, ...] | None
     soft_keywords: tuple[str, ...] | None
     negative_hard_keywords: tuple[str, ...] | None
@@ -432,6 +434,7 @@ def compile_turn_delta(message: str, proposal: Mapping[str, Any] | None) -> Sear
         citywide=citywide,
         distance_km=distance_km,
         travel_label=_optional_text(augmented.get("travel_label")),
+        radius_expansion_allowed=radius_expansion_intent(message),
         hard_keywords=_optional_terms(augmented.get("hard_keywords")),
         soft_keywords=_optional_terms(augmented.get("soft_keywords")),
         negative_hard_keywords=_optional_terms(augmented.get("negative_hard_keywords")),
@@ -490,6 +493,7 @@ def _clear_search_context(state: State) -> None:
     state.max_distance_km = 5.0
     state.travel_label = "Moderate"
     state.travel_confidence = 0.5
+    state.radius_expansion_allowed = None
     state.visit_reason = None
     state.inquiries = []
     for field in (
@@ -535,6 +539,7 @@ def reduce_search_state(
         state.max_distance_km = 25.0
         state.travel_label = "Anywhere in Seoul"
         state.travel_confidence = 1.0
+        state.radius_expansion_allowed = None
     elif delta.location is not None:
         if location_changed:
             state.place_terms = []
@@ -552,20 +557,29 @@ def reduce_search_state(
             state.search_mode = "distance"
 
     if not state.is_citywide_search:
+        had_hard_radius = state.travel_confidence >= 1.0 and not current.is_citywide_search
         if delta.distance_km is not None:
             state.max_distance_km = delta.distance_km
             state.travel_label = _travel_label_for_distance(delta.distance_km)
             state.travel_confidence = 1.0
+            state.radius_expansion_allowed = False
             state.search_mode = "distance"
-        elif delta.travel_label in DISTANCE_MAPPING:
+        elif delta.travel_label in DISTANCE_MAPPING and not (
+            had_hard_radius and delta.radius_expansion_allowed is True
+        ):
             state.travel_label = delta.travel_label
             state.max_distance_km = float(DISTANCE_MAPPING[delta.travel_label])
             state.travel_confidence = 0.6
+            state.radius_expansion_allowed = False
         elif location_changed and current.is_citywide_search:
             # A city-wide radius is not a local distance preference.
             state.max_distance_km = 5.0
             state.travel_label = "Moderate"
             state.travel_confidence = 0.5
+            state.radius_expansion_allowed = None
+
+        if delta.distance_km is None and delta.radius_expansion_allowed is not None:
+            state.radius_expansion_allowed = delta.radius_expansion_allowed and not had_hard_radius
 
     field_map = {
         "hard_keywords": delta.hard_keywords,
@@ -632,7 +646,8 @@ def reduce_search_state(
     if explicit is not None:
         state.explicit_response_language = explicit
     constraint_fields = (*field_map, "specialty", "location", "latitude", "longitude",
-                         "max_distance_km", "is_citywide_search", "visit_reason", "inquiries")
+                         "max_distance_km", "radius_expansion_allowed", "is_citywide_search",
+                         "visit_reason", "inquiries")
     if any(getattr(state, field) != getattr(current, field) for field in constraint_fields):
         state.clear_retrieval_telemetry()
     state.extraction_source = delta.extraction_source or state.extraction_source

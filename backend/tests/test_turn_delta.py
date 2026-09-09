@@ -95,6 +95,86 @@ class SearchTurnDeltaTests(unittest.TestCase):
         self.assertEqual(result.max_distance_km, 1.0)
         self.assertEqual(result.search_mode, "distance")
 
+    def test_attached_korean_distance_suffixes_preserve_exact_limits(self):
+        for phrase, expected in (("2km이내로만", 2), ("2km 이내로만", 2),
+                                 ("500m이내", 0.5), ("1.5킬로미터이내", 1.5),
+                                 ("750미터내에서", 0.75)):
+            with self.subTest(phrase=phrase):
+                result = self.apply(f"강남역에서 {phrase} 찾아주세요.",
+                                    distance_km=5, travel_label="Moderate")
+                self.assertEqual(result.max_distance_km, expected)
+                self.assertEqual(result.travel_confidence, 1)
+                self.assertIs(result.radius_expansion_allowed, False)
+        for phrase in ("5mg", "2kmh"):
+            self.assertIsNone(compile_turn_delta(phrase, {}).distance_km)
+
+    def test_conditional_consent_preserves_nearby_radius_and_confidence(self):
+        for message in (
+            "Find orthopedics near Nowon Station for mild knee pain. "
+            "Start nearby; widening is okay if no specialists are available.",
+            "Start nearby. If no specialists are available, please widen the search.",
+            "근거리 정형외과가 없으면 반경을 넓혀도 돼요.",
+        ):
+            with self.subTest(message=message):
+                result = self.apply(message, travel_label="Flexible", distance_km=10)
+                self.assertEqual(result.max_distance_km, 1)
+                self.assertEqual(result.travel_confidence, 0.6)
+                self.assertIs(result.radius_expansion_allowed, True)
+                self.assertEqual(result.inquiries, [])
+
+    def test_ordinary_request_and_model_permission_do_not_grant_consent(self):
+        result = self.apply("Find orthopedics near Nowon Station.",
+                            radius_expansion_allowed=True)
+        self.assertIsNone(result.radius_expansion_allowed)
+        nearby = self.apply("Find nearby orthopedics.", radius_expansion_allowed=True)
+        self.assertIs(nearby.radius_expansion_allowed, False)
+        self.assertEqual(nearby.travel_confidence, 0.6)
+
+    def test_consent_survives_unrelated_refinement_but_can_be_withdrawn(self):
+        consent = self.apply("Start nearby; widening is okay if no specialists are available.")
+        followup = self.apply("Waiting is fine; keep clear explanations.",
+                              consent.model_copy(update={
+                                  "comment_terms": ["short wait", "clear explanations"],
+                              }))
+        self.assertIs(followup.radius_expansion_allowed, True)
+        self.assertEqual(followup.max_distance_km, 1)
+        self.assertEqual(followup.comment_terms, ["clear explanations"])
+        for message in ("Do not widen the search even if no specialists are available.",
+                        "Widening is no longer allowed.", "반경을 넓히지 마세요."):
+            with self.subTest(message=message):
+                stopped = self.apply(message, followup)
+                self.assertIs(stopped.radius_expansion_allowed, False)
+                self.assertEqual(stopped.max_distance_km, 1)
+        self.assertIs(self.apply("Can you widen the search if no specialists are available?",
+                                 State()).radius_expansion_allowed, None)
+
+    def test_new_numeric_limit_clears_consent_and_replaces_previous_limit(self):
+        consent = self.apply("Start nearby; widening is okay if no specialists are available.")
+        hard = self.apply("강남역에서 2km이내로만 찾아주세요.", consent)
+        self.assertEqual(hard.max_distance_km, 2)
+        self.assertIs(hard.radius_expansion_allowed, False)
+        replacement = self.apply("Now only within 0.5 km.", hard)
+        self.assertEqual(replacement.max_distance_km, 0.5)
+        self.assertIs(replacement.radius_expansion_allowed, False)
+        unchanged = self.apply("Start nearby; widening is okay if no specialists are available.",
+                               replacement)
+        self.assertEqual(unchanged.max_distance_km, 0.5)
+        self.assertEqual(unchanged.travel_confidence, 1)
+        self.assertIs(unchanged.radius_expansion_allowed, False)
+        same_turn = self.apply("Only within 2 km. Widening is okay if no specialists are available.")
+        self.assertEqual(same_turn.max_distance_km, 2)
+        self.assertIs(same_turn.radius_expansion_allowed, False)
+
+    def test_context_reset_discards_consent_and_invalidates_scope_telemetry(self):
+        consent = self.apply("Start nearby; widening is okay if no specialists are available.")
+        consent.last_retrieval_metadata = {"coverage_sufficient": True}
+        withdrawn = self.apply("Do not widen the search.", consent)
+        self.assertEqual(withdrawn.last_retrieval_metadata, {})
+        reset = self.apply("요청을 바꿀게요. 치과를 찾아 주세요.", consent,
+                           operation="replace_context", specialty="치과")
+        self.assertIsNone(reset.radius_expansion_allowed)
+        self.assertEqual(reset.max_distance_km, 5)
+
     def test_removed_parking_disappears_from_every_polarity(self):
         state = State(
             location="Jamsil Station",

@@ -166,6 +166,84 @@ class ChatStateReliabilityTests(unittest.TestCase):
         self.assertEqual(second["state"]["max_distance_km"], 1)
         self.assertEqual(second["state"]["specialty"], "정형외과")
 
+    def test_conditional_consent_widens_only_empty_specialty_scope(self):
+        self.catalog["lat"] = fixtures.ORIGIN_LAT + 0.0135
+        self.catalog.loc[self.catalog.index[0], "category"] = "피부과"
+        self.catalog.loc[self.catalog.index[0], "lat"] = fixtures.ORIGIN_LAT
+        self._model(["PROVIDE_INFO", "CHANGE_CRITERIA", "CHANGE_CRITERIA"], [
+            self._proposal(specialty="정형외과", location="Nowon Station", travel_label="Flexible"),
+            self._proposal(),
+            self._proposal(distance_km=1),
+        ])
+        first = self._post("Find orthopedics near Nowon Station. Start nearby; "
+                           "widening is okay if no specialists are available.")
+        self.assertIs(first["state"]["radius_expansion_allowed"], True)
+        self.assertEqual(first["state"]["travel_confidence"], 0.6)
+        self.assertEqual(first["state"]["max_distance_km"], 2)
+        self.assertTrue(all(card["category"] == "정형외과" for card in first["results"]))
+        self.assertIn("1", first["response"])
+        self.assertIn("2", first["response"])
+        followup = self._post("Please show English translations of the reviews.", first["state"])
+        self.assertIs(followup["state"]["radius_expansion_allowed"], True)
+        hard = self._post("Only within 1 km.", followup["state"], expect_results=False)
+        self.assertEqual(hard["results"], [])
+        self.assertEqual(hard["state"]["max_distance_km"], 1)
+        self.assertIs(hard["state"]["radius_expansion_allowed"], False)
+
+    def test_conditional_consent_does_not_widen_nonempty_nearby_scope(self):
+        self._model(["PROVIDE_INFO"], [
+            self._proposal(specialty="정형외과", location="Nowon Station"),
+        ])
+        body = self._post("Find nearby orthopedics at Nowon Station. "
+                          "Widening is okay if no specialists are available.")
+        self.assertEqual(body["state"]["max_distance_km"], 1)
+        self.assertIs(body["state"]["radius_expansion_allowed"], True)
+        self.assertNotIn("far", [card["place_id"] for card in body["results"]])
+        self.assertEqual(self.retrieval_calls[0]["rules"].hard.geography.max_km, 1)
+
+    def test_explicit_widening_restriction_blocks_default_expansion(self):
+        self.catalog["lat"] = fixtures.ORIGIN_LAT + 0.063
+        self._model(["PROVIDE_INFO"], [
+            self._proposal(specialty="정형외과", location="Jonggak"),
+        ])
+        body = self._post("Find orthopedics near Jonggak. Do not widen the search.",
+                          expect_results=False)
+        self.assertEqual(body["results"], [])
+        self.assertEqual(body["state"]["max_distance_km"], 5)
+        self.assertIs(body["state"]["radius_expansion_allowed"], False)
+
+    def test_korean_attached_limit_never_widens_or_switches_specialty(self):
+        self.catalog["lat"] = fixtures.ORIGIN_LAT + 0.027
+        self.catalog.loc[self.catalog.index[0], "category"] = "피부과"
+        self.catalog.loc[self.catalog.index[0], "lat"] = fixtures.ORIGIN_LAT
+        self._model(["PROVIDE_INFO"], [
+            self._proposal(specialty="정형외과", location="강남역", distance_km=5),
+        ])
+        body = self._post("강남역에서 2km이내로만 정형외과를 찾아주세요.",
+                          expect_results=False)
+        self.assertEqual(body["results"], [])
+        self.assertEqual(body["state"]["max_distance_km"], 2)
+        self.assertEqual(body["state"]["specialty"], "정형외과")
+        self.assertIs(body["state"]["radius_expansion_allowed"], False)
+
+    def test_widget_limit_clears_consent_before_next_search(self):
+        previous = State(specialty="정형외과", specialty_confidence=0.95,
+                         location="Jonggak", latitude=fixtures.ORIGIN_LAT,
+                         longitude=fixtures.ORIGIN_LON, max_distance_km=2,
+                         travel_confidence=0.6, radius_expansion_allowed=True)
+        response = self.client.post("/set_travel_preference", json={
+            "travel_label": "Nearby", "current_state": previous.model_dump(),
+        })
+        self.assertEqual(response.status_code, 200)
+        state = response.json()["state"]
+        self.assertIs(state["radius_expansion_allowed"], False)
+        self.assertEqual(state["max_distance_km"], 1)
+        self.catalog["lat"] = fixtures.ORIGIN_LAT + 0.0135
+        self._model(["PROVIDE_INFO"], [self._proposal()])
+        body = self._post("Please show the patient reviews.", state, expect_results=False)
+        self.assertEqual(body["results"], [])
+        self.assertEqual(body["state"]["max_distance_km"], 1)
+
     def test_review_translation_request_does_not_require_english_consultations(self):
         self._model(["PROVIDE_INFO"], [
             self._proposal(specialty="정형외과", location="Jonggak", visit_reason="ankle pain"),

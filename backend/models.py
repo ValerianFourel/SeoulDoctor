@@ -38,6 +38,8 @@ class State(BaseModel):
     # User's travel label (semantic label)
     travel_label: str = "Moderate"  # Default label
     travel_confidence: float = 0.5  # NEW: Track how travel preference was set (0.6 for text, 1.0 for widget)
+    # None retains the default-radius policy; explicit consent/restriction wins.
+    radius_expansion_allowed: Optional[bool] = None
 
     
     # ===== KEYWORD FILTERING =====

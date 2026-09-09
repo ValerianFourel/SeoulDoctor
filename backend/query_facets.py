@@ -103,7 +103,7 @@ DISEASE_ALIASES: Sequence[Tuple[str, Sequence[str]]] = (
 DISTANCE_PATTERN = re.compile(
     r"(?P<value>\d+(?:[.,]\d+)?)\s*"
     r"(?P<unit>km|kilometers?|kilometres?|킬로미터|m|meters?|metres?|미터)"
-    r"(?![a-z가-힣])",
+    r"(?=$|[^a-z가-힣]|이내|내로|내에서|까지|반경)",
     re.IGNORECASE,
 )
 TRAVEL_PHRASES: Sequence[Tuple[str, Sequence[str]]] = (
@@ -244,7 +244,7 @@ def _find_aliases(query: str, aliases: Sequence[Tuple[str, Sequence[str]]]) -> L
 
 _INQUIRY = re.compile(
     r"\?|\b(?:can you confirm|could you confirm|whether|is there|are there|"
-    r"do they|does (?:the|this)|what (?:do|does|would)|should i check|is .+ available)\b"
+    r"do they|does (?:the|this)|what (?:do|does|would)|should i check|^is .+ available)\b"
     r"|가능한지|알려\s*주|인가요|있나요|어떤\s*의미", re.I,
 )
 _REQUIRE = re.compile(
@@ -443,6 +443,42 @@ def has_explicit_travel_preference(query: str) -> bool:
 def requests_existing_travel_scope(query: str) -> bool:
     """Recognize a refinement that explicitly keeps the prior radius."""
     return any(pattern.search(query) for pattern in PRESERVE_TRAVEL_SCOPE_PATTERNS)
+
+
+def radius_expansion_intent(query: str) -> bool | None:
+    """Read permission to widen an empty search separately from distance certainty."""
+    intent = None
+    for clause in intent_clauses(query):
+        if is_inquiry(clause):
+            continue
+        action = r"(?:widen(?:ing)?|expand(?:ing)?|broaden(?:ing)?)"
+        denied = re.search(
+            rf"\b(?:don['’]?t|do not|never|stop|without)\b.{{0,24}}\b{action}\b"
+            rf"|\b{action}\b.{{0,24}}\b(?:not|no longer)\s+(?:okay|ok|fine|allowed|acceptable)\b"
+            r"|(?:넓히지|넓히면\s*안|확대하지|확대하면\s*안)",
+            clause, re.I,
+        )
+        if denied:
+            intent = False
+            continue
+        empty_condition = re.search(
+            r"\b(?:if|when)\b.{0,60}\b(?:none|nothing|no\s+(?:matching\s+)?"
+            r"(?:specialists?|doctors?|clinics?|facilities|options?|matches|results?)"
+            r"|(?:can['’]?t|cannot)\s+find)\b"
+            r"|(?:없으면|없을\s*경우)", clause, re.I,
+        )
+        permission = re.search(
+            rf"\b(?:can|may|please)\s+{action}\b"
+            rf"|\b{action}\b.{{0,24}}\b(?:okay|ok|fine|allowed|acceptable)\b"
+            rf"|(?:^|,\s*|:\s*|\bthen\s+){action}\b"
+            r"|(?:넓혀|확대해)(?:도)?\s*(?:돼|되|괜찮|좋|주세요)",
+            clause, re.I,
+        )
+        if empty_condition and permission:
+            intent = True
+        elif requests_existing_travel_scope(clause):
+            intent = False
+    return intent
 
 
 def may_relax_distance_constraint(travel_confidence: float | None) -> bool:

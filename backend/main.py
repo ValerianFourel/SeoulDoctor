@@ -1590,7 +1590,10 @@ def execute_search(
             allow_expansion=(
                 isinstance(authoritative_rules.hard.geography, DistanceRule)
                 and authoritative_rules.hard.geography.provenance.source in {"default_5km", "verified_context"}
-                and state.travel_confidence < 0.6
+                and (
+                    state.radius_expansion_allowed is True
+                    or (state.radius_expansion_allowed is None and state.travel_confidence < 0.6)
+                )
             ),
             index_version=(
                 search_index_release.version
@@ -1994,6 +1997,7 @@ async def set_travel_preference(
     # Update travel preferences with HIGH confidence (widget-based)
     state.travel_label = travel_label
     state.travel_confidence = 1.0  # ⭐ HIGH confidence from widget
+    state.radius_expansion_allowed = False
     state.max_distance_km = DISTANCE_MAPPING[travel_label]
     
     # Detect language from state
