@@ -660,6 +660,10 @@ class ConstraintEvidenceRetriever:
             tuple[EvidenceConstraint, Literal["en", "ko"]],
         ] = {}
         semantic_queries: list[SemanticCellQuery] = []
+        requested_facilities = tuple(facility_ids)
+        lexical_hits: dict[
+            tuple[str, tuple[str, ...], int, tuple[str, ...]], tuple[EvidenceHit, ...]
+        ] = {}
 
         def upsert(
             hit: EvidenceHit,
@@ -714,21 +718,28 @@ class ConstraintEvidenceRetriever:
                     other_types = tuple(source for source in constraint.source_types if source != "verbatim_review")
                     source_limits = ((("verbatim_review",), review_limit), (other_types, limit - review_limit))
                 hits = []
+                cache_hits = 0
                 for source_types, source_limit in source_limits:
                     if source_limit:
-                        hits.extend(scoped_index.search_evidence_for_facilities(
-                            query,
-                            facility_ids=tuple(facility_ids),
-                            limit_per_facility=source_limit,
-                            source_types=source_types,
-                        ))
+                        key = (query, requested_facilities, source_limit, tuple(source_types))
+                        if key in lexical_hits:
+                            cache_hits += 1
+                        else:
+                            lexical_hits[key] = tuple(scoped_index.search_evidence_for_facilities(
+                                query,
+                                facility_ids=requested_facilities,
+                                limit_per_facility=source_limit,
+                                source_types=source_types,
+                            ))
+                        hits.extend(lexical_hits[key])
                 logger.info(
                     "Evidence recall phase=lexical constraint=%s language=%s "
-                    "facilities=%d hits=%d elapsed_ms=%.1f",
+                    "facilities=%d hits=%d cache_hits=%d elapsed_ms=%.1f",
                     constraint.constraint_id,
                     language,
                     len(facility_ids),
                     len(hits),
+                    cache_hits,
                     (perf_counter() - lexical_started) * 1000,
                 )
                 ranks: dict[str, int] = defaultdict(int)
