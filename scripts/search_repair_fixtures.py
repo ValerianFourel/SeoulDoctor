@@ -13,7 +13,8 @@ from unittest.mock import patch
 
 import pandas as pd
 import requests
-from fastapi.testclient import TestClient
+from fastapi import Response
+from starlette.requests import Request
 
 
 BACKEND = Path(__file__).resolve().parents[1] / "backend"
@@ -181,7 +182,6 @@ class FixtureApp:
                                              side_effect=AssertionError("fixture attempted network I/O")))
         self.stack.enter_context(patch.dict("os.environ", {"GOOGLE_TRANSLATE_API_KEY":
             "" if self.variant.get("translation_fault") == "missing_credentials" else "synthetic-key"}))
-        self.client = self.stack.enter_context(TestClient(main.app))
         return self
 
     def __exit__(self, *args):
@@ -259,7 +259,16 @@ class FixtureApp:
     def post(self, url, *, json, **kwargs):
         if not url.endswith("/chat"):
             raise ValueError("fixture transport accepts only /chat")
-        return self.client.post("/chat", json=json)
+        request = Request({
+            "type": "http", "http_version": "1.1", "method": "POST", "scheme": "http",
+            "path": "/chat", "raw_path": b"/chat", "query_string": b"", "headers": [],
+            "client": ("127.0.0.1", 1), "server": ("fixture", 80),
+        })
+        body = self.main.chat_endpoint(
+            self.main.ChatRequest(**json), Response(), request, None, None,
+        )
+        text = __import__("json").dumps(body, ensure_ascii=False)
+        return SimpleNamespace(status_code=200, text=text, json=lambda: body)
 
     def initial_state(self):
         return deepcopy(self.fixture.get("initial_state", {}))
