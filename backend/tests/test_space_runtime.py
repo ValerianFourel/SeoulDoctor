@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 import requests
 
@@ -37,9 +37,14 @@ class SpaceDeploymentTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, 'index.html').write_text('<html>SeoulDoctor fixture</html>')
-            env = {'FRONTEND_STATIC_DIR': directory, 'NCS_ENABLE_GPU': 'true'}
+            source_file = Path(directory, 'ncs-source.json')
+            source_file.write_text('{"branch":"ncs","commit":"fixture"}')
+            env = {'FRONTEND_STATIC_DIR': directory, 'NCS_ENABLE_GPU': 'true',
+                   'NCS_SOURCE_FILE': str(source_file)}
             with patch.dict(os.environ, env), patch.dict(sys.modules, {
                 'main': SimpleNamespace(app=app, root_status=root_status),
+                'mini_retrieval': SimpleNamespace(router=APIRouter()),
+                'inference_gateway': SimpleNamespace(router=APIRouter()),
             }):
                 spec = importlib.util.spec_from_file_location('isolated_space_app', ROOT / 'backend/space_app.py')
                 module = importlib.util.module_from_spec(spec)
@@ -51,6 +56,8 @@ class SpaceDeploymentTests(unittest.TestCase):
                 self.assertIn('SeoulDoctor fixture', response.text)
                 self.assertEqual(client.get('/health').json(), {'status': 'ok'})
                 self.assertEqual(client.post('/chat').json(), {'reply': 'existing API'})
+                self.assertEqual(client.get('/ncs-source.json').json(),
+                                 {'branch': 'ncs', 'commit': 'fixture'})
                 with patch.object(module.requests, 'get') as get:
                     get.return_value.json.return_value = {'ready': True, 'device': 'cuda:0'}
                     self.assertEqual(client.get('/ready/gpu').json()['device'], 'cuda:0')
