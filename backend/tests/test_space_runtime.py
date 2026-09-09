@@ -22,6 +22,7 @@ class SpaceDeploymentTests(unittest.TestCase):
         health = next(i for i, line in enumerate(lines) if line.startswith('HEALTHCHECK '))
         self.assertIn('urlopen', lines[health + 1])
         self.assertNotIn('uvicorn', lines[health + 1])
+        self.assertIn('COPY --chown=user:user ncs-source.json /home/user/app/ncs-source.json', lines)
 
     def test_website_and_api_coexist_with_gpu_readiness(self):
         app = FastAPI()

@@ -41,6 +41,7 @@ RUN pip install -r requirements.txt
 
 COPY --chown=user:user backend/*.py ./
 COPY --chown=user:user backend/search ./search
+COPY --chown=user:user ncs-source.json /home/user/app/ncs-source.json
 COPY --from=frontend-builder --chown=user:user /build/frontend/out /home/user/app/frontend
 
 ARG NCS_ENABLE_GPU=false
