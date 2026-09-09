@@ -34,11 +34,11 @@ issues, task ownership, the branch, the code commit, and the next action.
 - Use a simple local letter-presence check to exclude number-only, emoji-only,
   and isolated-jamo noise. Preserve short meaningful comments and emojis in text.
   Do not use a model for comment filtering or alter the retrieval corpus.
-- Configure selected-comment translation explicitly. The fix-inference candidate
-  uses bounded OpenRouter `openai/gpt-4.1` translation after live faithfulness
-  checks; Google Cloud Translation Basic remains a supported provider. Missing
-  credentials or failed validation retain originals with an unavailable status.
-  Keep credentials in the authorized task process or private Space secrets.
+- Configure selected-comment translation explicitly and bound its requests.
+  Record the chosen provider, model and live faithfulness results in the project
+  state. Missing credentials or failed validation retain originals with an
+  unavailable status. Keep credentials in the authorized task process or
+  private Space secrets.
 - Bound and deduplicate translation batches. Keep original text, comment IDs,
   facility ownership, and source metadata in the API. Label translations and
   offer originals, while hiding internal IDs from patient-facing markup.
