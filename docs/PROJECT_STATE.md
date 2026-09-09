@@ -1643,3 +1643,58 @@ inference_eval_audit owns scripts/search_repair_report.py and its test in
 .worktrees/inference-eval. Root integrates commits sequentially, owns all other
 application changes and records, and runs the actual candidate API. Existing
 sealed evaluation data is unchanged. Evaluation artifacts stay under .audit.
+
+### NCS harness deployment result, 2026-09-09
+
+Root implemented and published the scenario harness and application fixes on
+`fix-inference`, pushed to remote `ncs`. The application revision actually
+tested and deployed is `b346cabe48652d6c0532ed20bfe77fc8d973e77f`;
+Hugging Face Space commit is `279f82039b4de7f624bb5ccb22598625791d44fc`.
+The Space reports `RUNNING` on T4 Medium. `/ncs-source.json` matches the tested
+revision, `/ready/gpu` reports CUDA device `cuda:0`, and a live retrieval plus
+reranking operation reports `gpu_execution_verified: true`.
+
+The implementation adds seven frozen source-grounded adaptive scenarios,
+OpenRouter user simulation, explicit Codex/OpenRouter judge adapters, immutable
+judge packets, exact run/source/UI proof binding, corrupted false-green fixtures,
+and the deployed renderer probe. Review cards retain valid original Korean when
+translation is unavailable; translated text is intended to render first with an
+expandable original. Structured extraction and routing provider calls are capped
+at 20 seconds so deterministic fallbacks can return within the HTTP budget.
+
+Local evidence: 49 focused harness/runtime tests passed after the harness work;
+the GPU-contract tests and 14 deployment-boundary tests passed after the final
+runtime fixes. A prior full backend pass at the harness checkpoint had 533 tests
+passing, and the production frontend build passed before the final backend-only
+changes. Attempts to repeat larger local groups stalled in this sandbox and were
+terminated; they are not recorded as passes.
+
+Live gate result is **failed**. Two preserved pre-fix runs failed on English
+Myeongdong spelling requests after exceeding the 240-second harness timeout.
+At `b346cabe`, the bounded retry completed four of eleven applicable real cases,
+then `fixed-02-myeongdong-spellings-v4` (`명동`) raised `ReadTimeout`; six later
+cases were left `not_run` by the frozen stop-on-failure rule. All 13 applicable
+corrupted-fixture cases completed. An isolated `gpt-6-astra` Codex judge returned
+`passed:false`; it did not score incomplete cases. The seven adaptive OpenRouter
+patient simulations therefore remain blocked by their required fixed gate.
+
+For the four completed live cases, the source audit resolved all 118 surfaced
+evidence IDs against source snapshot
+`0e8c6f4ff09b75becf7821ba08bf8b19b6533b824a26ca4e7c6451277dfbfafa`
+with no ownership, exact-text, or source errors. Artifacts are under
+`.audit/ncs-conversation-20260909T124250Z/fixed-b346cabe/` and
+`.audit/ncs-conversation-20260909T124250Z/fixtures-b346cabe/`.
+
+The custom domain is a separate Vercel deployment. A live browser diagnostic
+confirmed the new NCS API revision, HTTP 200, five orthopedics cards, 48 owned
+original reviews, 15 rendered review articles, translation-first text, and removal
+of the old canned incomplete-search sentence. It also proved the Vercel frontend
+is stale: no expandable-original disclosure exists. Vercel production deployment
+was attempted, but this environment has neither cached Vercel credentials nor a
+`VERCEL_TOKEN`; no frontend promotion occurred. Do not merge `ncs` to `main` to
+work around that missing deployment credential.
+
+Next action: provide an approved Vercel deployment credential or promote the NCS
+preview in Vercel, then investigate the remaining `명동` request latency and rerun
+the unchanged fixed gate. Only after it passes should the seven adaptive scenarios,
+live UI replay, Likert judging, and release verdict run.

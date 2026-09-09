@@ -240,3 +240,27 @@ failed scenario IDs, exact Git commit, Space revision, Dataset revision, and
 checkpoint Dataset commit. Never summarize a partial or errored run as a pass.
 Code changes belong on `codex/modify-code-and-launch-evaluation` and should return through a reviewed
 GitHub diff or pull request.
+
+## Current NCS deployment and gate, 2026-09-09
+
+Remote branch `ncs` contains the conversation harness and application repair.
+The deployed/tested application commit is
+`b346cabe48652d6c0532ed20bfe77fc8d973e77f`; Space commit
+`279f82039b4de7f624bb5ccb22598625791d44fc` is running on the existing T4
+Medium resource. Exact source-marker, CUDA model probe, and live GPU retrieval
+plus reranking checks pass.
+
+Release admission did not pass. The exact fixed run at
+`.audit/ncs-conversation-20260909T124250Z/fixed-b346cabe/run.json` completed
+4/11 real cases and stopped after a `ReadTimeout` on the Korean `명동` spelling
+case. The exact fixture run at
+`.audit/ncs-conversation-20260909T124250Z/fixtures-b346cabe/run.json` completed
+13/13. Isolated Codex review is in `fixed-b346cabe/reviewed-gate.json` and says
+`passed:false`. The adaptive OpenRouter suite was not admitted.
+
+The Hugging Face API is current, but `www.seouldoc.io` is separately hosted on
+Vercel and still serves older review-card assets without the expandable-original
+control. Vercel CLI found no cached login, and the authorized environment has no
+`VERCEL_TOKEN`. A production frontend deployment remains blocked on that
+credential or a manual Vercel promotion. Do not infer a site deployment from the
+Hugging Face Space update.

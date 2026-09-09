@@ -151,3 +151,25 @@ the approved host retry passed. Live combined deployment verification is pending
 
 The original SeoulDoctor Space remains unchanged. No additional GPU or storage
 was purchased. The user manages the existing L4 lifetime.
+
+## 2026-09-09 NCS application deployment
+
+The combined NCS Space now serves source
+`b346cabe48652d6c0532ed20bfe77fc8d973e77f` at Space commit
+`279f82039b4de7f624bb5ccb22598625791d44fc`. Health, exact source marker,
+CUDA model proof, and live retrieval/reranking execution all pass. The readiness
+contract now validates CUDA execution markers returned by both inference
+operations rather than leaving `gpu_execution_verified` false after success.
+
+The fixed live conversation gate failed at the Korean `명동` spelling request
+with `ReadTimeout` after 4/11 completed cases, so the seven adaptive scenarios
+were correctly blocked. The source audit for completed cases resolved 118/118
+surfaced evidence IDs without an ownership or text mismatch. The isolated Codex
+gate verdict is false. See the exact artifacts under
+`.audit/ncs-conversation-20260909T124250Z/fixed-b346cabe/`.
+
+`www.seouldoc.io` is served by Vercel, not by the Space frontend bundle. Its API
+calls reach the current NCS Space, but a live browser check found stale frontend
+assets without the expandable-original control. `vercel deploy --prod --yes`
+could not authenticate, and `VERCEL_TOKEN` is absent. Production promotion of the
+frontend remains pending; no main-branch merge was used as a workaround.
