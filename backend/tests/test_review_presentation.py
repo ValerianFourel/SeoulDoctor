@@ -242,6 +242,49 @@ class TranslationTests(unittest.TestCase):
         altered, _ = self.prepare(["2차 의견을 들었어요."], ["I got a third opinion."])
         self.assertEqual(altered[0]["presentation"]["status"], "unavailable")
 
+    def test_korean_this_time_and_this_month_are_not_two(self):
+        for source, translation in (
+            ("이번에 발가락 통증으로 3진료실에 갔어요.", "This time I visited consultation room 3 for toe pain."),
+            ("이달에 2회 치료받았어요.", "I had two treatment sessions this month."),
+            ("이 번 방문했어요.", "I visited two times."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+                self.assertEqual(items[0]["text"], source)
+                reverse, _ = self.prepare([translation], [source], language="Korean")
+                self.assertEqual(reverse[0]["presentation"]["status"], "translated")
+        for source, translation in (
+            ("이번에 3진료실에 갔어요.", "This time I visited consultation room 4."),
+            ("이달에 2회 치료받았어요.", "I had three treatment sessions this month."),
+            ("이 번 방문했어요.", "I visited three times."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+                self.assertEqual(items[0]["text"], source)
+
+    def test_first_time_in_a_while_is_a_return_without_a_visit_count(self):
+        source = "오랜만에 방문했는데 4층 직원이 기억해주셨어요."
+        for interval in ("a while", "a long time", "ages"):
+            translation = f"I visited for the first time in {interval}, and the fourth floor staff remembered me."
+            with self.subTest(interval=interval):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+                self.assertEqual(items[0]["text"], source)
+                reverse, _ = self.prepare([translation], [source], language="Korean")
+                self.assertEqual(reverse[0]["presentation"]["status"], "translated")
+                altered, _ = self.prepare([source], [translation.replace("fourth", "fifth")])
+                self.assertEqual(altered[0]["presentation"]["status"], "unavailable")
+        for translation in (
+            "It was my first time visiting, and the fourth floor staff remembered me.",
+            "I visited for the second time in a while, and the fourth floor staff remembered me.",
+            "I visited for the first time in my life, and the fourth floor staff remembered me.",
+        ):
+            with self.subTest(translation=translation):
+                altered, _ = self.prepare([source], [translation])
+                self.assertEqual(altered[0]["presentation"]["status"], "unavailable")
+
     def test_hospital_visit_count_can_follow_its_duration_in_translation(self):
         source = "병원 한 번 가는데 2시간 걸렸어요."
         for translation in ("Two hours just to go to the hospital.",

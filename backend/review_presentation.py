@@ -109,6 +109,9 @@ _ORDINAL_PATTERN = re.compile(
     r"\b(" + "|".join(_ORDINAL_WORDS) + r")\b(?=[ -]+(?:opinions?|visits?|appointments?|"
     r"sessions?|treatments?|rounds?|floors?|times?|days?|weeks?|months?|years?)\b)", re.I,
 )
+_RETURN_AFTER_INTERVAL_PATTERN = re.compile(
+    r"\bfirst(?=\s+time\s+in\s+(?:a\s+(?:while|long\s+time)|ages)\b)", re.I,
+)
 _VISIT_COUNT_PATTERN = re.compile(
     r"(?:병원|의원|클리닉|치과)\s*(?P<korean>\d+)\s*번"
     r"|\b(?P<english>\d+|a|single|the)\s+(?:hospital|clinic|doctor(?:['’]s)?)\s+visits?\b"
@@ -123,10 +126,15 @@ _WON_PATTERN = re.compile(
 def _numbers(text):
     def counted_number(match):
         word = match.group(1).lower()
-        if word in "일이삼사오육칠팔구" and not match["spacing"] and text[match.end():].startswith("분"):
-            return match.group()
+        if not match["spacing"]:
+            suffix = text[match.end():]
+            if (word in "일이삼사오육칠팔구" and suffix.startswith("분")) or (
+                word == "이" and suffix.startswith(("번", "달"))
+            ):
+                return match.group()
         return str(_NUMBER_WORDS[word]) + " "
     normalized = _TIME_NUMBER_PATTERN.sub(counted_number, text)
+    normalized = _RETURN_AFTER_INTERVAL_PATTERN.sub("", normalized)
     normalized = _ORDINAL_PATTERN.sub(lambda match: str(_ORDINAL_WORDS[match.group(1).lower()]), normalized)
     normalized = _CARDINAL_WORD_PATTERN.sub(
         lambda match: str(_NUMBER_WORDS[(match.group(1) or match.group(2)).lower()]), normalized,
