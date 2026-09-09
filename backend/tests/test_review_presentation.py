@@ -450,19 +450,23 @@ class TranslationTests(unittest.TestCase):
 
 
 class OpenRouterTranslationTests(unittest.TestCase):
-    def prepare(self, originals, entries, *, finish_reason="stop", key="fixture-key", error=None, language="English", response_overrides=None):
+    def prepare(self, originals, entries, *, finish_reason="stop", key="fixture-key", error=None,
+                language="English", response_overrides=None, model="openai/gpt-4.1"):
         import json
         from unittest.mock import AsyncMock, patch
         from review_presentation import prepare_review_presentations
         cards = [{"place_id": f"clinic-{index}", "retrieval_evidence": [
             {**review(text, f"review:{index}"), "place_id": f"clinic-{index}"}]}
             for index, text in enumerate(originals)]
-        response = {"id": "gen-fixture", "model": "openai/gpt-4.1", "provider": "OpenAI",
+        expected_provider = "Google AI Studio" if model == "google/gemini-3.8-flash" else "OpenAI"
+        response = {"id": "gen-fixture", "model": model, "provider": expected_provider,
                     "choices": [{"finish_reason": finish_reason, "message": {
             "content": json.dumps({"translations": entries})}}],
             "usage": {"prompt_tokens": 100, "completion_tokens": 30, "cost": 0.00044}}
         response.update(response_overrides or {})
-        with patch("review_presentation._request_openrouter", new_callable=AsyncMock) as request, patch("review_presentation.requests.post") as google:
+        with patch("review_presentation._request_openrouter", new_callable=AsyncMock) as request, \
+                patch("review_presentation.requests.post") as google, \
+                patch.dict("review_presentation.os.environ", {"REVIEW_TRANSLATION_MODEL": model}):
             request.return_value = response
             request.side_effect = error
             trace = prepare_review_presentations(cards, language, translation_provider="openrouter", openrouter_api_key=key)
@@ -494,6 +498,29 @@ class OpenRouterTranslationTests(unittest.TestCase):
         self.assertEqual(payload["max_tokens"], 4096)
         self.assertEqual(json.loads(payload["messages"][1]["content"])["reviews"],
                          [{"index": index, "text": text} for index, text in enumerate(originals)])
+
+    def test_gemini_translation_is_pinned_to_google_ai_studio(self):
+        cards, trace, request = self.prepare(
+            ["의사는 친절해요"], [{"index": 0, "text": "The doctor is kind."}],
+            model="google/gemini-3.8-flash",
+        )
+        self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["status"], "translated")
+        self.assertEqual(trace["actual_model"], "google/gemini-3.8-flash")
+        self.assertEqual(trace["actual_provider"], "Google AI Studio")
+        payload, _ = request.call_args.args
+        self.assertEqual(payload["provider"], {
+            "order": ["google-ai-studio"], "allow_fallbacks": False, "require_parameters": True,
+        })
+        self.assertEqual(payload["reasoning"], {"effort": "low"})
+        self.assertNotIn("temperature", payload)
+
+    def test_unapproved_openrouter_translation_model_never_dispatches(self):
+        cards, trace, request = self.prepare(
+            ["의사는 친절해요"], [], model="unapproved/model",
+        )
+        request.assert_not_called()
+        self.assertEqual(trace["reason"], "invalid_response")
+        self.assertEqual(cards[0]["retrieval_evidence"][0]["presentation"]["status"], "unavailable")
 
     def test_substituted_provider_or_missing_identity_cannot_supply_translations(self):
         for overrides in ({"model": "openai/gpt-4.1-mini"}, {"provider": "Azure"},
