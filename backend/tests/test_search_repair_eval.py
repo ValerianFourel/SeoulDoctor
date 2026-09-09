@@ -6,7 +6,8 @@ import unittest
 import requests
 
 from scripts.search_repair_eval import (
-    ACTOR_MODEL, ACTOR_PROVIDER, Budget, Runner, actor_payload, check_turn, expand_fixed, parse_actor,
+    ACTOR_MODEL, ACTOR_PROVIDER, APP_TIMEOUT_SECONDS, Budget, Runner, actor_payload, check_turn,
+    expand_fixed, parse_actor,
 )
 
 
@@ -29,6 +30,23 @@ def body(state=None):
 
 
 class SearchRepairRunnerTests(unittest.TestCase):
+    def test_application_timeout_is_five_minutes_and_recorded(self):
+        calls = []
+
+        def post(url, **kwargs):
+            calls.append(kwargs)
+            return Response(body())
+
+        with tempfile.TemporaryDirectory() as directory:
+            runner = Runner("http://localhost:8000", Path(directory) / "run", suite(("Find care",)),
+                            "fixed", "fixture-commit", post=post)
+            self.assertEqual(runner.run(), 0)
+            saved = json.loads((runner.directory / "run.json").read_text())
+            self.assertEqual(calls[0]["timeout"], 300)
+            self.assertEqual(APP_TIMEOUT_SECONDS, 300)
+            self.assertEqual(saved["app_timeout_seconds"], 300)
+            self.assertEqual(saved["actor_timeout_seconds"], 60)
+
     def test_state_is_preserved_and_timeout_retained_without_replay(self):
         calls = []
         state = {"specialty": "정형외과", "private_field": {"nested": [1, 2]}, "turn_count": 1}

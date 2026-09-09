@@ -15,7 +15,7 @@ backend/venv/bin/python scripts/search_repair_eval.py \
 The run directory must be new. Requests retain sequential conversation state.
 Each response or error is checkpointed. There are no automatic retries. Budgets
 are 80 application calls, 70 actor calls, USD 2 for the actor, and three hours.
-Application calls have a 240-second timeout; actor calls have a 60-second timeout.
+Application calls have a 300-second timeout; actor calls have a 60-second timeout.
 Application-model costs are separate and are not measured by this runner.
 
 Fixture-dependent cases are recorded as `not_run` with a nonzero exit. They need

@@ -18,6 +18,8 @@ ACTOR_SLUG = "qwen/qwen3.8-27b-20260814"
 ACTOR_PROVIDER = "Phala"
 ACTOR_PROMPT_VERSION = "search-repair-patient-v2"
 FIXED_GATE_REVIEWER = "codex_subagents"
+APP_TIMEOUT_SECONDS = 300
+ACTOR_TIMEOUT_SECONDS = 60
 ACTOR_PROMPT = """Play only the patient described in patient. Write the patient message
 for current_stage, reacting to the visible conversation. You cannot see later stages.
 Follow the patient language. Do not invent facilities, reviews, symptoms, diagnoses,
@@ -287,6 +289,8 @@ class Runner:
                            json.dumps(self.eval_config, sort_keys=True).encode()).hexdigest(),
                        "selected_scenario_ids": list(self.scenario_ids),
                        "started_at": time.time(), "duration_limit_seconds": 10800,
+                       "app_timeout_seconds": APP_TIMEOUT_SECONDS,
+                       "actor_timeout_seconds": ACTOR_TIMEOUT_SECONDS,
                        "status": "running", "quality_pass": False}
         self.checkpoint()
 
@@ -366,7 +370,10 @@ class Runner:
             if kind == "actor":
                 headers["Authorization"] = "Bearer " + self.actor_key
             started = time.monotonic()
-            response = (post or self.post)(url, json=payload, headers=headers, timeout=min(240 if kind == "app" else 60, remaining))
+            timeout = APP_TIMEOUT_SECONDS if kind == "app" else ACTOR_TIMEOUT_SECONDS
+            response = (post or self.post)(
+                url, json=payload, headers=headers, timeout=min(timeout, remaining)
+            )
             record.update(http_status=response.status_code, raw_text=response.text,
                           duration_seconds=time.monotonic() - started)
             self.checkpoint()
