@@ -1,5 +1,51 @@
 # SeoulDoc project state
 
+## Fix-inference translation fidelity gate, 2026-09-09
+
+Root continues on `fix-inference` in `.worktrees/ncs-translation-first`, application
+checkpoint `4bef6df7a94eb61f0479426b7329c220521d7c0c`. The current integration
+branch `origin/ncs` at `5a9167e6e2c47452035915234c8946265cffb9fd` is already an
+ancestor. Ownership and credential authorization from the following update remain
+in effect. Other working copies and the original Space are unchanged.
+
+At this checkpoint, 489 backend tests and the 36 evaluator tests passed. The
+unchanged retriever service passed 16 tests plus 10 subtests. The frontend build
+and 74 controlled browser assertions remain applicable to its unchanged source.
+A browser replay of saved real API responses passed 566 assertions on desktop
+and mobile, including translation-first display, original reveal, all 56
+displayable originals, pagination, and later-page citation navigation. This is
+saved-response replay, not a live website inference test.
+
+Fresh controlled fixtures completed 13 cases and 14 turns. Live fixed runs r2,
+r3 and r4 are retained as failed or interrupted gates. Numeric false rejections
+were corrected without changing the frozen cases or thresholds. In r4, all 60
+first-page review occurrences in the completed cases were translated, but
+semantic review found changed actors and an unsupported comparison. The reported
+pair took 20.444 and 47.679 seconds; the second translation batch took 12.541
+seconds. Availability alone is not a translation fidelity pass.
+
+An independent GPT-4.1 verifier diagnostic accepted two of four known bad
+translations. That proposed verifier is not implemented or treated as a solution.
+The translation owner is testing a stronger single-call translator on the same
+originals, with exact provider/model, timeout, usage and cost recorded privately.
+No adaptive conversation has run; admission still requires passing fixed and
+fixture quality gates. No full application push or deployment has occurred.
+
+Existing NCS GPU prerequisite/runtime remains
+`014922dcb9a6667aa3eaa0c3a7ca67ac82b5a0c8` on T4 Medium. No new hardware or
+embeddings were created. A read-only check of deployed `www.seouldoc.io` assets
+found the NCS Hugging Face primary and original Space fallback URLs, and no
+Render endpoint. It does not prove live failover.
+
+Private artifacts are under `.audit/fix-inference-20260909/`. The first 50
+redacted checkpoint files were uploaded to `ValerianFourel/seouldoc-eval-handoff`
+at Dataset revision `7213661db6bc93518703d53f37a52ac46bbff6fe`, path
+`runs/fix-inference-checkpoint-20260909T000045Z`; newer failed runs remain local
+pending the next checkpoint upload.
+
+Next action: select and verify the translation fix, rerun unchanged fixed cases,
+and admit the twelve adaptive conversations only after root's quality gate.
+
 ## Fix-inference live quality gate and ownership, 2026-09-09
 
 Root integrates in `.worktrees/ncs-translation-first`, branch `fix-inference`.
