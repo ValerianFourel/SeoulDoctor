@@ -19,9 +19,9 @@ class AnswerCompletionTests(unittest.TestCase):
         client.with_options.return_value.chat.completions.create.return_value = completion
         return client
 
-    def request(self, client):
+    def request(self, client, model="synthetic-answer-model"):
         return request_answer_completion(
-            client, model="synthetic-answer-model",
+            client, model=model,
             messages=[{"role": "user", "content": "synthetic request"}],
             max_completion_tokens=3072, timeout_seconds=17.5,
             response_schema={"type": "object", "properties": {"answer": {"type": "string"}},
@@ -42,6 +42,27 @@ class AnswerCompletionTests(unittest.TestCase):
         self.assertEqual(create.call_args.kwargs["temperature"], 0.0)
         self.assertEqual(create.call_args.kwargs["response_format"]["type"], "json_schema")
         self.assertTrue(create.call_args.kwargs["response_format"]["json_schema"]["strict"])
+
+    def test_gpt54_routes_to_supported_standard_openai_endpoint(self):
+        client = self.client()
+        with patch("llm_client.LLM_PROVIDER", "openrouter"):
+            value, _ = self.request(client, "openai/gpt-5.4")
+        self.assertEqual(value, {"answer": "safe"})
+        client.with_options.assert_called_once_with(max_retries=0, timeout=17.5)
+        create = client.with_options.return_value.chat.completions.create
+        create.assert_called_once()
+        params = create.call_args.kwargs
+        self.assertNotIn("temperature", params)
+        self.assertEqual(params["reasoning_effort"], "none")
+        self.assertEqual(params["max_tokens"], 3072)
+        self.assertEqual(params["extra_body"]["provider"], {
+            "order": ["openai"], "allow_fallbacks": False, "require_parameters": True,
+        })
+        self.assertTrue(params["response_format"]["json_schema"]["strict"])
+        client = self.client(finish_reason="length")
+        with patch("llm_client.LLM_PROVIDER", "openrouter"):
+            with self.assertRaisesRegex(ValueError, "answer_completion_incomplete"):
+                self.request(client, "openai/gpt-5.4")
 
     def test_complete_json_with_nonstop_finish_reason_is_rejected_without_retry(self):
         for reason in ("length", "content_filter", "tool_calls", None):

@@ -251,6 +251,8 @@ explanation}. status is supports, contradicts, mixed, or unestablished. basis is
 patient_report, facility_fact, or none. staff_role is doctor, nurse, reception, staff,
 facility, or unspecified. Assess only the patient's stated requirements; do not invent
 additional requirements or a generic availability checklist. Keep each role and requirement distinct.
+Name a staff role only when the original attributes that specific action or quality to it.
+General praise for everyone does not establish that both doctors and therapists gave explanations.
 citations: array of {marker: integer, place_id, evidence_id, original_excerpt}.
 Every excerpt must be an exact contiguous substring of that original review, preserving
 case, punctuation and spacing. Use only IDs in the supplied evidence. Never merge quotes.
@@ -284,6 +286,7 @@ next action. Check every sentence, including statements without citations. Check
 assessments actually follow from the quoted sources; a matching ID alone proves nothing.
 Reject unsupported claims, misleading numeric values, fabricated quotes, wrong facility
 ownership, missed decisive counterevidence, reversed doctor/nurse roles, lost negation,
+or assigning a specific action to multiple staff roles from general praise for everyone,
 or treating relevance/multiple search roles as negative sentiment. Reject endorsements
 that conflict with current mandatory requirements or exclusions. A withdrawn preference
 must not remain a decision criterion. A factual question is not a new mandatory filter.

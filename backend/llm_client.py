@@ -142,18 +142,22 @@ def request_answer_completion(
     """Make one bounded request; incomplete output cannot become an answer."""
     if client is None:
         raise RuntimeError("answer_model_unavailable")
+    gpt54 = LLM_PROVIDER == "openrouter" and model == "openai/gpt-5.4"
+    provider = {"require_parameters": True}
+    if gpt54:
+        provider.update(order=["openai"], allow_fallbacks=False)
     completion = client.with_options(
         max_retries=0, timeout=timeout_seconds,
     ).chat.completions.create(
         model=model,
         messages=list(messages),
-        temperature=0.0,
+        **({"reasoning_effort": "none"} if gpt54 else {"temperature": 0.0}),
         **({"max_tokens": max_completion_tokens} if LLM_PROVIDER == "openrouter"
            else {"max_completion_tokens": max_completion_tokens}),
         response_format={"type": "json_schema", "json_schema": {
             "name": "search_response", "strict": True, "schema": response_schema,
         }},
-        extra_body={"provider": {"require_parameters": True}} if LLM_PROVIDER == "openrouter" else {},
+        extra_body={"provider": provider} if LLM_PROVIDER == "openrouter" else {},
         **({"reasoning_effort": "low"} if model.startswith("openai/gpt-oss-") else {}),
     )
     if not completion.choices or completion.choices[0].finish_reason != "stop":
