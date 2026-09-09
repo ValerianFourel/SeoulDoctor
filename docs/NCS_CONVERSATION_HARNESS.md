@@ -10,13 +10,15 @@ grounded, stress, or random-holdout suites.
 | Product behavior | Owning implementation | Verification |
 | --- | --- | --- |
 | `POST /chat`, response state, and result cards | `backend/main.py`, `backend/models.py` | `scripts/search_repair_eval.py` sends the real payload and carries the returned state sequentially. |
-| Specialty, location, symptoms, hard radius, preferences, and replacements | `backend/query_facets.py`, `backend/search/turn_delta.py`, `backend/search/scope.py` | The seven smoke cases cover clarification, language evidence, staff-role conflict, wait withdrawal, location replacement, code switching, and relevant dental reviews. |
+| Specialty, location, symptoms, hard radius, preferences, and replacements | `backend/query_facets.py`, `backend/search/turn_delta.py`, `backend/search/scope.py` | The seven smoke cases cover a decisive review, language evidence, staff-role conflict, wait withdrawal, location replacement, code switching, and an unsupported accessibility requirement. |
 | Original review retrieval, ownership, and response claims | `backend/search/evidence_retrieval.py`, `backend/evidence_response.py`, `backend/review_presentation.py` | Turn assertions check IDs, verbatim text, ownership, specialty, radius, and the retired generic incomplete-search sentence. `scripts/search_repair_report.py` resolves every surfaced evidence ID against the pinned local index. |
-| Translation-first cards and original reveal | `frontend/components/ReviewEvidence.tsx`, `frontend/components/ChatInterface.tsx` | API packets retain translation status and original text. `frontend/tests/review-visibility.cjs` verifies the real 3/7 pagination and reveal controls. A live browser check is reported separately from saved-response rendering. |
+| Translation-first cards and original reveal | `frontend/components/ReviewEvidence.tsx`, `frontend/components/ChatInterface.tsx` | API packets retain translation status and original text. `frontend/tests/review-visibility.cjs` verifies saved-response rendering. `frontend/tests/live-review-deployment.cjs` replays every frozen smoke conversation through the deployed browser UI and verifies clinic/comment ownership, translation-first display, original reveal, and 3/7 pagination. |
 | Independent quality judgment | `scripts/conversation_eval.py`, `scripts/conversation_eval_config.json` | Immutable packets expose user-visible content and a private oracle only to the judge. Code validates hashes, score ranges, citations, adherence, critical findings, and computes the verdict independently of the judge's proposed verdict. |
 
-The smoke cases are open-ended diagnostics. Exact-clinic and exact-comment
-targets remain in `backend/tests/grounded_bilingual_scenarios.json`; their
+The smoke combines source-grounded targeted probes and open-ended diagnostics.
+Its target records are derived from `backend/tests/grounded_bilingual_scenarios.json`
+and pinned to the same source/index revision. The broader exact-clinic and
+exact-comment targets remain there; their
 deterministic ranks, attachment, ownership, and quotation checks remain in
 `backend/tests/grounded_journey_grader.py`. The existing 20 core, 10 stress,
 and 12 holdout inventory remains governed by `docs/EVAL_LAUNCH_PLAN_2026-09-06.md`.
@@ -64,18 +66,51 @@ backend/venv/bin/python scripts/search_repair_eval.py \
   --run-dir .audit/ncs-deployed-smoke-FRESH_ID \
   --phase adaptive --application-revision COMMIT \
   --fixed-gate .audit/ncs-fixed-FRESH_ID/reviewed-gate.json \
-  --scenario adaptive-12-relevant-dental-reviews \
-  --scenario adaptive-11-consultation-language \
-  --scenario adaptive-08-staff-role-conflict \
-  --scenario adaptive-09-withdraw-wait-preference \
-  --scenario adaptive-10-replace-location \
-  --scenario adaptive-06-language-switch \
-  --scenario adaptive-01-foot-clarification
+  --scenario smoke-01-decisive-comment \
+  --scenario smoke-02-english-consultation-uncertain \
+  --scenario smoke-03-staff-role-conflict \
+  --scenario smoke-04-wait-preference-withdrawal \
+  --scenario smoke-05-location-replacement \
+  --scenario smoke-06-code-switch-direct-check \
+  --scenario smoke-07-unsupported-accessibility
 ```
 
 The runner uses `OPENROUTER_API_KEY` for the simulated patient. It sends only
-the patient brief, current stage, and visible conversation to OpenRouter. The
+the public persona, current stage, and visible conversation to OpenRouter. It
+does not reveal future stages. The
 private oracle stays in the run and judge packet.
+
+Resolve every surfaced comment against the pinned local source and bind that
+report to the immutable run:
+
+```bash
+backend/venv/bin/python scripts/search_repair_report.py \
+  --run .audit/ncs-deployed-smoke-FRESH_ID/run.json \
+  --index-root backend/search_indexes \
+  --output-dir .audit/ncs-deployed-smoke-FRESH_ID/source-report
+backend/venv/bin/python scripts/conversation_eval.py make-source-proof \
+  --run .audit/ncs-deployed-smoke-FRESH_ID/run.json \
+  --report .audit/ncs-deployed-smoke-FRESH_ID/source-report/report.json \
+  --index-root backend/search_indexes \
+  --output .audit/ncs-deployed-smoke-FRESH_ID/source-proof.json
+```
+
+Check the deployed custom-domain renderer and bind its raw response and checks
+to the same revision and run:
+
+```bash
+node frontend/tests/live-review-deployment.cjs \
+  https://www.seouldoc.io \
+  .audit/ncs-deployed-smoke-FRESH_ID/ui-observation.json COMMIT \
+  .audit/ncs-deployed-smoke-FRESH_ID/run.json
+backend/venv/bin/python scripts/conversation_eval.py make-ui-proof \
+  --run .audit/ncs-deployed-smoke-FRESH_ID/run.json \
+  --observation .audit/ncs-deployed-smoke-FRESH_ID/ui-observation.json \
+  --output .audit/ncs-deployed-smoke-FRESH_ID/ui-proof.json
+```
+
+Both proof builders hash their source artifact and bind it to the run hash and
+application revision. Changed reports, observations, or runs are rejected.
 
 Export isolated Codex packets:
 

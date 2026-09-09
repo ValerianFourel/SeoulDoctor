@@ -304,7 +304,7 @@ def prepare(run_paths, index_root, capture_dirs=()):
                           "errors": error_fields(run), "cases": cases})
     usage = provider_usage(provider_records)
     errors.extend(usage["errors"])
-    return {"quality_pass": False, "grading_status": "pending_root_judgment", "index": index_info,
+    return {"quality_pass": False, "grading_status": "pending_configured_judgment", "index": index_info,
             "source_coverage": "all attached reviews, supporting/warning groups, and answer citations, including later pages; retrieval telemetry IDs are excluded",
             "unique_evidence_ids": len(identities), "resolved_evidence_ids": len(originals), "resolution_errors": resolution_errors,
             "source_error_count": sum(len(case["source_errors"]) for run in summaries for case in run["cases"]),

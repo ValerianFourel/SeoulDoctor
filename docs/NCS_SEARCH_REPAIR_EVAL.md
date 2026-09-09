@@ -24,7 +24,7 @@ judge packets, including the source ownership and translation evidence. A
 successful HTTP response does not prove source accuracy or recommendation quality.
 
 Adaptive runs require `OPENROUTER_API_KEY` in the process environment and a
-root-reviewed fixed gate. The runner checks the model catalogue and price ceilings
+Codex-reviewed fixed gate. The runner checks the model catalogue and price ceilings
 before calling the pinned Qwen actor through Phala. It never gives the actor the
 private oracle. An unavailable pinned model fails the run; do not silently change
 models in a scored run.
@@ -37,7 +37,7 @@ backend/venv/bin/python scripts/search_repair_eval.py \
   --fixed-gate .audit/search-repair-fixed-FRESH_ID/reviewed-gate.json
 ```
 
-The reviewed gate requires `passed: true`, `reviewer: "root GPT-6"`, the exact
+The reviewed gate requires `passed: true`, `reviewer_backend: "codex_subagents"`, the exact
 `application_revision`, `manifest_sha256` from the fixed run record, and
 `evidence_paths` referencing reviewed artifacts. This is a reviewer attestation;
 the runner cannot establish that an external review happened.

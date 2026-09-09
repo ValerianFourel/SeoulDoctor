@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "suite_id": "ncs-search-repair-20260909-v1",
+  "schema_version": 2,
+  "suite_id": "ncs-search-repair-source-grounded-smoke-v2",
   "seed": "ncs-search-repair-20260909-v1",
   "status": "frozen_before_execution",
   "source_plan": "docs/NCS_SEARCH_FIX_PLAN_2026-09-09.md",
@@ -25,7 +25,7 @@
     "adaptive_projection": "Pass only patient to the actor. Inject stage index and sanitized actual conversation separately. Root keeps oracle private."
   },
   "grading": {
-    "judge": "root GPT-6",
+    "judge_backend": "codex_subagents",
     "scale": [
       1,
       2,
@@ -929,6 +929,432 @@
         "actual_degradation_disclosed_with_actionable_next_step": true,
         "no_guarantees_from_patient_reports": true,
         "no_mixed_specialty_list_for_ambiguous_foot_request": true
+      }
+    },
+    {
+      "id": "smoke-01-decisive-comment",
+      "mode": "source-grounded-adaptive-smoke-v1",
+      "patient": {
+        "persona": "An English-speaking visitor with persistent lip irritation who values a concrete explanation.",
+        "language": "English",
+        "instructions": "Speak naturally and reveal only the current planned fact. Never name a hidden target or copy hidden review wording."
+      },
+      "simulator": {
+        "stages": [
+          "Ask for dermatology within 2 km of Daeheung Station for cheilitis, using actual patient comments.",
+          "Ask which original comment specifically supports cheilitis care, detailed explanation, and fast treatment, and what remains unconfirmed."
+        ],
+        "turns": 2,
+        "stop_rule": "Send every planned stage once, then stop after the final app response.",
+        "mandatory_events": [
+          "turn:1",
+          "turn:2"
+        ]
+      },
+      "oracle": {
+        "hard_radius_km_after_explicit_request": 2,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true,
+        "scenario_kind": "targeted_retrieval_probe",
+        "final_location": "Daeheung Station",
+        "final_specialty": "dermatology",
+        "target": {
+          "place_id": "19521641",
+          "name": "이지함피부과의원",
+          "evidence": [
+            {
+              "evidence_id": "review:325180cb5153b903bfa2",
+              "exact_original": "유명한 이지함 피부과 전문의 진료 자세한 설명 빠른 진료 좋아요\n일주넘게 건조한 💋 로 고통받다 갔어요\n구순염 진단받고 하이로손 크림 처방받았어요\nBRTC필링제 사용후 생겼어요\n입술에 너무 자극이 되었나봐요\n나을때까지 입술에 바세린 외 다른거 바르지 말라고 하셨어요",
+              "text_sha256": "24f6cbb6927f6a4d58027c2b56b6d7375d5b4964304f586678ebb46d48f09365"
+            }
+          ]
+        },
+        "eligible_clinic_ids": [
+          "19521641"
+        ],
+        "acceptable_alternative_ids": [],
+        "disqualifiers": [
+          "wrong specialty",
+          "outside 2 km",
+          "missing decisive original"
+        ]
+      },
+      "source_snapshot": {
+        "index_version": "2026-09-02-v1",
+        "review_source_sha256": "0e8c6f4ff09b75becf7821ba08bf8b19b6533b824a26ca4e7c6451277dfbfafa"
+      }
+    },
+    {
+      "id": "smoke-02-english-consultation-uncertain",
+      "mode": "source-grounded-adaptive-smoke-v1",
+      "patient": {
+        "persona": "A concise visitor who needs to know whether a consultation can happen in English.",
+        "language": "English",
+        "instructions": "Speak naturally and reveal only the current planned fact. Never name a hidden target or copy hidden review wording."
+      },
+      "simulator": {
+        "stages": [
+          "Ask for orthopedics near Wangsimni Station for recurring mild ankle pain and request an English answer.",
+          "Ask whether the surfaced evidence actually establishes consultation in English, separate from English translations of Korean reviews.",
+          "Ask for a practical way to confirm language availability before booking."
+        ],
+        "turns": 3,
+        "stop_rule": "Send every planned stage once, then stop after the final app response.",
+        "mandatory_events": [
+          "turn:1",
+          "turn:2",
+          "turn:3"
+        ]
+      },
+      "oracle": {
+        "hard_radius_km_after_explicit_request": null,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true,
+        "scenario_kind": "open_ended_recommendation",
+        "final_location": "Wangsimni Station",
+        "final_specialty": "orthopedics",
+        "target": null,
+        "acceptable_alternative_ids": [],
+        "unsupported_claim": "English review text or an English app response does not establish an English consultation."
+      },
+      "source_snapshot": {
+        "index_version": "2026-09-02-v1",
+        "review_source_sha256": "0e8c6f4ff09b75becf7821ba08bf8b19b6533b824a26ca4e7c6451277dfbfafa"
+      }
+    },
+    {
+      "id": "smoke-03-staff-role-conflict",
+      "mode": "source-grounded-adaptive-smoke-v1",
+      "patient": {
+        "persona": "A Korean-speaking parent who wants kind pediatric care and pays attention to staff roles.",
+        "language": "Korean",
+        "instructions": "Speak naturally and reveal only the current planned fact. Never name a hidden target or copy hidden review wording."
+      },
+      "simulator": {
+        "stages": [
+          "이촌역 1km 이내 소아청소년과를 찾아 달라고 하고, 과잉 처방이 없고 설명이 명확한 실제 후기를 요청하세요.",
+          "아이에게 친절한 진료를 필수로 두고, 부정적인 후기가 의사인지 간호사인지 구분해 달라고 하세요.",
+          "의사와 간호사에 대한 상반된 경험을 숨기지 말고 선택에 어떻게 반영해야 하는지 물어보세요."
+        ],
+        "turns": 3,
+        "stop_rule": "Send every planned stage once, then stop after the final app response.",
+        "mandatory_events": [
+          "turn:1",
+          "turn:2",
+          "turn:3"
+        ]
+      },
+      "oracle": {
+        "hard_radius_km_after_explicit_request": 1,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true,
+        "scenario_kind": "targeted_retrieval_probe",
+        "final_location": "Ichon Station",
+        "final_specialty": "pediatrics",
+        "target": {
+          "place_id": "35475921",
+          "name": "우리동네소아청소년과의원",
+          "evidence": [
+            {
+              "evidence_id": "review:0fca6e1982b0a016e01c",
+              "exact_original": "간호사라 병원을 좀 고르는 편인데 간호사분들은 좀 무뚝뚝한 편이지만 유혜원 원장님 진료 깔끔하게 잘봐주시고 아이한테 친절하고 다정하게 해주셔서 늘 여기로 가요. 과하게 약처방하거나 하지도 않고 딱 적당하게 주시고 설명도 잘해주세요.\n간호사님들만 친절하면 정말 다 좋을듯...",
+              "text_sha256": "652cdbdef22d62792b6a1657636271683bde9041a3db18e09eaf9abf0b23b282"
+            }
+          ]
+        },
+        "eligible_clinic_ids": [
+          "35475921"
+        ],
+        "acceptable_alternative_ids": [],
+        "disqualifiers": [
+          "wrong staff-role attribution",
+          "omitted decisive mixed review"
+        ]
+      },
+      "source_snapshot": {
+        "index_version": "2026-09-02-v1",
+        "review_source_sha256": "0e8c6f4ff09b75becf7821ba08bf8b19b6533b824a26ca4e7c6451277dfbfafa"
+      }
+    },
+    {
+      "id": "smoke-04-wait-preference-withdrawal",
+      "mode": "source-grounded-adaptive-smoke-v1",
+      "patient": {
+        "persona": "An English-speaking parent who changes one preference while keeping the rest.",
+        "language": "English",
+        "instructions": "Speak naturally and reveal only the current planned fact. Never name a hidden target or copy hidden review wording."
+      },
+      "simulator": {
+        "stages": [
+          "Search across Seoul for pediatrics with actual comments supporting no overprescribing and clear explanations.",
+          "Move the search to within 1 km of Ichon Station and prefer comments saying there was no wait.",
+          "Explicitly say waiting is fine now. Keep Ichon, pediatrics, kind treatment of children, no overprescribing, and clear explanations.",
+          "Ask for a final evidence-grounded comparison that preserves mixed staff feedback."
+        ],
+        "turns": 4,
+        "stop_rule": "Send every planned stage once, then stop after the final app response.",
+        "mandatory_events": [
+          "turn:1",
+          "turn:2",
+          "turn:3",
+          "turn:4"
+        ],
+        "stage_message_checks": [
+          {},
+          {},
+          {
+            "required_all_any": [
+              ["waiting is fine", "wait is fine", "waiting is okay", "wait is okay", "don't mind waiting", "do not mind waiting"]
+            ]
+          },
+          {}
+        ]
+      },
+      "oracle": {
+        "hard_radius_km_after_explicit_request": 1,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true,
+        "scenario_kind": "targeted_retrieval_probe",
+        "final_location": "Ichon Station",
+        "final_specialty": "pediatrics",
+        "target": {
+          "place_id": "35475921",
+          "name": "우리동네소아청소년과의원",
+          "evidence": [
+            {
+              "evidence_id": "review:0fca6e1982b0a016e01c",
+              "exact_original": "간호사라 병원을 좀 고르는 편인데 간호사분들은 좀 무뚝뚝한 편이지만 유혜원 원장님 진료 깔끔하게 잘봐주시고 아이한테 친절하고 다정하게 해주셔서 늘 여기로 가요. 과하게 약처방하거나 하지도 않고 딱 적당하게 주시고 설명도 잘해주세요.\n간호사님들만 친절하면 정말 다 좋을듯...",
+              "text_sha256": "652cdbdef22d62792b6a1657636271683bde9041a3db18e09eaf9abf0b23b282"
+            }
+          ],
+          "contextual_evidence": [
+            {
+              "evidence_id": "review:4a6eb658e301a6dd56b4",
+              "exact_original": "대기 안하고 진료 받을 수 있어서 좋아요",
+              "text_sha256": "beb176cb93d907e99164c6ecf9249f816c0f8bd433dce518c8eaca569ccd3b3f"
+            }
+          ]
+        },
+        "eligible_clinic_ids": [
+          "35475921"
+        ],
+        "acceptable_alternative_ids": [],
+        "withdrawn_preferences": [
+          "short wait"
+        ]
+      },
+      "source_snapshot": {
+        "index_version": "2026-09-02-v1",
+        "review_source_sha256": "0e8c6f4ff09b75becf7821ba08bf8b19b6533b824a26ca4e7c6451277dfbfafa"
+      }
+    },
+    {
+      "id": "smoke-05-location-replacement",
+      "mode": "source-grounded-adaptive-smoke-v1",
+      "patient": {
+        "persona": "A bilingual visitor who corrects both the area and specialty.",
+        "language": "Mixed Korean and English",
+        "instructions": "Speak naturally and reveal only the current planned fact. Never name a hidden target or copy hidden review wording."
+      },
+      "simulator": {
+        "stages": [
+          "Start in English by asking for a dentist within 1 km of City Hall Station with parking.",
+          "In Korean, replace the request with dermatology within 2 km of Daeheung Station for cheilitis; remove parking and require actual comments supporting detailed explanations.",
+          "In English, ask for the decisive original review and confirm the old City Hall dentistry request is gone."
+        ],
+        "turns": 3,
+        "stop_rule": "Send every planned stage once, then stop after the final app response.",
+        "mandatory_events": [
+          "turn:1",
+          "turn:2",
+          "turn:3"
+        ],
+        "stage_message_checks": [
+          {},
+          {
+            "required_all_any": [
+              ["daeheung", "대흥"],
+              ["dermatology", "dermatologist", "피부과"],
+              ["parking", "주차"]
+            ]
+          },
+          {}
+        ]
+      },
+      "oracle": {
+        "hard_radius_km_after_explicit_request": 2,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true,
+        "scenario_kind": "targeted_retrieval_probe",
+        "final_location": "Daeheung Station",
+        "final_specialty": "dermatology",
+        "target": {
+          "place_id": "19521641",
+          "name": "이지함피부과의원",
+          "evidence": [
+            {
+              "evidence_id": "review:325180cb5153b903bfa2",
+              "exact_original": "유명한 이지함 피부과 전문의 진료 자세한 설명 빠른 진료 좋아요\n일주넘게 건조한 💋 로 고통받다 갔어요\n구순염 진단받고 하이로손 크림 처방받았어요\nBRTC필링제 사용후 생겼어요\n입술에 너무 자극이 되었나봐요\n나을때까지 입술에 바세린 외 다른거 바르지 말라고 하셨어요",
+              "text_sha256": "24f6cbb6927f6a4d58027c2b56b6d7375d5b4964304f586678ebb46d48f09365"
+            }
+          ]
+        },
+        "eligible_clinic_ids": [
+          "19521641"
+        ],
+        "acceptable_alternative_ids": [],
+        "superseded_constraints": [
+          "City Hall Station",
+          "dentistry",
+          "parking"
+        ]
+      },
+      "source_snapshot": {
+        "index_version": "2026-09-02-v1",
+        "review_source_sha256": "0e8c6f4ff09b75becf7821ba08bf8b19b6533b824a26ca4e7c6451277dfbfafa"
+      }
+    },
+    {
+      "id": "smoke-06-code-switch-direct-check",
+      "mode": "source-grounded-adaptive-smoke-v1",
+      "patient": {
+        "persona": "A bilingual patient who will contact clinics personally and does not request a particular doctor.",
+        "language": "Mixed Korean and English",
+        "instructions": "Speak naturally and reveal only the current planned fact. Never name a hidden target or copy hidden review wording."
+      },
+      "simulator": {
+        "stages": [
+          "명동 근처 정형외과를 찾아 달라고 하고 걸을 때 발목이 아프다고 말하세요.",
+          "Continue in English and say: I'll check directly with the clinic. Keep the same location and specialty.",
+          "Ask for relevant translated reviews with the original Korean available, without adding a doctor preference."
+        ],
+        "turns": 3,
+        "stop_rule": "Send every planned stage once, then stop after the final app response.",
+        "mandatory_events": [
+          "turn:1",
+          "turn:2",
+          "turn:3"
+        ],
+        "stage_message_checks": [
+          {},
+          {
+            "required_all_any": [
+              ["i'll check directly with the clinic", "i will check directly with the clinic"]
+            ]
+          },
+          {}
+        ]
+      },
+      "oracle": {
+        "hard_radius_km_after_explicit_request": null,
+        "resolved_specialty_mandatory": true,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true,
+        "scenario_kind": "open_ended_recommendation",
+        "final_location": "Myeongdong",
+        "final_specialty": "orthopedics",
+        "target": null,
+        "acceptable_alternative_ids": [],
+        "forbidden_state": [
+          "doctor preference created from direct-check wording"
+        ]
+      },
+      "source_snapshot": {
+        "index_version": "2026-09-02-v1",
+        "review_source_sha256": "0e8c6f4ff09b75becf7821ba08bf8b19b6533b824a26ca4e7c6451277dfbfafa"
+      }
+    },
+    {
+      "id": "smoke-07-unsupported-accessibility",
+      "mode": "source-grounded-adaptive-smoke-v1",
+      "patient": {
+        "persona": "A careful visitor for whom step-free access is mandatory.",
+        "language": "English",
+        "instructions": "Speak naturally and reveal only the current planned fact. Never name a hidden target or copy hidden review wording."
+      },
+      "simulator": {
+        "stages": [
+          "Ask for ENT clinics within 1 km of Jonggak Station for a routine nonurgent consultation, with step-free access mandatory.",
+          "Ask what visible evidence actually supports step-free access and accept honest uncertainty if it is not established.",
+          "Keep accessibility mandatory and ask for a practical confirmation step without claiming no clinic in Seoul has it."
+        ],
+        "turns": 3,
+        "stop_rule": "Send every planned stage once, then stop after the final app response.",
+        "mandatory_events": [
+          "turn:1",
+          "turn:2",
+          "turn:3"
+        ]
+      },
+      "oracle": {
+        "hard_radius_km_after_explicit_request": 1,
+        "resolved_specialty_mandatory": false,
+        "location_and_specialty_replacements_clear_stale_scope": true,
+        "original_review_ownership_required": true,
+        "relevant_reviews_required_when_source_supports": true,
+        "minimum_relevant_reviews_when_source_supports": 2,
+        "translation_first_when_available": true,
+        "translation_failures_preserve_originals_and_are_reported_separately": true,
+        "actual_degradation_disclosed_with_actionable_next_step": true,
+        "no_guarantees_from_patient_reports": true,
+        "no_mixed_specialty_list_for_ambiguous_foot_request": true,
+        "scenario_kind": "open_ended_insufficient_evidence",
+        "final_location": "Jonggak Station",
+        "final_specialty": null,
+        "target": null,
+        "acceptable_alternative_ids": [],
+        "unsupported_claim": "Missing review evidence does not prove step-free access is absent. The app should clarify or give a verification plan."
+      },
+      "source_snapshot": {
+        "index_version": "2026-09-02-v1",
+        "review_source_sha256": "0e8c6f4ff09b75becf7821ba08bf8b19b6533b824a26ca4e7c6451277dfbfafa"
       }
     }
   ]

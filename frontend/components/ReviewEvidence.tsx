@@ -46,7 +46,9 @@ function isDisplayableOriginal(review: ReviewEvidenceRecord, facilityId: string)
     && review.place_id === facilityId
     && typeof review.evidence_id === "string" && review.evidence_id.length > 0
     && review.source_type === "verbatim_review" && review.is_verbatim === true
-    && (review.presentation?.status === "translated" || review.presentation?.status === "original")
+    && (review.presentation?.status === "translated"
+      || review.presentation?.status === "original"
+      || review.presentation?.status === "unavailable")
     && typeof review.text === "string" && review.text.trim().length > 0;
 }
 

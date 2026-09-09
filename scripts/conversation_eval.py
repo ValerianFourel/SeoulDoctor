@@ -8,6 +8,7 @@ import json
 import math
 import os
 from pathlib import Path
+import sys
 import time
 from typing import Any, Mapping
 
@@ -29,6 +30,10 @@ def digest(value: Any) -> str:
     return sha256(canonical_bytes(value)).hexdigest()
 
 
+def runner_manifest_digest(value: Any) -> str:
+    return sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -47,6 +52,165 @@ def load_object(path: Path) -> dict[str, Any]:
     return value
 
 
+def file_sha256(path: Path) -> str:
+    value = sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
+
+def validate_bound_proof(proof: Mapping[str, Any], proof_type: str,
+                         run: Mapping[str, Any], run_path: Path) -> dict[str, Any]:
+    unsigned = {key: value for key, value in proof.items() if key != "proof_sha256"}
+    if proof.get("schema_version") != 1 or proof.get("proof_type") != proof_type:
+        raise ValueError(f"invalid {proof_type} proof schema")
+    if proof.get("proof_sha256") != digest(unsigned):
+        raise ValueError(f"{proof_type} proof hash is invalid")
+    if (proof.get("application_revision") != run.get("application_revision")
+            or proof.get("run_sha256") != digest(run)):
+        raise ValueError(f"{proof_type} proof does not match the source run")
+    artifact = Path(str(proof.get("artifact_path", "")))
+    if not artifact.is_absolute():
+        artifact = run_path.parent / artifact
+    if not artifact.is_file() or proof.get("artifact_sha256") != file_sha256(artifact):
+        raise ValueError(f"{proof_type} proof artifact is missing or changed")
+    checks = proof.get("checks")
+    if not isinstance(checks, list) or not checks or not all(
+            isinstance(item, Mapping) and isinstance(item.get("name"), str)
+            and isinstance(item.get("passed"), bool) for item in checks):
+        raise ValueError(f"{proof_type} proof checks are invalid")
+    derived = "passed" if all(item["passed"] for item in checks) else "failed"
+    if proof.get("status") != derived:
+        raise ValueError(f"{proof_type} proof status contradicts its checks")
+    return dict(proof)
+
+
+def scenario_proof(proof: Mapping[str, Any] | None, scenario_id: str) -> dict[str, Any]:
+    if proof is None:
+        return {"status": "unverified"}
+    scenarios = proof.get("scenarios")
+    if not isinstance(scenarios, list):
+        return dict(proof)
+    match = next((item for item in scenarios if isinstance(item, Mapping)
+                  and item.get("scenario_id") == scenario_id), None)
+    return {
+        "status": ("passed" if proof.get("status") == "passed"
+                   and match is not None and match.get("status") == "passed" else "failed"),
+        "proof_type": proof.get("proof_type"), "proof_sha256": proof.get("proof_sha256"),
+        "artifact_sha256": proof.get("artifact_sha256"), "scenario": match,
+    }
+
+
+def make_source_proof(run_path: Path, report_path: Path, output_path: Path,
+                      index_root: Path | None = None) -> dict[str, Any]:
+    run, report = load_object(run_path), load_object(report_path)
+    manifest = load_object(run_path.parent / "manifest.json")
+    selected = validate_scenarios(manifest, list(run.get("selected_scenario_ids", [])))
+    matching_runs = [item for item in report.get("runs", []) if isinstance(item, Mapping)
+                     and item.get("application_revision") == run.get("application_revision")
+                     and item.get("manifest_sha256") == run.get("manifest_sha256")]
+    checks = [
+        {"name": "source index opened", "passed": report.get("index", {}).get("status") == "opened"},
+        {"name": "run revision and manifest audited", "passed": len(matching_runs) == 1},
+        {"name": "all surfaced evidence IDs resolved", "passed": (
+            report.get("unique_evidence_ids") == report.get("resolved_evidence_ids")
+            and report.get("source_error_count") == 0)},
+        {"name": "no report preparation errors", "passed": not report.get("errors")},
+    ]
+    scenario_source_checks = []
+    if index_root is None:
+        checks.append({"name": "frozen oracle records resolved", "passed": False})
+    else:
+        sys.path.insert(0, str(ROOT / "backend"))
+        import pandas as pd
+        from search.indexes.repository import IndexRepository
+        from search.rules import RulesCompiler
+        from search.scope import ScopeBuilder
+        with IndexRepository(index_root).open_active() as index:
+            rules = RulesCompiler().compile(
+                original_query="Conversation harness frozen-oracle audit", turn_id="oracle-audit",
+                proposal={"location": "Seoul", "is_citywide_search": True}).rules
+            scope = ScopeBuilder().build(pd.DataFrame({"place_id": index.facility_ids}), rules,
+                                         index_version=index.version)
+            with index.within(scope) as scoped:
+                for scenario in selected:
+                    source = scenario["source_snapshot"]
+                    target = scenario["oracle"].get("target")
+                    expected = (list(target.get("evidence", [])) + list(target.get("contextual_evidence", []))) if isinstance(target, Mapping) else []
+                    resolved = {item.evidence_id: item for item in scoped.resolve_evidence_ids(
+                        [item["evidence_id"] for item in expected])}
+                    item_checks = [
+                        {"name": "index version matches", "passed": index.version == source["index_version"]},
+                        {"name": "review source matches", "passed": scoped.review_source_sha256 == source["review_source_sha256"]},
+                    ]
+                    for expected_record in expected:
+                        actual = resolved.get(expected_record["evidence_id"])
+                        item_checks.append({
+                            "name": "frozen evidence " + expected_record["evidence_id"],
+                            "passed": bool(actual and actual.facility_id == target["place_id"]
+                                           and actual.original_text == expected_record["exact_original"]
+                                           and actual.is_verbatim and actual.source_type == "verbatim_review"),
+                        })
+                    scenario_source_checks.append({"scenario_id": scenario["id"], "checks": item_checks,
+                                                   "status": "passed" if all(item["passed"] for item in item_checks) else "failed"})
+        checks.append({"name": "frozen oracle records resolved", "passed": all(
+            item["status"] == "passed" for item in scenario_source_checks)})
+    proof = {
+        "schema_version": 1, "proof_type": "source_audit",
+        "application_revision": run.get("application_revision"), "run_sha256": digest(run),
+        "artifact_path": str(report_path.resolve()), "artifact_sha256": file_sha256(report_path),
+        "status": "passed" if all(item["passed"] for item in checks) else "failed",
+        "checks": checks, "unique_evidence_ids": report.get("unique_evidence_ids"),
+        "resolved_evidence_ids": report.get("resolved_evidence_ids"),
+        "review_source_sha256": report.get("index", {}).get("review_source_sha256"),
+        "scenarios": scenario_source_checks,
+    }
+    proof["proof_sha256"] = digest(proof)
+    write_json(output_path, proof)
+    return proof
+
+
+def make_ui_proof(run_path: Path, observation_path: Path, output_path: Path) -> dict[str, Any]:
+    run, observation = load_object(run_path), load_object(observation_path)
+    checks = observation.get("checks")
+    scenarios = observation.get("scenarios")
+    scenario_ids = run.get("selected_scenario_ids")
+    if (observation.get("schema_version") != 1 or observation.get("mode") != "live_deployed_ui"
+            or observation.get("application_revision") != run.get("application_revision")
+            or observation.get("run_file_sha256") != file_sha256(run_path)
+            or observation.get("scenario_ids") != scenario_ids
+            or not isinstance(scenarios, list)
+            or [item.get("scenario_id") for item in scenarios if isinstance(item, Mapping)] != scenario_ids
+            or not isinstance(checks, list) or not checks
+            or not all(isinstance(item, Mapping) and isinstance(item.get("name"), str)
+                       and isinstance(item.get("passed"), bool) for item in checks)):
+        raise ValueError("live UI observation does not match the run")
+    for scenario in scenarios:
+        responses = scenario.get("response_raws")
+        scenario_checks = scenario.get("checks")
+        if (not isinstance(responses, list) or not all(isinstance(item, str) for item in responses)
+                or scenario.get("response_sha256") != sha256("".join(responses).encode()).hexdigest()
+                or not isinstance(scenario_checks, list) or not scenario_checks
+                or not all(isinstance(item, Mapping) and isinstance(item.get("name"), str)
+                           and isinstance(item.get("passed"), bool) for item in scenario_checks)
+                or scenario.get("status") != ("passed" if all(item["passed"] for item in scenario_checks) else "failed")):
+            raise ValueError("live UI scenario observation is invalid")
+    proof = {
+        "schema_version": 1, "proof_type": "live_ui",
+        "application_revision": run.get("application_revision"), "run_sha256": digest(run),
+        "artifact_path": str(observation_path.resolve()), "artifact_sha256": file_sha256(observation_path),
+        "target_url": observation.get("target_url"),
+        "status": "passed" if checks and all(item.get("passed") is True for item in checks) else "failed",
+        "checks": checks,
+        "scenarios": [{key: item.get(key) for key in ("scenario_id", "status", "checks", "response_sha256")}
+                      for item in scenarios],
+    }
+    proof["proof_sha256"] = digest(proof)
+    write_json(output_path, proof)
+    return proof
+
+
 def validate_config(config: Mapping[str, Any]) -> None:
     if config.get("schema_version") != 1:
         raise ValueError("unsupported conversation evaluation config")
@@ -61,9 +225,17 @@ def validate_config(config: Mapping[str, Any]) -> None:
     for key in ("max_judge_calls", "request_timeout_seconds", "transient_retries"):
         if isinstance(limits.get(key), bool) or not isinstance(limits.get(key), int) or limits[key] < 0:
             raise ValueError(f"invalid limit: {key}")
-    cost = limits.get("max_judge_cost_usd")
-    if isinstance(cost, bool) or not isinstance(cost, (int, float)) or not math.isfinite(cost) or cost <= 0:
-        raise ValueError("max_judge_cost_usd must be positive and finite")
+    for key in ("max_judge_cost_usd", "max_judge_cost_per_call_usd"):
+        cost = limits.get(key)
+        if isinstance(cost, bool) or not isinstance(cost, (int, float)) or not math.isfinite(cost) or cost <= 0:
+            raise ValueError(f"{key} must be positive and finite")
+    judge = config.get("judge")
+    if not isinstance(judge, Mapping):
+        raise ValueError("judge configuration is required")
+    for key in ("max_prompt_price_per_token", "max_completion_price_per_token"):
+        price = judge.get(key)
+        if isinstance(price, bool) or not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
+            raise ValueError(f"invalid judge price ceiling: {key}")
     dimensions = config.get("rubric", {}).get("dimensions")
     if not isinstance(dimensions, list) or len(dimensions) != 7 or len(set(dimensions)) != 7:
         raise ValueError("the rubric must define seven unique dimensions")
@@ -80,14 +252,36 @@ def validate_scenarios(manifest: Mapping[str, Any], selected_ids: list[str]) -> 
     selected = []
     for scenario_id in selected_ids:
         scenario = by_id[scenario_id]
-        patient, oracle = scenario.get("patient"), scenario.get("oracle")
-        if not isinstance(patient, dict) or not isinstance(oracle, dict):
+        patient, simulator, oracle = scenario.get("patient"), scenario.get("simulator"), scenario.get("oracle")
+        if not isinstance(patient, dict) or not isinstance(simulator, dict) or not isinstance(oracle, dict):
             raise ValueError(f"{scenario_id} must separate patient and private oracle")
-        required = {"persona", "language", "stages", "turns", "instructions"}
+        required = {"persona", "language", "instructions"}
         if not required.issubset(patient):
-            raise ValueError(f"{scenario_id} has an incomplete simulator brief")
-        if not isinstance(patient["stages"], list) or len(patient["stages"]) != patient["turns"]:
+            raise ValueError(f"{scenario_id} has an incomplete public persona")
+        if (not isinstance(simulator.get("stages"), list)
+                or len(simulator["stages"]) != simulator.get("turns")):
             raise ValueError(f"{scenario_id} stages do not match its turn limit")
+        source = scenario.get("source_snapshot")
+        if (not isinstance(source, Mapping) or not source.get("index_version")
+                or not isinstance(source.get("review_source_sha256"), str)
+                or len(source["review_source_sha256"]) != 64):
+            raise ValueError(f"{scenario_id} lacks a pinned source snapshot")
+        kind = oracle.get("scenario_kind")
+        if kind not in {"targeted_retrieval_probe", "open_ended_recommendation", "open_ended_insufficient_evidence"}:
+            raise ValueError(f"{scenario_id} lacks a recognized scenario kind")
+        target = oracle.get("target")
+        if kind == "targeted_retrieval_probe":
+            if not isinstance(target, Mapping) or not target.get("place_id"):
+                raise ValueError(f"{scenario_id} lacks a targeted clinic")
+            evidence = list(target.get("evidence", [])) + list(target.get("contextual_evidence", []))
+            if not evidence:
+                raise ValueError(f"{scenario_id} lacks target evidence")
+            for record in evidence:
+                text = record.get("exact_original") if isinstance(record, Mapping) else None
+                if (not isinstance(record, Mapping) or not record.get("evidence_id")
+                        or not isinstance(text, str) or not text.strip()
+                        or record.get("text_sha256") != sha256(text.encode()).hexdigest()):
+                    raise ValueError(f"{scenario_id} has invalid target evidence")
         selected.append(scenario)
     return selected
 
@@ -100,8 +294,8 @@ def dry_run(config: Mapping[str, Any], manifest: Mapping[str, Any]) -> dict[str,
         "network_requests_made": 0,
         "judge_backend": config["judge_backend"],
         "scenario_count": len(selected),
-        "estimated_app_calls": sum(item["patient"]["turns"] for item in selected),
-        "estimated_simulator_calls": sum(item["patient"]["turns"] for item in selected),
+        "estimated_app_calls": sum(item["simulator"]["turns"] for item in selected),
+        "estimated_simulator_calls": sum(item["simulator"]["turns"] for item in selected),
         "estimated_judge_calls": len(selected),
         "scenario_ids": [item["id"] for item in selected],
         "manifest_sha256": digest(manifest),
@@ -121,8 +315,8 @@ def response_body(turn: Mapping[str, Any]) -> Mapping[str, Any]:
     return {}
 
 
-def visible_case(case: Mapping[str, Any]) -> tuple[list[dict[str, Any]], set[str]]:
-    turns, citations = [], set()
+def visible_case(case: Mapping[str, Any]) -> tuple[list[dict[str, Any]], set[str], list[str]]:
+    turns, citations, structural_failures = [], set(), []
     for offset, turn in enumerate(case.get("turns", []), 1):
         body = response_body(turn)
         turn_id = f"turn:{offset}"
@@ -142,15 +336,26 @@ def visible_case(case: Mapping[str, Any]) -> tuple[list[dict[str, Any]], set[str
                 if presentation.get("status") in {"hidden", "unavailable"}:
                     continue
                 evidence_id = review.get("evidence_id")
-                if isinstance(evidence_id, str) and evidence_id:
+                valid_original = (
+                    isinstance(facility_id, str) and bool(facility_id)
+                    and review.get("place_id") == facility_id
+                    and isinstance(evidence_id, str) and bool(evidence_id)
+                    and review.get("source_type") == "verbatim_review"
+                    and review.get("is_verbatim") is True
+                    and isinstance(review.get("text"), str) and bool(review["text"].strip())
+                )
+                if valid_original:
                     citations.add("evidence:" + evidence_id)
+                else:
+                    structural_failures.append(f"turn_{offset}_invalid_visible_original")
                 reviews.append({
                     "evidence_id": evidence_id,
                     "place_id": review.get("place_id"),
                     "original": review.get("text"),
                     "translation": presentation.get("text"),
                     "translation_status": presentation.get("status"),
-                    "original_available_by_reveal": bool(review.get("text")),
+                    "original_available_by_reveal": valid_original,
+                    "api_evidence_contract_valid": valid_original,
                 })
             cards.append({
                 key: card.get(key)
@@ -165,13 +370,31 @@ def visible_case(case: Mapping[str, Any]) -> tuple[list[dict[str, Any]], set[str
             "objective_failures": list(assessment.get("failures", [])),
             "retrieval_status": turn.get("measurements", {}).get("retrieval_execution_status")
             if isinstance(turn.get("measurements"), Mapping) else None,
+            "application_latency_seconds": turn.get("app", {}).get("duration_seconds")
+            if isinstance(turn.get("app"), Mapping) else None,
         })
-    return turns, citations
+    return turns, citations, list(dict.fromkeys(structural_failures))
 
 
 def build_packet(case: Mapping[str, Any], run: Mapping[str, Any], config: Mapping[str, Any],
-                 scenario: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    turns, citations = visible_case(case)
+                 scenario: Mapping[str, Any] | None = None,
+                 *, source_proof: Mapping[str, Any] | None = None,
+                 ui_proof: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    supplied_scenario = scenario is not None
+    scenario = scenario or {"patient": case.get("patient"), "simulator": case.get("simulator"),
+                            "oracle": case.get("oracle"), "source_snapshot": case.get("source_snapshot")}
+    turns, citations, structural_failures = visible_case(case)
+    if supplied_scenario and case.get("oracle") != scenario.get("oracle"):
+        raise ValueError("run oracle does not match the frozen scenario")
+    expected_evidence = []
+    target = scenario.get("oracle", {}).get("target")
+    if isinstance(target, Mapping):
+        expected_evidence = [item["evidence_id"] for item in target.get("evidence", [])]
+    visible_evidence = {token.removeprefix("evidence:") for token in citations if token.startswith("evidence:")}
+    missing_expected = sorted(set(expected_evidence) - visible_evidence)
+    objective_failures = [failure for turn in turns for failure in turn["objective_failures"]]
+    objective_failures.extend(structural_failures)
+    objective_failures.extend("expected_evidence_not_visible:" + item for item in missing_expected)
     packet = {
         "schema_version": 1,
         "packet_id": f"{digest({'run': run.get('started_at'), 'case': case.get('id')})[:20]}",
@@ -180,15 +403,33 @@ def build_packet(case: Mapping[str, Any], run: Mapping[str, Any], config: Mappin
         "run_manifest_sha256": run.get("manifest_sha256"),
         "run_status": run.get("status"),
         "case_status": case.get("status"),
-        "patient_brief": (scenario or {}).get("patient", case.get("patient")),
-        "private_oracle": case.get("oracle", (scenario or {}).get("oracle")),
+        "patient_brief": scenario.get("patient"),
+        "simulator_behavior": scenario.get("simulator"),
+        "simulator_execution": case.get("simulator_adherence", {"status": "unknown", "failures": []}),
+        "private_oracle": scenario.get("oracle"),
+        "source_snapshot": scenario.get("source_snapshot"),
         "user_visible_conversation": turns,
-        "objective_failure_count": sum(len(turn["objective_failures"]) for turn in turns),
+        "objective_failures": objective_failures,
+        "objective_failure_count": len(objective_failures),
+        "evidence_stages": {
+            "expected_ids": expected_evidence,
+            "returned_and_visible_ids": sorted(visible_evidence),
+            "missing_expected_ids": missing_expected,
+            "source_audit": source_proof or {"status": "unverified"},
+            "live_ui": ui_proof or {"status": "unverified"},
+        },
         "citation_catalog": sorted(citations),
         "rubric": config["rubric"],
     }
     packet["packet_sha256"] = digest(packet)
     return packet
+
+
+def validate_packet(packet: Mapping[str, Any]) -> None:
+    stored = packet.get("packet_sha256")
+    unsigned = {key: value for key, value in packet.items() if key != "packet_sha256"}
+    if not isinstance(stored, str) or stored != digest(unsigned):
+        raise ValueError("judge packet hash is invalid")
 
 
 def judgment_schema(dimensions: list[str]) -> dict[str, Any]:
@@ -255,6 +496,7 @@ A polished generic answer is not successful when it ignores the patient's concer
 
 
 def validate_judgment(value: Mapping[str, Any], packet: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
+    validate_packet(packet)
     for key in ("scenario_id", "packet_id", "packet_sha256"):
         if value.get(key) != packet.get(key):
             raise ValueError(f"judgment {key} does not match packet")
@@ -295,12 +537,18 @@ def validate_judgment(value: Mapping[str, Any], packet: Mapping[str, Any], confi
         if not isinstance(failure, Mapping) or not isinstance(failure.get("code"), str) or not isinstance(failure.get("explanation"), str):
             raise ValueError("invalid critical failure")
         check_citations(failure.get("citations"), required=True)
+        if failure["code"] not in set(config["rubric"]["critical_failures"]):
+            raise ValueError("unknown critical failure code: " + failure["code"])
     adherence = value.get("simulator_adherence")
     if not isinstance(adherence, Mapping) or adherence.get("status") not in {"valid", "invalid", "uncertain"}:
         raise ValueError("invalid simulator adherence result")
     check_citations(adherence.get("citations"), required=False)
     if value.get("proposed_verdict") not in {"pass", "fail", "invalid"}:
         raise ValueError("invalid proposed verdict")
+    evidence_rating = ratings["original_comment_relevance_and_attribution"]
+    if evidence_rating["score"] is not None and packet["evidence_stages"]["returned_and_visible_ids"]:
+        if not any(item.startswith("evidence:") for item in evidence_rating["citations"]):
+            raise ValueError("the original-comment score requires an evidence citation")
     return dict(value)
 
 
@@ -311,12 +559,20 @@ def computed_result(packet: Mapping[str, Any], judgment: Mapping[str, Any], conf
     gates = {
         "conversation_complete": packet["case_status"] == "complete",
         "objective_checks": packet["objective_failure_count"] == 0,
-        "simulator_adherence": judgment["simulator_adherence"]["status"] == "valid",
+        "source_evidence_verified": packet["evidence_stages"]["source_audit"].get("status") == "passed",
+        "live_ui_verified": packet["evidence_stages"]["live_ui"].get("status") == "passed",
+        "simulator_adherence": (packet["simulator_execution"].get("status") == "valid"
+                                and judgment["simulator_adherence"]["status"] == "valid"),
         "no_critical_failures": not judgment["critical_failures"],
         "all_required_dimensions_scored": null_count == 0,
         "minimum_dimension": bool(scores) and min(scores) >= minimum,
+        "judge_proposed_pass": judgment["proposed_verdict"] == "pass",
     }
     passed = all(gates.values())
+    first_failure_stage = next((name for name in (
+        "conversation_complete", "objective_checks", "source_evidence_verified",
+        "live_ui_verified", "simulator_adherence", "no_critical_failures",
+        "all_required_dimensions_scored", "minimum_dimension", "judge_proposed_pass") if not gates[name]), None)
     return {
         "status": "passed" if passed else "failed",
         "passed": passed,
@@ -326,6 +582,7 @@ def computed_result(packet: Mapping[str, Any], judgment: Mapping[str, Any], conf
         "mean_score": round(sum(scores) / len(scores), 3) if scores else None,
         "null_score_count": null_count,
         "judge_verdict_conflict": judgment["proposed_verdict"] == "pass" and not passed,
+        "first_confirmed_failure_stage": first_failure_stage,
     }
 
 
@@ -345,7 +602,14 @@ def openrouter_preflight(config: Mapping[str, Any], key: str, session: Any = req
     supported = endpoint.get("supported_parameters", [])
     if supported and "response_format" not in supported:
         raise RuntimeError("configured judge endpoint does not advertise structured outputs")
+    prompt_price = float(endpoint.get("pricing", {}).get("prompt", "nan"))
+    completion_price = float(endpoint.get("pricing", {}).get("completion", "nan"))
+    if (not math.isfinite(prompt_price) or not math.isfinite(completion_price)
+            or prompt_price > judge["max_prompt_price_per_token"]
+            or completion_price > judge["max_completion_price_per_token"]):
+        raise RuntimeError("configured judge endpoint exceeds the price ceiling")
     return {"status": "passed", "model": judge["model"], "provider": judge["provider"],
+            "prompt_price_per_token": prompt_price, "completion_price_per_token": completion_price,
             "structured_outputs_advertised": "response_format" in supported if supported else None}
 
 
@@ -354,7 +618,9 @@ def request_openrouter_judgment(packet: Mapping[str, Any], config: Mapping[str, 
     judge, limits = config["judge"], config["limits"]
     payload = {
         "model": judge["model"],
-        "provider": {"only": [judge["provider"]], "allow_fallbacks": False, "require_parameters": True},
+        "provider": {"only": [judge["provider"]], "allow_fallbacks": False, "require_parameters": True,
+                     "max_price": {"prompt": judge["max_prompt_price_per_token"] * 1_000_000,
+                                   "completion": judge["max_completion_price_per_token"] * 1_000_000}},
         "messages": judge_messages(packet),
         "temperature": judge["temperature"], "max_tokens": judge["max_tokens"],
         "reasoning": {"effort": "low"},
@@ -409,9 +675,17 @@ def write_report_artifacts(output_dir: Path, report: Mapping[str, Any]) -> None:
              f"OpenRouter judge cost: USD {report['openrouter_cost_usd']:.6f}.", ""]
     for item in report["results"]:
         lines.extend([f"## {item['scenario_id']}", "", f"Status: {item['status']}. Passed: {item['passed']}.", ""])
+        if item.get("persona"):
+            lines.extend([f"Persona: {item['persona']}", ""])
+        if item.get("target"):
+            lines.extend(["Target: `" + json.dumps(item["target"], ensure_ascii=False) + "`.", ""])
+        lines.extend([f"Frozen transcript and evidence packet: `{item.get('packet')}`.", ""])
         computed = item.get("computed") or item.get("codex_computed")
         if computed:
-            lines.extend(["Scores: `" + json.dumps(computed["scores"], ensure_ascii=False) + "`.", ""])
+            lines.extend(["Scores: `" + json.dumps(computed["scores"], ensure_ascii=False) + "`.", "",
+                          f"First confirmed failure stage: `{computed.get('first_confirmed_failure_stage')}`.", ""])
+        if item.get("evidence_stages"):
+            lines.extend(["Evidence stages: `" + json.dumps(item["evidence_stages"], ensure_ascii=False) + "`.", ""])
     path = output_dir / "REPORT.md"
     temporary = path.with_suffix(".md.tmp")
     temporary.write_text("\n".join(lines), encoding="utf-8")
@@ -428,6 +702,8 @@ def judge_run(run_path: Path, output_dir: Path, config: Mapping[str, Any], backe
     manifest_path = run_path.parent / "manifest.json"
     manifest = load_object(manifest_path)
     validate_config(config)
+    if run.get("manifest_sha256") != runner_manifest_digest(manifest):
+        raise ValueError("run is not bound to its frozen manifest")
     selected = validate_scenarios(manifest, list(config["smoke_scenario_ids"]))
     selected_by_id = {item["id"]: item for item in selected}
     selected_ids = set(selected_by_id)
@@ -442,18 +718,44 @@ def judge_run(run_path: Path, output_dir: Path, config: Mapping[str, Any], backe
         preflight = openrouter_preflight(config, key, session=session)
         write_json(output_dir / "openrouter-preflight.json", preflight)
         raw_dir.mkdir(mode=0o700)
-    cases = [case for case in run.get("cases", []) if case.get("id") in selected_ids]
+    all_cases = run.get("cases")
+    if not isinstance(all_cases, list):
+        raise ValueError("run cases must be an array")
+    case_ids = [case.get("id") for case in all_cases if isinstance(case, Mapping)]
+    if len(case_ids) != len(set(case_ids)):
+        raise ValueError("run contains duplicate case IDs")
+    if set(run.get("selected_scenario_ids", [])) != selected_ids:
+        raise ValueError("run does not contain the frozen seven-scenario selection")
+    cases = [case for case in all_cases if case.get("id") in selected_ids]
     by_id = {case.get("id"): case for case in cases}
+    source_proof_path = run_path.parent / "source-proof.json"
+    ui_proof_path = run_path.parent / "ui-proof.json"
+    source_proof = (validate_bound_proof(load_object(source_proof_path), "source_audit", run, run_path)
+                    if source_proof_path.is_file() else None)
+    ui_proof = (validate_bound_proof(load_object(ui_proof_path), "live_ui", run, run_path)
+                if ui_proof_path.is_file() else None)
+    completed_count = sum(case.get("status") == "complete" for case in cases)
+    if backend in {"openrouter", "both"} and completed_count > config["limits"]["max_judge_calls"]:
+        raise RuntimeError("judge call count would exceed its configured cap")
     for scenario_id in config["smoke_scenario_ids"]:
         case = by_id.get(scenario_id)
         if not case:
             results.append({"scenario_id": scenario_id, "status": "not_run", "passed": False})
             continue
-        packet = build_packet(case, run, config, selected_by_id[scenario_id])
+        packet = build_packet(case, run, config, selected_by_id[scenario_id],
+                              source_proof=scenario_proof(source_proof, scenario_id),
+                              ui_proof=scenario_proof(ui_proof, scenario_id))
         packet_path = packets_dir / f"{scenario_id}.json"
         write_json(packet_path, packet)
         item = {"scenario_id": scenario_id, "packet": str(packet_path),
-                "packet_sha256": packet["packet_sha256"], "passed": False}
+                "packet_sha256": packet["packet_sha256"], "passed": False,
+                "persona": packet.get("patient_brief", {}).get("persona"),
+                "target": packet.get("private_oracle", {}).get("target"),
+                "evidence_stages": packet["evidence_stages"],
+                "application_latency_seconds": sum(
+                    value for value in (turn.get("application_latency_seconds") for turn in packet["user_visible_conversation"])
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)),
+                }
         if case.get("status") != "complete":
             item.update(status="incomplete", case_status=case.get("status"))
             results.append(item)
@@ -462,20 +764,34 @@ def judge_run(run_path: Path, output_dir: Path, config: Mapping[str, Any], backe
             item["codex_status"] = "pending_external_import"
             item["status"] = "pending"
         if backend in {"openrouter", "both"}:
-            judgment, attempts = request_openrouter_judgment(packet, config, key, session=session)
-            write_json(raw_dir / f"{scenario_id}.json", {"attempts": attempts})
-            usage = attempts[-1]["body"].get("usage", {})
-            cost = usage.get("cost")
-            if isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost) and cost >= 0:
+            reservation = config["limits"]["max_judge_cost_per_call_usd"]
+            if total_cost + reservation > config["limits"]["max_judge_cost_usd"]:
+                item.update(status="judge_budget_exhausted", judge_error="cost reservation exceeds cap")
+                results.append(item)
+                continue
+            try:
+                judgment, attempts = request_openrouter_judgment(packet, config, key, session=session)
+                write_json(raw_dir / f"{scenario_id}.json", {"attempts": attempts})
+                costs = []
+                for attempt in attempts:
+                    cost = attempt["body"].get("usage", {}).get("cost")
+                    if isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost) and cost >= 0:
+                        costs.append(cost)
+                if len(costs) != len(attempts):
+                    raise RuntimeError("OpenRouter omitted judge cost; verdict remains blocked")
+                cost = sum(costs)
+                if cost > reservation or total_cost + cost > config["limits"]["max_judge_cost_usd"]:
+                    raise RuntimeError("OpenRouter judge cost exceeded its reserved cap")
                 total_cost += cost
-            else:
-                cost = None
-            judgment_path = output_dir / f"openrouter-{scenario_id}.json"
-            write_json(judgment_path, judgment)
-            computed = computed_result(packet, judgment, config)
-            item.update(status=computed["status"], passed=computed["passed"],
-                        openrouter_judgment=str(judgment_path), openrouter_cost_usd=cost,
-                        computed=computed)
+                judgment_path = output_dir / f"openrouter-{scenario_id}.json"
+                write_json(judgment_path, judgment)
+                computed = computed_result(packet, judgment, config)
+                item.update(status=computed["status"], passed=computed["passed"],
+                            openrouter_judgment=str(judgment_path), openrouter_cost_usd=cost,
+                            computed=computed)
+            except Exception as error:
+                item.update(status="judge_error", judge_error={"type": type(error).__name__,
+                                                                 "message": str(error)[:500]})
         results.append(item)
     if total_cost > config["limits"]["max_judge_cost_usd"]:
         raise RuntimeError("judge cost exceeded its configured cap")
@@ -499,6 +815,12 @@ def judge_run(run_path: Path, output_dir: Path, config: Mapping[str, Any], backe
 def import_codex_judgments(output_dir: Path, judgments_path: Path,
                            config: Mapping[str, Any]) -> dict[str, Any]:
     report = load_object(output_dir / "report.json")
+    if report.get("config_sha256") != digest(config):
+        raise ValueError("judging report uses a different configuration")
+    run_path = Path(report.get("run", ""))
+    run = load_object(run_path)
+    if report.get("run_sha256") != digest(run):
+        raise ValueError("judging report no longer matches the source run")
     bundle = load_object(judgments_path)
     if bundle.get("judge_backend") != "codex_subagents":
         raise ValueError("Codex judgment bundle has the wrong backend")
@@ -518,6 +840,12 @@ def import_codex_judgments(output_dir: Path, judgments_path: Path,
         if judgment is None:
             raise ValueError("missing Codex judgment: " + scenario_id)
         packet = load_object(Path(item["packet"]))
+        validate_packet(packet)
+        if (packet.get("packet_sha256") != item.get("packet_sha256")
+                or packet.get("scenario_id") != scenario_id
+                or packet.get("application_revision") != report.get("application_revision")
+                or packet.get("run_manifest_sha256") != run.get("manifest_sha256")):
+            raise ValueError("judge packet is not bound to the source run")
         validated = validate_judgment(judgment, packet, config)
         destination = output_dir / f"codex-{scenario_id}.json"
         write_json(destination, validated)
@@ -528,6 +856,13 @@ def import_codex_judgments(output_dir: Path, judgments_path: Path,
             item.update(status=computed["status"], passed=computed["passed"])
         elif report["judge_backend"] == "both":
             item["judge_disagreement"] = item.get("passed") != computed["passed"]
+            if item.get("computed"):
+                item["judge_score_disagreements"] = {
+                    name: {"openrouter": item["computed"]["scores"].get(name),
+                           "codex": computed["scores"].get(name)}
+                    for name in config["rubric"]["dimensions"]
+                    if item["computed"]["scores"].get(name) != computed["scores"].get(name)
+                }
             item["passed"] = bool(item.get("passed")) and computed["passed"] and not item["judge_disagreement"]
             item["status"] = "passed" if item["passed"] else ("disagreement" if item["judge_disagreement"] else "failed")
     extras = sorted(set(by_scenario) - {item["scenario_id"] for item in report["results"]})
@@ -544,7 +879,7 @@ def import_codex_judgments(output_dir: Path, judgments_path: Path,
         "pending" if report["pending_or_incomplete_count"] else "failed")
     report["codex_judge"] = {
         "model": bundle.get("judge_model"), "agent_id": bundle.get("agent_id"),
-        "packet_only_context": True, "bundle_sha256": digest(bundle),
+        "isolation_attested_by_bundle": True, "bundle_sha256": digest(bundle),
     }
     write_report_artifacts(output_dir, report)
     return report
@@ -552,13 +887,16 @@ def import_codex_judgments(output_dir: Path, judgments_path: Path,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("dry-run", "judge", "import-codex"))
+    parser.add_argument("command", choices=("dry-run", "make-source-proof", "make-ui-proof", "judge", "import-codex"))
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--scenarios", type=Path, default=DEFAULT_SCENARIOS)
     parser.add_argument("--run", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--backend", choices=sorted(BACKENDS))
     parser.add_argument("--judgments", type=Path)
+    parser.add_argument("--report", type=Path)
+    parser.add_argument("--observation", type=Path)
+    parser.add_argument("--index-root", type=Path)
     args = parser.parse_args()
     config = load_object(args.config)
     if args.command == "dry-run":
@@ -574,6 +912,18 @@ def main() -> int:
             "status", "passed", "scenario_count", "passed_count", "failed_count",
             "pending_or_incomplete_count")}, indent=2))
         return 0 if report["passed"] else 1
+    if args.command == "make-source-proof":
+        if args.run is None or args.report is None or args.index_root is None:
+            parser.error("make-source-proof requires --run, --report, and --index-root")
+        proof = make_source_proof(args.run, args.report, args.output, args.index_root)
+        print(json.dumps(proof, ensure_ascii=False, indent=2))
+        return 0 if proof["status"] == "passed" else 1
+    if args.command == "make-ui-proof":
+        if args.run is None or args.observation is None:
+            parser.error("make-ui-proof requires --run and --observation")
+        proof = make_ui_proof(args.run, args.observation, args.output)
+        print(json.dumps(proof, ensure_ascii=False, indent=2))
+        return 0 if proof["status"] == "passed" else 1
     if args.run is None:
         parser.error("judge requires --run")
     backend = args.backend or config["judge_backend"]

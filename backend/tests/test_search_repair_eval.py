@@ -79,6 +79,14 @@ class SearchRepairRunnerTests(unittest.TestCase):
         self.assertNotIn("HIDDEN_", encoded)
         self.assertIn("Public original", encoded)
         self.assertIn("Public translation", encoded)
+        self.assertIn("Find a doctor", encoded)
+
+    def test_actor_receives_only_current_stage(self):
+        patient = {"persona": "A patient", "language": "English", "instructions": "Be natural"}
+        simulator = {"stages": ["Ask for orthopedics", "HIDDEN_FUTURE_STAGE"], "turns": 2}
+        encoded = json.dumps(actor_payload(patient, [], 0, simulator=simulator))
+        self.assertIn("Ask for orthopedics", encoded)
+        self.assertNotIn("HIDDEN_FUTURE_STAGE", encoded)
 
     def test_actor_skips_non_displayable_reviews_without_losing_visible_slots(self):
         reviews = [
@@ -89,7 +97,9 @@ class SearchRepairRunnerTests(unittest.TestCase):
         ]
         turn = {"message": "Find a doctor", "response": {"body": {
             "response": "Compare these reviews", "results": [{"retrieval_evidence": reviews}]}}}
-        encoded = json.dumps(actor_payload({"persona": "A patient"}, [turn], 1))
+        encoded = json.dumps(actor_payload(
+            {"persona": "A patient", "stages": ["First", "Second"]}, [turn], 1
+        ))
         self.assertNotIn("Hidden punctuation", encoded)
         self.assertNotIn("Rejected translation", encoded)
         self.assertIn("Visible review 2", encoded)
@@ -185,9 +195,18 @@ class SearchRepairRunnerTests(unittest.TestCase):
 
     def test_valid_json_with_truncated_actor_completion_is_rejected(self):
         response = {"model": ACTOR_MODEL, "provider": ACTOR_PROVIDER, "choices": [
-            {"finish_reason": "length", "message": {"content": '{"message":"Find a doctor"}'}}]}
+            {"finish_reason": "length", "message": {"content": '{"message":"Find a doctor","stop":false,"stop_reason":""}'}}]}
         with self.assertRaisesRegex(ValueError, "incomplete actor"):
             parse_actor(response)
+
+    def test_actor_stop_contract_is_bound_to_final_stage(self):
+        response = {"model": ACTOR_MODEL, "provider": ACTOR_PROVIDER, "choices": [{
+            "finish_reason": "stop", "message": {"content": json.dumps({
+                "message": "Show the reviews.", "stop": True, "stop_reason": "All stages complete",
+            })}}]}
+        with self.assertRaisesRegex(ValueError, "stop decision"):
+            parse_actor(response, expected_stop=False)
+        self.assertTrue(parse_actor(response, expected_stop=True)["stop"])
 
     def test_evaluator_exception_is_separate_from_application_failure(self):
         from unittest.mock import patch
@@ -213,15 +232,35 @@ class SearchRepairRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             evidence = Path(directory) / "fixed-evidence.json"
             evidence.write_text('{}')
+            def preflight_get(url, **kwargs):
+                if url.endswith("/ncs-source.json"):
+                    return Response({"branch": "ncs", "commit": "fixture"})
+                return Response({
+                    "data": {"id": ACTOR_MODEL, "endpoints": [{"provider_name": ACTOR_PROVIDER,
+                              "pricing": {"prompt": "0.1", "completion": "0.1"}}]}})
             runner = Runner("http://localhost:8000", Path(directory) / "run", suite(),
-                            "adaptive", "fixture", actor_key="fixture", get=lambda *args, **kwargs: Response({
-                                "data": {"id": ACTOR_MODEL, "endpoints": [{"provider_name": ACTOR_PROVIDER,
-                                          "pricing": {"prompt": "0.1", "completion": "0.1"}}]}}))
-            runner.fixed_gate = {"passed": True, "reviewer": "root GPT-6", "application_revision": "fixture",
+                            "adaptive", "fixture", actor_key="fixture", get=preflight_get)
+            runner.fixed_gate = {"passed": True, "reviewer_backend": "codex_subagents", "application_revision": "fixture",
                                  "manifest_sha256": runner.record["manifest_sha256"], "evidence_paths": [str(evidence)]}
             self._gate_runs(runner, Path(directory))
             self.assertEqual(runner.run(), 1)
             self.assertIn("price ceiling", runner.record["error_reason"])
+            self.assertEqual(runner.budget.actor_calls, 0)
+
+    def test_adaptive_preflight_rejects_a_different_deployed_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "fixed-evidence.json"
+            evidence.write_text('{}')
+            runner = Runner("http://localhost:8000", Path(directory) / "run", suite(),
+                            "adaptive", "fixture", actor_key="fixture",
+                            get=lambda *args, **kwargs: Response({"branch": "ncs", "commit": "other"}))
+            runner.fixed_gate = {"passed": True, "reviewer_backend": "codex_subagents",
+                                 "application_revision": "fixture",
+                                 "manifest_sha256": runner.record["manifest_sha256"],
+                                 "evidence_paths": [str(evidence)]}
+            self._gate_runs(runner, Path(directory))
+            self.assertEqual(runner.run(), 1)
+            self.assertIn("source revision", runner.record["error_reason"])
             self.assertEqual(runner.budget.actor_calls, 0)
 
     @staticmethod
@@ -256,7 +295,7 @@ class SearchRepairRunnerTests(unittest.TestCase):
             evidence.write_text("{}")
             runner = Runner("http://localhost", Path(directory) / "run", suite(), "adaptive", "fixture",
                             actor_key="fixture", get=lambda *args, **kwargs: self.fail("unreviewed network"))
-            runner.fixed_gate = {"passed": True, "reviewer": "root GPT-6", "application_revision": "fixture",
+            runner.fixed_gate = {"passed": True, "reviewer_backend": "codex_subagents", "application_revision": "fixture",
                 "manifest_sha256": runner.record["manifest_sha256"], "evidence_paths": [str(evidence)],
                 "grading_protocol_sha256": runner.record["grading_protocol_sha256"]}
             self.assertEqual(runner.run(), 1)
@@ -266,7 +305,7 @@ class SearchRepairRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runner = Runner("http://localhost", Path(directory) / "run", suite(), "adaptive", "fixture",
                             actor_key="fixture", get=lambda *args, **kwargs: self.fail("stale gate used network"))
-            runner.fixed_gate = {"passed": True, "reviewer": "root GPT-6", "application_revision": "fixture",
+            runner.fixed_gate = {"passed": True, "reviewer_backend": "codex_subagents", "application_revision": "fixture",
                                  "manifest_sha256": runner.record["manifest_sha256"], "evidence_paths": []}
             self._gate_runs(runner, Path(directory))
             runner.fixed_gate["grading_protocol_sha256"] = "older-protocol"
