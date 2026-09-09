@@ -199,7 +199,7 @@ class Budget:
 
 class Runner:
     def __init__(self, base_url, run_dir, manifest, phase, revision, *, actor_key="",
-                 post=requests.post, get=requests.get, fixed_gate=None):
+                 post=requests.post, get=requests.get, fixed_gate=None, scenario_ids=()):
         self.base_url = base_url.rstrip("/")
         self.directory = Path(run_dir)
         self.directory.mkdir(parents=True, exist_ok=False, mode=0o700)
@@ -209,6 +209,18 @@ class Runner:
         self.deadline = time.monotonic() + 10800
         self.cases = []
         self.manifest = manifest
+        available_ids = {
+            scenario["id"]
+            for scenario in (
+                manifest["adaptive"]
+                if phase == "adaptive"
+                else expand_fixed(manifest["fixed"])
+            )
+        }
+        self.scenario_ids = tuple(dict.fromkeys(scenario_ids))
+        unknown_ids = sorted(set(self.scenario_ids) - available_ids)
+        if unknown_ids:
+            raise ValueError("unknown scenario IDs: " + ", ".join(unknown_ids))
         write_json(self.directory / "manifest.json", manifest)
         grading_protocol = json.loads(Path(__file__).with_name("search_repair_grading_v2.json").read_text())
         self.grading_protocol = grading_protocol
@@ -219,6 +231,7 @@ class Runner:
                        "grading_protocol_sha256": sha256(json.dumps(grading_protocol, sort_keys=True).encode()).hexdigest(),
                        "actor_model": ACTOR_MODEL, "actor_slug": ACTOR_SLUG, "actor_provider": ACTOR_PROVIDER,
                        "actor_prompt_sha256": sha256(ACTOR_PROMPT.encode()).hexdigest(),
+                       "selected_scenario_ids": list(self.scenario_ids),
                        "started_at": time.time(), "duration_limit_seconds": 10800,
                        "status": "running", "quality_pass": False}
         self.checkpoint()
@@ -317,6 +330,9 @@ class Runner:
                 self.checkpoint()
                 return 1
         scenarios = self.manifest["adaptive"] if self.phase == "adaptive" else expand_fixed(self.manifest["fixed"])
+        if self.scenario_ids:
+            selected = set(self.scenario_ids)
+            scenarios = [scenario for scenario in scenarios if scenario["id"] in selected]
         blocked = False
         for scenario in scenarios:
             case = {"id": scenario["id"], "status": "pending", "turns": [], "oracle": scenario["oracle"]}
@@ -428,11 +444,14 @@ def main():
     parser.add_argument("--application-revision", required=True)
     parser.add_argument("--scenarios", type=Path, default=Path(__file__).with_name("search_repair_scenarios.json"))
     parser.add_argument("--fixed-gate", type=Path, help="Required for adaptive runs. Root-reviewed fixed gate JSON.")
+    parser.add_argument("--scenario", action="append", default=[],
+                        help="Run only this scenario ID. Repeat for a smoke subset.")
     args = parser.parse_args()
     manifest = json.loads(args.scenarios.read_text())
     runner = Runner(args.base_url, args.run_dir, manifest, args.phase, args.application_revision,
                     actor_key=os.environ.get("OPENROUTER_API_KEY", "") if args.phase == "adaptive" else "",
-                    fixed_gate=json.loads(args.fixed_gate.read_text()) if args.fixed_gate else None)
+                    fixed_gate=json.loads(args.fixed_gate.read_text()) if args.fixed_gate else None,
+                    scenario_ids=args.scenario)
     raise SystemExit(runner.run())
 
 

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "decision_id": "codex-subagent-judge-2026-09-09",
+  "judge_backend": "codex_subagents",
+  "decision_reason": "The existing project decision names a Codex GPT judge, and the user requested that Codex judge the conversations while OpenRouter supplies the simulated patients. New judgments must use isolated subagent packets; historical implementer-only judgments are unchanged.",
+  "simulator": {
+    "model": "qwen/qwen3.8-27b",
+    "canonical_slug": "qwen/qwen3.8-27b-20260814",
+    "provider": "Phala",
+    "prompt_version": "search-repair-patient-v1"
+  },
+  "judge": {
+    "model": "qwen/qwen3.8-27b",
+    "canonical_slug": "qwen/qwen3.8-27b-20260814",
+    "provider": "Phala",
+    "prompt_version": "seouldoc-conversation-judge-v1",
+    "temperature": 0,
+    "max_tokens": 4096
+  },
+  "limits": {
+    "max_judge_calls": 12,
+    "max_judge_cost_usd": 2.0,
+    "request_timeout_seconds": 90,
+    "transient_retries": 1
+  },
+  "smoke_scenario_ids": [
+    "adaptive-12-relevant-dental-reviews",
+    "adaptive-11-consultation-language",
+    "adaptive-08-staff-role-conflict",
+    "adaptive-09-withdraw-wait-preference",
+    "adaptive-10-replace-location",
+    "adaptive-06-language-switch",
+    "adaptive-01-foot-clarification"
+  ],
+  "rubric": {
+    "dimensions": [
+      "need_understanding_and_clarification",
+      "constraint_maintenance_and_updates",
+      "clinic_relevance",
+      "original_comment_relevance_and_attribution",
+      "claim_faithfulness",
+      "answer_specificity_and_usefulness",
+      "appropriate_uncertainty"
+    ],
+    "minimum_each_applicable_dimension": 4,
+    "anchors": {
+      "1": "Failed or materially misleading.",
+      "2": "Major omissions or errors requiring substantial correction.",
+      "3": "Partly successful, with a meaningful unresolved gap.",
+      "4": "Successful, with only minor issues.",
+      "5": "Fully successful, precise, and well supported."
+    },
+    "critical_failures": [
+      "wrong_clinic_evidence",
+      "fabricated_or_misattributed_quote",
+      "unsupported_required_service_or_language_claim",
+      "hard_constraint_violation",
+      "required_original_evidence_not_visible",
+      "incomplete_search_represented_as_complete"
+    ]
+  }
+}

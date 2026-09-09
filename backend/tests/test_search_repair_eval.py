@@ -147,6 +147,42 @@ class SearchRepairRunnerTests(unittest.TestCase):
         self.assertEqual([case["id"] for case in expanded], ["spellings-v1", "spellings-v2"])
         self.assertEqual(expanded[1]["patient"]["messages"], ["Near 명동"])
 
+    def test_scenario_selection_runs_only_requested_cases(self):
+        manifest = suite(("First",))
+        manifest["fixed"].append({"id": "second", "patient": {"messages": ["Second"]}, "oracle": {}})
+        calls = []
+
+        def post(url, **kwargs):
+            calls.append(kwargs["json"]["message"])
+            return Response(body())
+
+        with tempfile.TemporaryDirectory() as directory:
+            runner = Runner(
+                "http://localhost",
+                Path(directory) / "run",
+                manifest,
+                "fixed",
+                "fixture",
+                post=post,
+                scenario_ids=["second"],
+            )
+            self.assertEqual(runner.run(), 0)
+            self.assertEqual(calls, ["Second"])
+            self.assertEqual([case["id"] for case in runner.cases], ["second"])
+            self.assertEqual(runner.record["selected_scenario_ids"], ["second"])
+
+    def test_unknown_scenario_is_rejected_before_run_directory_is_used(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "unknown scenario IDs"):
+                Runner(
+                    "http://localhost",
+                    Path(directory) / "run",
+                    suite(),
+                    "fixed",
+                    "fixture",
+                    scenario_ids=["missing"],
+                )
+
     def test_valid_json_with_truncated_actor_completion_is_rejected(self):
         response = {"model": ACTOR_MODEL, "provider": ACTOR_PROVIDER, "choices": [
             {"finish_reason": "length", "message": {"content": '{"message":"Find a doctor"}'}}]}

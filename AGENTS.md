@@ -77,6 +77,19 @@ redacted artifacts to the private results Dataset described in
 `CODEX_CLOUD_HANDOFF.md`. A non-zero command exit is a failed gate, not a
 successful experiment.
 
+### Conversation harness judge backend
+
+The scenario-driven deployment harness uses `codex_subagents`: OpenRouter runs
+the simulated patients, then isolated Codex subagents judge immutable packets.
+The implementation agent must not be the sole judge. Python can export and
+validate Codex packets, but cannot invoke Codex tools itself. If an active Codex
+session cannot supply an isolated judge, record judgment as pending.
+
+Change the decision only in `scripts/conversation_eval_config.json`, with a new
+`decision_id` and reason. Supported values are `openrouter`,
+`codex_subagents`, and `both`. In `both` mode, disagreements require
+adjudication and never pass by averaging scores.
+
 ## Coordination rules
 
 - Give each simultaneous code-changing task its own branch and worktree.
