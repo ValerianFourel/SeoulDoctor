@@ -8,6 +8,7 @@ import json
 import math
 import os
 from pathlib import Path
+import secrets
 import sys
 import time
 from typing import Any, Mapping
@@ -109,10 +110,13 @@ def make_source_proof(run_path: Path, report_path: Path, output_path: Path,
     selected = validate_scenarios(manifest, list(run.get("selected_scenario_ids", [])))
     matching_runs = [item for item in report.get("runs", []) if isinstance(item, Mapping)
                      and item.get("application_revision") == run.get("application_revision")
-                     and item.get("manifest_sha256") == run.get("manifest_sha256")]
+                     and item.get("manifest_sha256") == run.get("manifest_sha256")
+                     and Path(str(item.get("path", ""))).resolve() == run_path.resolve()
+                     and item.get("run_file_sha256") == file_sha256(run_path)]
     checks = [
         {"name": "source index opened", "passed": report.get("index", {}).get("status") == "opened"},
-        {"name": "run revision and manifest audited", "passed": len(matching_runs) == 1},
+        {"name": "exact run bytes, revision, and manifest audited", "passed": (
+            len(matching_runs) == 1 and len(report.get("runs", [])) == 1)},
         {"name": "all surfaced evidence IDs resolved", "passed": (
             report.get("unique_evidence_ids") == report.get("resolved_evidence_ids")
             and report.get("source_error_count") == 0)},
@@ -179,6 +183,7 @@ def make_ui_proof(run_path: Path, observation_path: Path, output_path: Path) -> 
     if (observation.get("schema_version") != 1 or observation.get("mode") != "live_deployed_ui"
             or observation.get("application_revision") != run.get("application_revision")
             or observation.get("run_file_sha256") != file_sha256(run_path)
+            or observation.get("runner_sha256") != file_sha256(ROOT / "frontend/tests/live-review-deployment.cjs")
             or observation.get("scenario_ids") != scenario_ids
             or not isinstance(scenarios, list)
             or [item.get("scenario_id") for item in scenarios if isinstance(item, Mapping)] != scenario_ids
@@ -186,6 +191,7 @@ def make_ui_proof(run_path: Path, observation_path: Path, output_path: Path) -> 
             or not all(isinstance(item, Mapping) and isinstance(item.get("name"), str)
                        and isinstance(item.get("passed"), bool) for item in checks)):
         raise ValueError("live UI observation does not match the run")
+    run_cases = {item.get("id"): item for item in run.get("cases", []) if isinstance(item, Mapping)}
     for scenario in scenarios:
         responses = scenario.get("response_raws")
         scenario_checks = scenario.get("checks")
@@ -196,6 +202,45 @@ def make_ui_proof(run_path: Path, observation_path: Path, output_path: Path) -> 
                            and isinstance(item.get("passed"), bool) for item in scenario_checks)
                 or scenario.get("status") != ("passed" if all(item["passed"] for item in scenario_checks) else "failed")):
             raise ValueError("live UI scenario observation is invalid")
+        case = run_cases.get(scenario["scenario_id"], {})
+        if len(responses) != len(case.get("turns", [])):
+            raise ValueError("live UI replay turn count is invalid")
+        try:
+            final_body = json.loads(responses[-1])
+        except (IndexError, json.JSONDecodeError):
+            final_body = {}
+        cards = final_body.get("results") if isinstance(final_body.get("results"), list) else []
+        displayable = [(card, review) for card in cards if isinstance(card, Mapping)
+                       for review in card.get("retrieval_evidence", []) if isinstance(review, Mapping)
+                       and review.get("place_id") == card.get("place_id")
+                       and review.get("source_type") == "verbatim_review" and review.get("is_verbatim") is True
+                       and isinstance(review.get("text"), str) and review["text"].strip()
+                       and review.get("presentation", {}).get("status") in {"translated", "original", "unavailable"}]
+        named = {item["name"]: item["passed"] for item in scenario_checks}
+        required = {"frozen conversation is complete", "all frozen user turns are replayable",
+                    "final turn rendered clinic cards", "final turn exposes at least two original comments"}
+        for index in range(len(responses)):
+            required.update({f"turn {index + 1} returned HTTP success", f"turn {index + 1} returned an answer"})
+        for card, review in displayable:
+            evidence_id, place_id = review["evidence_id"], card["place_id"]
+            required.update({f"comment {evidence_id} is attached to clinic {place_id}",
+                             f"original {evidence_id} has a nonempty exact preview"})
+            exact_names = {f"original {evidence_id} is exact", f"full original {evidence_id} is exact"}
+            if not any(name in named for name in exact_names):
+                raise ValueError("live UI observation lacks an exact-original check")
+        target = case.get("oracle", {}).get("target")
+        if isinstance(target, Mapping):
+            for expected in target.get("evidence", []):
+                evidence_id = expected["evidence_id"]
+                required.update({f"target {evidence_id} returned at final checkpoint",
+                                 f"target {evidence_id} API owner and original are exact",
+                                 f"target {evidence_id} is visible under the correct clinic"})
+        if not required.issubset(named):
+            raise ValueError("live UI observation lacks required renderer checks")
+        if named["final turn rendered clinic cards"] != bool(cards):
+            raise ValueError("live UI card check contradicts the raw response")
+        if named["final turn exposes at least two original comments"] != (len(displayable) >= 2):
+            raise ValueError("live UI evidence count contradicts the raw response")
     proof = {
         "schema_version": 1, "proof_type": "live_ui",
         "application_revision": run.get("application_revision"), "run_sha256": digest(run),
@@ -261,6 +306,12 @@ def validate_scenarios(manifest: Mapping[str, Any], selected_ids: list[str]) -> 
         if (not isinstance(simulator.get("stages"), list)
                 or len(simulator["stages"]) != simulator.get("turns")):
             raise ValueError(f"{scenario_id} stages do not match its turn limit")
+        expected_events = [f"turn:{index + 1}" for index in range(simulator["turns"])]
+        stage_checks = simulator.get("stage_message_checks")
+        if (simulator.get("mandatory_events") != expected_events
+                or not isinstance(stage_checks, list) or len(stage_checks) != simulator["turns"]
+                or not all(isinstance(item, Mapping) and item.get("required_all_any") for item in stage_checks)):
+            raise ValueError(f"{scenario_id} lacks deterministic simulator-stage checks")
         source = scenario.get("source_snapshot")
         if (not isinstance(source, Mapping) or not source.get("index_version")
                 or not isinstance(source.get("review_source_sha256"), str)
@@ -390,8 +441,17 @@ def build_packet(case: Mapping[str, Any], run: Mapping[str, Any], config: Mappin
     target = scenario.get("oracle", {}).get("target")
     if isinstance(target, Mapping):
         expected_evidence = [item["evidence_id"] for item in target.get("evidence", [])]
-    visible_evidence = {token.removeprefix("evidence:") for token in citations if token.startswith("evidence:")}
-    missing_expected = sorted(set(expected_evidence) - visible_evidence)
+    checkpoint_turn = scenario.get("oracle", {}).get("relevant_checkpoint_turn", len(turns)) if turns else None
+    if checkpoint_turn is not None and (isinstance(checkpoint_turn, bool) or not isinstance(checkpoint_turn, int)
+                                        or not 1 <= checkpoint_turn <= len(turns)):
+        raise ValueError("scenario has an invalid relevant checkpoint")
+    checkpoint_evidence = ({
+        review["evidence_id"]
+        for card in turns[checkpoint_turn - 1]["clinic_cards"]
+        for review in card["patient_reviews"]
+        if review.get("api_evidence_contract_valid") and isinstance(review.get("evidence_id"), str)
+    } if checkpoint_turn is not None else set())
+    missing_expected = sorted(set(expected_evidence) - checkpoint_evidence)
     objective_failures = [failure for turn in turns for failure in turn["objective_failures"]]
     objective_failures.extend(structural_failures)
     objective_failures.extend("expected_evidence_not_visible:" + item for item in missing_expected)
@@ -413,7 +473,8 @@ def build_packet(case: Mapping[str, Any], run: Mapping[str, Any], config: Mappin
         "objective_failure_count": len(objective_failures),
         "evidence_stages": {
             "expected_ids": expected_evidence,
-            "returned_and_visible_ids": sorted(visible_evidence),
+            "relevant_checkpoint_turn": checkpoint_turn,
+            "returned_and_visible_ids": sorted(checkpoint_evidence),
             "missing_expected_ids": missing_expected,
             "source_audit": source_proof or {"status": "unverified"},
             "live_ui": ui_proof or {"status": "unverified"},
@@ -694,6 +755,59 @@ def write_report_artifacts(output_dir: Path, report: Mapping[str, Any]) -> None:
     os.chmod(path, 0o600)
 
 
+def make_codex_assignment(output_dir: Path, output_path: Path, agent_id: str,
+                          judge_model: str, config: Mapping[str, Any]) -> dict[str, Any]:
+    report_path = output_dir / "report.json"
+    report = load_object(report_path)
+    allowed = config.get("codex_judge", {}).get("allowed_models", [])
+    if (not agent_id.strip() or judge_model not in allowed
+            or report.get("judge_backend") not in {"codex_subagents", "both"}):
+        raise ValueError("invalid Codex judge assignment")
+    packets = []
+    for item in report.get("results", []):
+        packet = load_object(Path(item["packet"]))
+        validate_packet(packet)
+        if (packet["packet_sha256"] != item["packet_sha256"]
+                or packet["scenario_id"] != item["scenario_id"]):
+            raise ValueError("cannot assign a changed judge packet")
+        packets.append({"scenario_id": item["scenario_id"], "packet_path": str(Path(item["packet"]).resolve()),
+                        "packet_sha256": item["packet_sha256"]})
+    assignment = {
+        "schema_version": 1, "assignment_id": secrets.token_hex(16),
+        "issued_by": "active_codex_controller", "agent_id": agent_id,
+        "judge_model": judge_model, "isolated_packet_only_context_required": True,
+        "report_path": str(report_path.resolve()), "report_sha256": file_sha256(report_path),
+        "application_revision": report.get("application_revision"),
+        "run_sha256": report.get("run_sha256"), "config_sha256": report.get("config_sha256"),
+        "packets": packets,
+    }
+    assignment["assignment_sha256"] = digest(assignment)
+    write_json(output_path, assignment)
+    return assignment
+
+
+def validate_codex_assignment(output_dir: Path, assignment_path: Path,
+                              report: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
+    assignment = load_object(assignment_path)
+    unsigned = {key: value for key, value in assignment.items() if key != "assignment_sha256"}
+    if (assignment.get("schema_version") != 1 or assignment.get("issued_by") != "active_codex_controller"
+            or assignment.get("assignment_sha256") != digest(unsigned)
+            or assignment.get("report_path") != str((output_dir / "report.json").resolve())
+            or assignment.get("report_sha256") != file_sha256(output_dir / "report.json")
+            or assignment.get("application_revision") != report.get("application_revision")
+            or assignment.get("run_sha256") != report.get("run_sha256")
+            or assignment.get("config_sha256") != digest(config)
+            or assignment.get("judge_model") not in config.get("codex_judge", {}).get("allowed_models", [])
+            or not assignment.get("agent_id")):
+        raise ValueError("Codex judge assignment is invalid or stale")
+    expected = {(item["scenario_id"], item["packet_sha256"]) for item in report.get("results", [])}
+    assigned = {(item.get("scenario_id"), item.get("packet_sha256"))
+                for item in assignment.get("packets", []) if isinstance(item, Mapping)}
+    if assigned != expected or len(assignment.get("packets", [])) != len(expected):
+        raise ValueError("Codex judge assignment packets do not match the report")
+    return assignment
+
+
 def judge_run(run_path: Path, output_dir: Path, config: Mapping[str, Any], backend: str,
               key: str = "", session: Any = requests) -> dict[str, Any]:
     if backend not in BACKENDS:
@@ -813,7 +927,7 @@ def judge_run(run_path: Path, output_dir: Path, config: Mapping[str, Any], backe
 
 
 def import_codex_judgments(output_dir: Path, judgments_path: Path,
-                           config: Mapping[str, Any]) -> dict[str, Any]:
+                           config: Mapping[str, Any], assignment_path: Path) -> dict[str, Any]:
     report = load_object(output_dir / "report.json")
     if report.get("config_sha256") != digest(config):
         raise ValueError("judging report uses a different configuration")
@@ -821,11 +935,16 @@ def import_codex_judgments(output_dir: Path, judgments_path: Path,
     run = load_object(run_path)
     if report.get("run_sha256") != digest(run):
         raise ValueError("judging report no longer matches the source run")
+    assignment = validate_codex_assignment(output_dir, assignment_path, report, config)
     bundle = load_object(judgments_path)
     if bundle.get("judge_backend") != "codex_subagents":
         raise ValueError("Codex judgment bundle has the wrong backend")
     if bundle.get("isolated_context") is not True:
         raise ValueError("Codex judgment bundle must attest isolated context")
+    if (bundle.get("assignment_sha256") != assignment["assignment_sha256"]
+            or bundle.get("agent_id") != assignment["agent_id"]
+            or bundle.get("judge_model") != assignment["judge_model"]):
+        raise ValueError("Codex judgment bundle does not match its controller assignment")
     judgments = bundle.get("judgments")
     if not isinstance(judgments, list):
         raise ValueError("Codex judgment bundle must contain judgments")
@@ -879,6 +998,7 @@ def import_codex_judgments(output_dir: Path, judgments_path: Path,
         "pending" if report["pending_or_incomplete_count"] else "failed")
     report["codex_judge"] = {
         "model": bundle.get("judge_model"), "agent_id": bundle.get("agent_id"),
+        "assignment_sha256": assignment["assignment_sha256"],
         "isolation_attested_by_bundle": True, "bundle_sha256": digest(bundle),
     }
     write_report_artifacts(output_dir, report)
@@ -887,7 +1007,7 @@ def import_codex_judgments(output_dir: Path, judgments_path: Path,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("dry-run", "make-source-proof", "make-ui-proof", "judge", "import-codex"))
+    parser.add_argument("command", choices=("dry-run", "make-source-proof", "make-ui-proof", "judge", "make-codex-assignment", "import-codex"))
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--scenarios", type=Path, default=DEFAULT_SCENARIOS)
     parser.add_argument("--run", type=Path)
@@ -897,6 +1017,9 @@ def main() -> int:
     parser.add_argument("--report", type=Path)
     parser.add_argument("--observation", type=Path)
     parser.add_argument("--index-root", type=Path)
+    parser.add_argument("--assignment", type=Path)
+    parser.add_argument("--agent-id")
+    parser.add_argument("--judge-model")
     args = parser.parse_args()
     config = load_object(args.config)
     if args.command == "dry-run":
@@ -905,13 +1028,20 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command == "import-codex":
-        if args.judgments is None:
-            parser.error("import-codex requires --judgments")
-        report = import_codex_judgments(args.output, args.judgments, config)
+        if args.judgments is None or args.assignment is None:
+            parser.error("import-codex requires --judgments and --assignment")
+        report = import_codex_judgments(args.output, args.judgments, config, args.assignment)
         print(json.dumps({key: report[key] for key in (
             "status", "passed", "scenario_count", "passed_count", "failed_count",
             "pending_or_incomplete_count")}, indent=2))
         return 0 if report["passed"] else 1
+    if args.command == "make-codex-assignment":
+        if not args.agent_id or not args.judge_model:
+            parser.error("make-codex-assignment requires --agent-id and --judge-model")
+        assignment = make_codex_assignment(args.output, args.assignment or (args.output / "codex-assignment.json"),
+                                           args.agent_id, args.judge_model, config)
+        print(json.dumps(assignment, ensure_ascii=False, indent=2))
+        return 0
     if args.command == "make-source-proof":
         if args.run is None or args.report is None or args.index_root is None:
             parser.error("make-source-proof requires --run, --report, and --index-root")

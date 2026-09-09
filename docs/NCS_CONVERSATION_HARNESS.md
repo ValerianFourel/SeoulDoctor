@@ -120,13 +120,24 @@ backend/venv/bin/python scripts/conversation_eval.py judge \
   --output .audit/ncs-deployed-smoke-FRESH_ID/judging
 ```
 
-The pending command exits nonzero because no judgment has been imported. Give
-each file in `judging/packets/` to an isolated Codex subagent. Import its single
-JSON bundle:
+The pending command exits nonzero because no judgment has been imported. Start
+a fresh packet-only Codex subagent, then bind its real agent ID and model to the
+frozen packet hashes before giving it the packet directory:
+
+```bash
+backend/venv/bin/python scripts/conversation_eval.py make-codex-assignment \
+  --output .audit/ncs-deployed-smoke-FRESH_ID/judging \
+  --assignment .audit/ncs-deployed-smoke-FRESH_ID/codex-assignment.json \
+  --agent-id ACTUAL_AGENT_ID --judge-model gpt-6-astra
+```
+
+Import the subagent's single JSON bundle. The bundle must echo the assignment
+hash, actual agent ID, and model:
 
 ```bash
 backend/venv/bin/python scripts/conversation_eval.py import-codex \
   --output .audit/ncs-deployed-smoke-FRESH_ID/judging \
+  --assignment .audit/ncs-deployed-smoke-FRESH_ID/codex-assignment.json \
   --judgments /path/to/codex-judgments.json
 ```
 

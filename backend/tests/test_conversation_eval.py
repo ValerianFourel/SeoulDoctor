@@ -15,6 +15,7 @@ from scripts.conversation_eval import (
     import_codex_judgments,
     load_object,
     make_source_proof,
+    make_codex_assignment,
     make_ui_proof,
     runner_manifest_digest,
     validate_judgment,
@@ -213,6 +214,8 @@ class ConversationEvaluationTests(unittest.TestCase):
             run_path.write_text(json.dumps(run))
             output = root / "judging"
             report = judge_run(run_path, output, self.config, "codex_subagents")
+            assignment_path = root / "assignment.json"
+            assignment = make_codex_assignment(output, assignment_path, "agent-test", "gpt-6-astra", self.config)
             packet_path = Path(report["results"][0]["packet"])
             packet = load_object(packet_path)
             packet["private_oracle"] = {"forged": True}
@@ -224,9 +227,11 @@ class ConversationEvaluationTests(unittest.TestCase):
                 judgments.append(self.judgment(current))
             bundle = root / "bundle.json"
             bundle.write_text(json.dumps({"judge_backend": "codex_subagents", "isolated_context": True,
+                                          "assignment_sha256": assignment["assignment_sha256"],
+                                          "agent_id": "agent-test", "judge_model": "gpt-6-astra",
                                           "judgments": judgments}))
-            with self.assertRaisesRegex(ValueError, "source run"):
-                import_codex_judgments(output, bundle, self.config)
+            with self.assertRaisesRegex(ValueError, "source run|packet"):
+                import_codex_judgments(output, bundle, self.config, assignment_path)
 
     def test_source_proof_is_bound_to_run_and_report_bytes(self):
         run = {"application_revision": "abc", "manifest_sha256": "manifest",
@@ -252,27 +257,37 @@ class ConversationEvaluationTests(unittest.TestCase):
 
     def test_ui_proof_rejects_response_hash_substitution(self):
         scenario_ids = list(self.config["smoke_scenario_ids"])
-        run = {"application_revision": "abc", "selected_scenario_ids": scenario_ids}
-        response_raw = '{"response":"ok"}'
+        run = {"application_revision": "abc", "selected_scenario_ids": scenario_ids,
+               "cases": [{"id": scenario_id, "turns": [{"message": "hello"}], "oracle": {}}
+                         for scenario_id in scenario_ids]}
+        response_raw = '{"response":"ok","results":[]}'
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             run_path, observation_path = root / "run.json", root / "ui.json"
             run_path.write_text(json.dumps(run))
             scenario_observations = [{
-                "scenario_id": scenario_id, "status": "passed",
+                "scenario_id": scenario_id, "status": "failed",
                 "response_raws": [response_raw],
                 "response_sha256": sha256(response_raw.encode()).hexdigest(),
-                "checks": [{"name": "original accessible", "passed": True}],
+                "checks": [
+                    {"name": "frozen conversation is complete", "passed": True},
+                    {"name": "all frozen user turns are replayable", "passed": True},
+                    {"name": "turn 1 returned HTTP success", "passed": True},
+                    {"name": "turn 1 returned an answer", "passed": True},
+                    {"name": "final turn rendered clinic cards", "passed": False},
+                    {"name": "final turn exposes at least two original comments", "passed": False},
+                ],
             } for scenario_id in scenario_ids]
             observation = {
                 "schema_version": 1, "mode": "live_deployed_ui", "application_revision": "abc",
                 "target_url": "https://www.seouldoc.io", "run_file_sha256": sha256(run_path.read_bytes()).hexdigest(),
+                "runner_sha256": sha256((Path(__file__).parents[2] / "frontend/tests/live-review-deployment.cjs").read_bytes()).hexdigest(),
                 "scenario_ids": scenario_ids, "scenarios": scenario_observations,
-                "checks": [{"name": "all scenarios replayed", "passed": True}],
+                "checks": [{"name": "all scenarios replayed", "passed": False}],
             }
             observation_path.write_text(json.dumps(observation))
             proof = make_ui_proof(run_path, observation_path, root / "proof.json")
-            self.assertEqual(proof["status"], "passed")
+            self.assertEqual(proof["status"], "failed")
             observation["scenarios"][0]["response_raws"] = ['{"response":"forged"}']
             observation_path.write_text(json.dumps(observation))
             with self.assertRaisesRegex(ValueError, "scenario observation"):

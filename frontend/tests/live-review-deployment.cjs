@@ -14,6 +14,7 @@ const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 async function main() {
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   const runRaw = await fs.readFile(runPath, 'utf8');
+  const runnerSha256 = hash(await fs.readFile(__filename));
   const run = JSON.parse(runRaw);
   const scenarioIds = run.selected_scenario_ids;
   if (!Array.isArray(scenarioIds) || scenarioIds.length !== 7) throw new Error('run must select the seven smoke scenarios');
@@ -105,6 +106,25 @@ async function main() {
           add(scenarioChecks, `clinic ${card.place_id} first review page is capped at three`, await panel.locator('article').count() <= 3);
         }
         add(scenarioChecks, 'final turn exposes at least two original comments', originalCount >= 2, originalCount);
+        const target = caseRecord?.oracle?.target;
+        for (const expected of target?.evidence || []) {
+          const card = cards.find(item => item.place_id === target.place_id);
+          const review = card?.retrieval_evidence?.find(item => item.evidence_id === expected.evidence_id);
+          add(scenarioChecks, `target ${expected.evidence_id} returned at final checkpoint`, Boolean(review));
+          add(scenarioChecks, `target ${expected.evidence_id} API owner and original are exact`, Boolean(
+            review && review.place_id === target.place_id && review.text === expected.exact_original));
+          const targetPanel = page.locator(`section[data-facility-id="${target.place_id}"]`).last();
+          const displayableTargetReviews = (card?.retrieval_evidence || []).filter(item =>
+            item && item.place_id === target.place_id && item.source_type === 'verbatim_review'
+            && item.is_verbatim === true && typeof item.text === 'string' && item.text.trim()
+            && ['translated', 'original', 'unavailable'].includes(item.presentation?.status));
+          const targetIndex = displayableTargetReviews.findIndex(item => item.evidence_id === expected.evidence_id);
+          const targetPage = targetIndex < 3 ? 0 : 1 + Math.floor((targetIndex - 3) / 7);
+          const next = targetPanel.getByRole('button', { name: 'Next', exact: true });
+          for (let pageIndex = 0; pageIndex < targetPage && await next.isEnabled(); pageIndex += 1) await next.click();
+          const targetArticle = targetPanel.locator(`article[data-evidence-id="${expected.evidence_id}"]`);
+          add(scenarioChecks, `target ${expected.evidence_id} is visible under the correct clinic`, await targetArticle.count() === 1);
+        }
         await page.screenshot({ path: outputPath.replace(/\.json$/, `-${scenarioId}.png`), fullPage: true });
       } catch (error) {
         executionError = { type: error.constructor?.name || 'Error', message: String(error.message || error).slice(0, 1000) };
@@ -131,6 +151,7 @@ async function main() {
     target_url: targetUrl,
     application_revision: applicationRevision,
     run_file_sha256: hash(runRaw),
+    runner_sha256: runnerSha256,
     deployed_source: deployedSource,
     scenario_ids: scenarioIds,
     scenarios,

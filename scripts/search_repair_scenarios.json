@@ -949,6 +949,21 @@
         "mandatory_events": [
           "turn:1",
           "turn:2"
+        ],
+        "stage_message_checks": [
+          {
+            "required_all_any": [
+              ["daeheung", "대흥"],
+              ["dermatology", "dermatologist", "피부과"],
+              ["cheilitis", "lip"]
+            ]
+          },
+          {
+            "required_all_any": [
+              ["original", "comment", "review"],
+              ["cheilitis", "explanation", "explained"]
+            ]
+          }
         ]
       },
       "oracle": {
@@ -1012,6 +1027,27 @@
           "turn:1",
           "turn:2",
           "turn:3"
+        ],
+        "stage_message_checks": [
+          {
+            "required_all_any": [
+              ["wangsimni", "왕십리"],
+              ["orthopedic", "orthopaedic", "정형외과"],
+              ["ankle", "발목"]
+            ]
+          },
+          {
+            "required_all_any": [
+              ["english"],
+              ["consultation", "consult", "evidence", "review"]
+            ]
+          },
+          {
+            "required_all_any": [
+              ["confirm", "check", "call", "contact"],
+              ["english", "language"]
+            ]
+          }
         ]
       },
       "oracle": {
@@ -1058,6 +1094,28 @@
           "turn:1",
           "turn:2",
           "turn:3"
+        ],
+        "stage_message_checks": [
+          {
+            "required_all_any": [
+              ["이촌", "ichon"],
+              ["소아", "pediatric"],
+              ["처방", "설명", "prescrib", "explain"]
+            ]
+          },
+          {
+            "required_all_any": [
+              ["친절", "kind"],
+              ["의사", "간호사", "doctor", "nurse"]
+            ]
+          },
+          {
+            "required_all_any": [
+              ["의사", "doctor"],
+              ["간호사", "nurse"],
+              ["후기", "경험", "review", "experience"]
+            ]
+          }
         ]
       },
       "oracle": {
@@ -1124,14 +1182,31 @@
           "turn:4"
         ],
         "stage_message_checks": [
-          {},
-          {},
+          {
+            "required_all_any": [
+              ["pediatric", "소아"],
+              ["prescrib", "처방"],
+              ["explain", "설명"]
+            ]
+          },
+          {
+            "required_all_any": [
+              ["ichon", "이촌"],
+              ["1 km", "1km"],
+              ["wait", "대기"]
+            ]
+          },
           {
             "required_all_any": [
               ["waiting is fine", "wait is fine", "waiting is okay", "wait is okay", "don't mind waiting", "do not mind waiting"]
             ]
           },
-          {}
+          {
+            "required_all_any": [
+              ["compar", "compare", "비교"],
+              ["staff", "doctor", "nurse", "직원", "의사", "간호사"]
+            ]
+          }
         ]
       },
       "oracle": {
@@ -1202,7 +1277,13 @@
           "turn:3"
         ],
         "stage_message_checks": [
-          {},
+          {
+            "required_all_any": [
+              ["city hall", "시청"],
+              ["dentist", "dentistry", "치과"],
+              ["parking", "주차"]
+            ]
+          },
           {
             "required_all_any": [
               ["daeheung", "대흥"],
@@ -1210,7 +1291,13 @@
               ["parking", "주차"]
             ]
           },
-          {}
+          {
+            "required_all_any": [
+              ["original", "원문"],
+              ["city hall", "시청"],
+              ["gone", "remove", "no longer", "없", "제외"]
+            ]
+          }
         ]
       },
       "oracle": {
@@ -1276,13 +1363,25 @@
           "turn:3"
         ],
         "stage_message_checks": [
-          {},
+          {
+            "required_all_any": [
+              ["myeongdong", "명동"],
+              ["orthopedic", "orthopaedic", "정형외과"],
+              ["ankle", "발목"]
+            ]
+          },
           {
             "required_all_any": [
               ["i'll check directly with the clinic", "i will check directly with the clinic"]
             ]
           },
-          {}
+          {
+            "required_all_any": [
+              ["review", "comment", "후기"],
+              ["original", "korean", "원문", "한국어"],
+              ["doctor", "의사"]
+            ]
+          }
         ]
       },
       "oracle": {
@@ -1331,6 +1430,27 @@
           "turn:1",
           "turn:2",
           "turn:3"
+        ],
+        "stage_message_checks": [
+          {
+            "required_all_any": [
+              ["jonggak", "종각"],
+              ["ent", "이비인후"],
+              ["step-free", "step free", "wheelchair", "accessible", "access"]
+            ]
+          },
+          {
+            "required_all_any": [
+              ["evidence", "review", "comment"],
+              ["step-free", "step free", "accessible", "access"]
+            ]
+          },
+          {
+            "required_all_any": [
+              ["mandatory", "must", "need"],
+              ["confirm", "check", "call", "contact"]
+            ]
+          }
         ]
       },
       "oracle": {

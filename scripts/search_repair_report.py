@@ -300,7 +300,9 @@ def prepare(run_paths, index_root, capture_dirs=()):
                 cases.append({"id": case.get("id") if isinstance(case, dict) else case_index,
                               "status": "report_preparation_failed", "error": failure,
                               "turns": [], "assertion_failures": [], "source_errors": []})
-        summaries.append({"path": path, **{key: run.get(key) for key in ("phase", "status", "application_revision", "manifest_sha256", "grading_protocol_id", "grading_protocol_sha256", "budget")},
+        run_file = Path(path).resolve()
+        summaries.append({"path": str(run_file), "run_file_sha256": sha256(run_file.read_bytes()).hexdigest(),
+                          **{key: run.get(key) for key in ("phase", "status", "application_revision", "manifest_sha256", "grading_protocol_id", "grading_protocol_sha256", "budget")},
                           "errors": error_fields(run), "cases": cases})
     usage = provider_usage(provider_records)
     errors.extend(usage["errors"])

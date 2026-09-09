@@ -19,6 +19,10 @@
     "max_prompt_price_per_token": 0.0000003,
     "max_completion_price_per_token": 0.000003
   },
+  "codex_judge": {
+    "allowed_models": ["gpt-6-astra"],
+    "isolation": "fresh packet-only subagent bound by a controller-issued assignment"
+  },
   "limits": {
     "max_judge_calls": 12,
     "max_judge_cost_usd": 2.0,
