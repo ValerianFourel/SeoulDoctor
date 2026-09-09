@@ -1,5 +1,45 @@
 # SeoulDoc project state
 
+## Fix-inference live quality gate and ownership, 2026-09-09
+
+Root integrates in `.worktrees/ncs-translation-first`, branch `fix-inference`.
+Checkpoint `84439b75` contains the radius-guidance correction. User authorization
+allows required credentials from `backend/.env` into private task processes;
+credential disclosure, copying and upload remain prohibited. This update
+supersedes the historical missing-credential block below.
+
+Root owns orchestration, answer composition, frontend, evaluation reporting and
+records. The isolated `inference-translations` worktree owns translation guards
+and their tests; `inference-eval` owns controlled provider fixtures and tests.
+The GPU worker's ranking changes are integrated; further work is read-only.
+
+At candidate `91f7a6da66b876abd376970f9f9ab85a16368f42`, 474 backend tests,
+36 evaluator tests, and 16 retriever tests plus 10 subtests passed. The unchanged
+frontend passed its production build and 74 browser assertions at `1ec5b8e7`.
+The first fresh diagnostic fixture run completed 13 cases; quality review found
+an empty-radius suggestion and an insufficient synthetic mixed-review answer.
+Neither is a passing quality gate. Their original results are retained.
+
+The actual reported two-turn conversation completed with five orthopedic cards,
+correct Jonggak location, owned foot/ankle originals and a generated cited
+comparison. Turns took 6.219 and 31.177 seconds. Retrieval completed in 7.094
+seconds; translation took 10.537 seconds. Two first-page translations were
+rejected, so the translation coverage gate failed and broader execution stopped.
+These are live results, distinct from fixtures. Artifacts are private under
+`.audit/fix-inference-20260909/scored-v2-fixed/`; no adaptive pass is claimed.
+
+Existing NCS T4 Medium runs the GPU prerequisite at Space/runtime
+`014922dcb9a6667aa3eaa0c3a7ca67ac82b5a0c8`. Real CUDA retrieval and reranking
+were verified; one unchanged 224-review replay scored all candidates in 2.615
+seconds with preserved source text/ownership. The application fixes are not yet
+deployed. No new hardware or embeddings were created; the original Space and
+separate website remain untouched.
+
+Next action: integrate the translation and controlled-provider corrections,
+rerun the unchanged frozen diagnostic scenarios at a fresh exact revision, and
+admit the twelve adaptive conversations only after root's fixed quality gate.
+
+
 ## NCS answer reliability pushed; deployment blocked, 2026-09-08
 
 Root integrated the state, evidence, answer and UI repairs in
