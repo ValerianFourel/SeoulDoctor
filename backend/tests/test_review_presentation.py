@@ -223,6 +223,62 @@ class TranslationTests(unittest.TestCase):
                 self.assertEqual(items[0]["presentation"]["status"], "unavailable")
                 self.assertEqual(items[0]["text"], source)
 
+    def test_return_visit_article_and_once_word_preserve_real_review_counts(self):
+        for source, translation in (
+            ("오랜만에 방문인데 4층 직원이 기억해줬어요.",
+             "It was a visit after a long time, and the 4th-floor staff remembered me."),
+            ("한번 치료 받았을 뿐이에요.", "I was only treated once."),
+            ("병원 한 번 가는데 2시간 걸렸어요.", "It took 2 hours to visit a clinic once."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+
+    def test_once_and_visit_counts_still_reject_changed_values(self):
+        for source, translation in (
+            ("한번 치료 받았어요.", "I was treated twice."),
+            ("병원 한 번 가는데 2시간 걸렸어요.", "It took 2 hours to visit a clinic twice."),
+            ("오랜만에 방문인데 4층 직원이 기억해줬어요.",
+             "It was a visit after a long time, and the 5th-floor staff remembered me."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+
+    def test_request_modality_cannot_become_a_patient_report(self):
+        for source, faithful, changed in (
+            ("발을 잘 보십니다. 친절하게 봐주세요.",
+             "They treat feet well. Please treat me kindly.",
+             "They treat feet well and provide kind care."),
+            ("자세하게 설명해 주세요.", "Please explain it in detail.",
+             "They explain it in detail."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [faithful])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+                items, _ = self.prepare([source], [changed])
+                self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+
+    def test_translation_cannot_add_a_request(self):
+        items, _ = self.prepare(["의사가 자세하게 설명했습니다."],
+                                ["Please ask the doctor to explain in detail."])
+        self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+
+    def test_indefinite_nouns_do_not_create_counts(self):
+        for source, translation in (
+            ("예약제로 바꿔야 합니다.", "They should switch to an appointment system."),
+            ("엑스레이 한번 찍어보자고 했어요.", "They suggested taking an X-ray once."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+
+    def test_indefinite_time_still_represents_one_unit(self):
+        items, _ = self.prepare(["한시간 걸렸어요."], ["It took an hour."])
+        self.assertEqual(items[0]["presentation"]["status"], "translated")
+        items, _ = self.prepare(["두시간 걸렸어요."], ["It took an hour."])
+        self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+
     def test_spelled_currency_scale_requires_a_currency_unit(self):
         for source, translation in (
             ("이제 건강해질 일만 남았습니다.", "Now only getting healthy remains."),

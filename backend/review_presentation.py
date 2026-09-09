@@ -65,7 +65,7 @@ _NUMBER_WORDS = {
         "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
     ))
 }
-_NUMBER_WORDS.update({"a": 1, "an": 1, "single": 1, "첫": 1})
+_NUMBER_WORDS.update({"single": 1, "첫": 1})
 for tens, english, korean in (
     (20, "twenty", "스물"), (30, "thirty", "서른"), (40, "forty", "마흔"),
     (50, "fifty", "쉰"), (60, "sixty", "예순"), (70, "seventy", "일흔"),
@@ -110,7 +110,8 @@ _ORDINAL_PATTERN = re.compile(
     r"sessions?|treatments?|rounds?|floors?|times?|days?|weeks?|months?|years?)\b)", re.I,
 )
 _RETURN_AFTER_INTERVAL_PATTERN = re.compile(
-    r"\bfirst(?=\s+(?:time|visit|appointment)\s+in\s+(?:a\s+(?:while|long\s+time)|ages|\d+\s+(?:days?|weeks?|months?|years?))\b)", re.I,
+    r"\b(?:first|a)(?=\s+(?:time|visit|appointment)\s+(?:in|after)\s+"
+    r"(?:a\s+(?:while|long\s+time)|ages|\d+\s+(?:days?|weeks?|months?|years?))\b)", re.I,
 )
 _NON_COUNT_ONE_PATTERN = re.compile(
     r"(?<=\bno )one\b|\bone(?=\s+thing\s+(?:left|remaining)\b"
@@ -122,10 +123,20 @@ _OCCASIONAL_VISIT_PATTERN = re.compile(
 _SUGGESTED_XRAY_PATTERN = re.compile(
     r"(?P<procedure>엑스레이|엑스 레이|x-ray)\s+한번(?=\s+찍어\s*보(?:자|세요))", re.I,
 )
+_ENGLISH_SUGGESTED_XRAY_ONCE_PATTERN = re.compile(
+    r"(?P<context>\b(?:suggest(?:ed|ing)?|recommend(?:ed|ing)?)\b.{0,40}\b(?:an?\s+)?x-ray)\s+once\b",
+    re.I,
+)
+_INDEFINITE_TIME_PATTERN = re.compile(
+    r"\b(?:a|an)\s+(?=(?:hours?|minutes?|days?|weeks?|months?|years?)\b)", re.I,
+)
 _VISIT_COUNT_PATTERN = re.compile(
     r"(?:병원|의원|클리닉|치과)\s*(?P<korean>\d+)\s*번"
     r"|\b(?P<english>\d+|a|single|the)\s+(?:hospital|clinic|doctor(?:['’]s)?)\s+visits?\b"
-    r"|(?P<implicit>\b(?:to\s+go|going)\s+to\s+(?:the|a)\s+(?:hospital|clinic)\b)", re.I,
+    r"|(?P<english_after>\b(?:visit(?:ing)?|go(?:ing)?)\s+(?:to\s+)?(?:a|the)\s+"
+    r"(?:hospital|clinic|doctor(?:['’]s)?)\s+(?P<english_after_count>once|\d+\s+times?)\b)"
+    r"|(?P<implicit>\b(?:to\s+go|going)\s+to\s+(?:the|a)\s+(?:hospital|clinic)\b"
+    r"(?!\s+(?:once|\d+\s+times?)\b))", re.I,
 )
 _WON_PATTERN = re.compile(
     r"(?P<value>\d+(?:\.\d+)?)\s*(?P<scale>천|만)?\s*(?:원|won\b|KRW\b)",
@@ -145,10 +156,12 @@ def _numbers(text):
         return str(_NUMBER_WORDS[word]) + " "
     normalized = _OCCASIONAL_VISIT_PATTERN.sub(r"\g<context>가끔", text)
     normalized = _SUGGESTED_XRAY_PATTERN.sub(r"\g<procedure>", normalized)
+    normalized = _ENGLISH_SUGGESTED_XRAY_ONCE_PATTERN.sub(r"\g<context>", normalized)
+    normalized = _RETURN_AFTER_INTERVAL_PATTERN.sub("", normalized)
+    normalized = _INDEFINITE_TIME_PATTERN.sub("1 ", normalized)
     normalized = _TIME_NUMBER_PATTERN.sub(counted_number, normalized)
     normalized = _NON_COUNT_ONE_PATTERN.sub("", normalized)
     normalized = re.sub(r"\b(not|never)(\s+even)?\s+once\b", r"\1 1 time", normalized, flags=re.I)
-    normalized = _RETURN_AFTER_INTERVAL_PATTERN.sub("", normalized)
     normalized = _ORDINAL_PATTERN.sub(lambda match: str(_ORDINAL_WORDS[match.group(1).lower()]), normalized)
     normalized = _CARDINAL_WORD_PATTERN.sub(
         lambda match: str(_NUMBER_WORDS[(match.group(1) or match.group(2)).lower()]), normalized,
@@ -164,12 +177,16 @@ def _numbers(text):
             if not re.search(r"\b\d+\s+(?:hours?|minutes?)\b", sentence, re.I):
                 return match.group()
             value = 1
+        elif match["english_after"]:
+            count = match["english_after_count"]
+            value = 1 if count.casefold() == "once" else int(re.search(r"\d+", count).group())
         else:
             count = match["korean"] or match["english"]
             value = int(count) if count.isdigit() else 1
         visit_counts.append(f"VISIT:{value}")
         return " "
     normalized = _VISIT_COUNT_PATTERN.sub(take_visit_count, normalized)
+    normalized = re.sub(r"(?<!\bat )\bonce\b(?!\s+(?:again|more)\b)", "1 time", normalized, flags=re.I)
     amounts = []
     def take_amount(match):
         amount = Decimal(match["value"]) * {None: 1, "천": 1000, "만": 10000}[match["scale"]]
@@ -203,6 +220,9 @@ criticism of a doctor. For English output, preserve English phrases already pres
 output, translate English review prose. Currency scales may be expressed as their equivalent full
 amount. Preserve who works at the clinic versus who attends it, including how long; staff tenure
 must not become patient attendance or added praise for staff quality. Do not summarize or embellish.
+Preserve whether a sentence is a request, wish, recommendation, question, or report. In particular,
+Korean wording ending in 주세요 is a request and must not become a factual claim that the requested
+action already happened.
 Do a silent final fidelity check before returning. Korean
 frequently omits subjects. Never invent a first-person or third-person subject for an ambiguous
 clause: use a grammatical fragment or passive construction instead. In particular, an unclear
@@ -212,6 +232,17 @@ contrasts that refer to one staff role without switching their subject to the pa
 idioms to their actual meaning, not a loosely associated emotional reaction. Keep ambiguous
 references ambiguous and retain fragments where necessary. For English output, keep existing English
 text exactly unchanged."""
+
+_KOREAN_REQUEST_PATTERN = re.compile(
+    r"(?:설명해|알려|봐|보아|진료해|치료해|확인해|도와)\s*주(?:세요|십시오)|부탁(?:드려요|드립니다|합니다)"
+)
+_ENGLISH_REQUEST_PATTERN = re.compile(
+    r"\b(?:please|could\s+you|would\s+you|i\s+(?:ask|request|would\s+like|want)\b)", re.I,
+)
+
+
+def _request_modality(text):
+    return bool(_KOREAN_REQUEST_PATTERN.search(text) or _ENGLISH_REQUEST_PATTERN.search(text))
 
 
 async def _request_openrouter(request, key):
@@ -370,6 +401,9 @@ def prepare_review_presentations(
                 trace["rejected"] += 1
                 continue
             if _numbers(source) != _numbers(translation):
+                trace["rejected"] += 1
+                continue
+            if _request_modality(source) != _request_modality(translation):
                 trace["rejected"] += 1
                 continue
             if language == "English" and (re.search(r"[가-힣]", translation) or not re.search(r"[A-Za-z]", translation)):
