@@ -248,7 +248,7 @@ class TranslationTests(unittest.TestCase):
         for source, translation in (
             ("아무도 안내해주지 않았어요.", "No one told me where to go."),
             ("정말 좋은 병원이에요.", "It is one of the best clinics."),
-            ("엑스레이 한번 찍자고 했고 세 명이 있었어요.", "They asked for an X-ray, and three people were there. No one helped."),
+            ("엑스레이 한번 찍어보자고 했고 세 명이 있었어요.", "They asked for an X-ray, and three people were there. No one helped."),
         ):
             with self.subTest(source=source):
                 items, _ = self.prepare([source], [translation])
@@ -257,6 +257,26 @@ class TranslationTests(unittest.TestCase):
             ("한 명이 안내했어요.", "Two people guided me."),
             ("세 명 중 한 명이 안내했어요.", "Two of the three people guided me."),
             ("엑스레이 한번 찍었어요.", "They took two X-rays."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "unavailable")
+
+    def test_xray_article_is_not_a_count_and_explicit_counts_survive(self):
+        for source, translation in (
+            ("발이 아파서 엑스레이 찍었어요.", "I had an X-ray because my foot hurt."),
+            ("엑스레이 한번 찍어보자고 했어요.", "They suggested getting an X-ray."),
+            ("엑스레이 한번 찍었어요.", "I had one X-ray."),
+            ("엑스레이 두 번 찍었어요.", "I had two X-rays."),
+        ):
+            with self.subTest(source=source):
+                items, _ = self.prepare([source], [translation])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+                self.assertEqual(items[0]["text"], source)
+        for source, translation in (
+            ("엑스레이 2번 찍었어요.", "I had three X-rays."),
+            ("엑스레이 2번 찍어보자고 했어요.", "They suggested getting an X-ray."),
+            ("엑스레이 한번 찍었어요.", "I had two X-rays."),
         ):
             with self.subTest(source=source):
                 items, _ = self.prepare([source], [translation])
