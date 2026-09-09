@@ -28,6 +28,7 @@ class RerankOutcome:
     reason: str
     model: str | None = None
     scores: tuple[tuple[str, float], ...] = ()
+    gpu_execution_verified: bool = False
 
 
 class RemoteEvidenceReranker:
@@ -109,7 +110,7 @@ class RemoteEvidenceReranker:
             logger.warning("GPU evidence reranker returned an invalid response")
             return RerankOutcome(original, False, "invalid_response")
 
-        score_by_id, model = parsed
+        score_by_id, model, gpu_execution_verified = parsed
         original_position = {
             hit.evidence_id: position for position, hit in enumerate(selected)
         }
@@ -126,20 +127,31 @@ class RemoteEvidenceReranker:
             "ok" if len(selected) == len(unique_original) else "candidate_limit",
             model,
             tuple(sorted(score_by_id.items())),
+            gpu_execution_verified,
         )
 
     @staticmethod
     def _validated_scores(
         body: object,
         selected: Sequence[EvidenceHit],
-    ) -> tuple[dict[str, float], str | None] | None:
+    ) -> tuple[dict[str, float], str | None, bool] | None:
         model: str | None = None
+        gpu_execution_verified = False
         if isinstance(body, list):
             results = body
         elif isinstance(body, dict) and isinstance(body.get("results"), list):
             results = body["results"]
             raw_model = body.get("model")
             model = raw_model if isinstance(raw_model, str) else None
+            execution = body.get("execution")
+            if (
+                not isinstance(execution, dict)
+                or execution.get("gpu_execution_verified") is not True
+                or not isinstance(execution.get("device"), str)
+                or not execution["device"].startswith("cuda")
+            ):
+                return None
+            gpu_execution_verified = True
         else:
             return None
 
@@ -174,4 +186,4 @@ class RemoteEvidenceReranker:
 
         if set(scores) != expected_ids:
             return None
-        return scores, model
+        return scores, model, gpu_execution_verified

@@ -27,6 +27,8 @@ def probe_retrieval(scoped_index, semantic_source, reranker):
         report["retrieval_ms"] = (perf_counter() - retrieval_started) * 1000
         if not outcome.used:
             return {**report, "reason": "semantic_" + outcome.status}
+        if not outcome.gpu_execution_verified:
+            return {**report, "reason": "semantic_gpu_execution_unverified"}
         if {item.channel for item in outcome.references} != {"bge_m3_dense", "bge_m3_sparse"}:
             return {**report, "reason": "missing_retrieval_channel"}
         ids = tuple(dict.fromkeys(item.evidence_id for item in outcome.references))
@@ -39,7 +41,10 @@ def probe_retrieval(scoped_index, semantic_source, reranker):
         report["reranking_ms"] = (perf_counter() - rerank_started) * 1000
         if not reranked.used or {key for key, _ in reranked.scores} != set(ids):
             return {**report, "reason": "reranker_" + reranked.reason}
-        return {**report, "ready": True, "reason": "operations_verified",
+        if not reranked.gpu_execution_verified:
+            return {**report, "reason": "reranker_gpu_execution_unverified"}
+        return {**report, "ready": True, "gpu_execution_verified": True,
+                "reason": "operations_verified",
                 "elapsed_ms": (perf_counter() - started) * 1000}
     except Exception as exc:
         # Exception messages may contain endpoint addresses or credentials.

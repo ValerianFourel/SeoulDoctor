@@ -210,6 +210,10 @@ def rerank(request: RerankRequest):
     return {
         "model": RERANKER_MODEL_ID,
         "model_revision": RERANKER_MODEL_REVISION,
+        "execution": {
+            "gpu_execution_verified": True,
+            "device": reranker.gpu_proof["device"],
+        },
         "results": results,
     }
 

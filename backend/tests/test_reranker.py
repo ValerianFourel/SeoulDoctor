@@ -52,6 +52,7 @@ class RemoteEvidenceRerankerTests(unittest.TestCase):
         decisive = evidence_hit("e-2", "bravo", "과잉진료 없이 친절했어요")
         session = FakeSession({
             "model": "BAAI/bge-reranker-v2-m3",
+            "execution": {"gpu_execution_verified": True, "device": "cuda:0"},
             "results": [
                 {"evidence_id": "e-2", "place_id": "wrong", "score": 0.95},
                 {"evidence_id": "e-1", "place_id": "wrong", "score": 0.10},
@@ -71,6 +72,7 @@ class RemoteEvidenceRerankerTests(unittest.TestCase):
         )
 
         self.assertTrue(outcome.used)
+        self.assertTrue(outcome.gpu_execution_verified)
         self.assertEqual(outcome.hits, (decisive, first))
         self.assertEqual(outcome.hits[0].facility_id, "bravo")
         self.assertEqual(

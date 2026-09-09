@@ -57,6 +57,7 @@ class SemanticReviewOutcome:
     references: tuple[SemanticEvidenceReference, ...] = ()
     release_id: str | None = None
     model_id: str | None = None
+    gpu_execution_verified: bool = False
 
     @property
     def used(self) -> bool:
@@ -191,6 +192,7 @@ class RemoteBgeM3ReviewRetriever:
         release_id = release.get("release_id")
         source_digest = release.get("review_source_sha256")
         model_id = release.get("model_id")
+        execution = body.get("execution")
         if (
             release_id != self._release_id
             or source_digest != review_source_sha256
@@ -198,6 +200,13 @@ class RemoteBgeM3ReviewRetriever:
         ):
             return SemanticReviewOutcome("release_mismatch")
         if model_id != "BAAI/bge-m3":
+            return SemanticReviewOutcome("invalid_response")
+        if (
+            not isinstance(execution, dict)
+            or execution.get("gpu_execution_verified") is not True
+            or not isinstance(execution.get("device"), str)
+            or not execution["device"].startswith("cuda")
+        ):
             return SemanticReviewOutcome("invalid_response")
 
         references: list[SemanticEvidenceReference] = []
@@ -237,4 +246,5 @@ class RemoteBgeM3ReviewRetriever:
             tuple(references),
             str(release_id),
             model_id,
+            True,
         )

@@ -49,6 +49,7 @@ class SemanticRetrieverTests(unittest.TestCase):
                 "review_source_sha256": digest,
                 "model_id": "BAAI/bge-m3",
             },
+            "execution": {"gpu_execution_verified": True, "device": "cuda:0"},
             "results": [
                 {
                     "query_id": "kind:ko",
@@ -83,6 +84,7 @@ class SemanticRetrieverTests(unittest.TestCase):
         )
 
         self.assertTrue(outcome.used)
+        self.assertTrue(outcome.gpu_execution_verified)
         self.assertEqual(
             {item.channel for item in outcome.references},
             {"bge_m3_sparse", "bge_m3_dense"},

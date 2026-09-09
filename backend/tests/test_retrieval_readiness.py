@@ -21,16 +21,17 @@ class ReadinessTests(unittest.TestCase):
         self.semantic.retrieve.return_value = SemanticReviewOutcome("ok", tuple(
             SemanticEvidenceReference("readiness", "review:probe", "alpha", channel, 1, 0.9)
             for channel in ("bge_m3_dense", "bge_m3_sparse")
-        ))
+        ), gpu_execution_verified=True)
         self.reranker = Mock()
         self.reranker.rerank.return_value = RerankOutcome(
             (self.hit,), True, "ok", scores=(("review:probe", 0.8),),
+            gpu_execution_verified=True,
         )
 
     def test_real_operation_contract_not_liveness(self):
         report = probe_retrieval(self.scoped, self.semantic, self.reranker)
         self.assertTrue(report["ready"])
-        self.assertFalse(report["gpu_execution_verified"])
+        self.assertTrue(report["gpu_execution_verified"])
         self.scoped.resolve_evidence_ids.assert_called_once()
         self.reranker.rerank.assert_called_once()
 

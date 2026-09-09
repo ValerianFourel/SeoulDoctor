@@ -392,5 +392,9 @@ def retrieve(request: RetrievalRequest) -> dict[str, object]:
             "model_id": release.manifest["model_id"],
             "model_revision": release.manifest["model_revision"],
         },
+        "execution": {
+            "gpu_execution_verified": True,
+            "device": release.encoder.gpu_proof["device"],
+        },
         "results": results,
     }
