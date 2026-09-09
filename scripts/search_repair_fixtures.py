@@ -215,12 +215,34 @@ class FixtureApp:
         if fault is None and not self.fixture.get("reviews"):
             raise TimeoutError("synthetic_answer_unavailable")
         items = payload["evidence"][:3]
+        if self.fixture.get("reviews"):
+            owner = items[0]["place_id"]
+            sources = {item["original_text"]: item for item in payload["evidence"]
+                       if item["place_id"] == owner}
+            items = [sources[text] for text in self.fixture["reviews"]]
         citations = [{"marker": index + 1, "place_id": item["place_id"],
                       "evidence_id": item["evidence_id"], "original_excerpt": item["original_text"]}
                      for index, item in enumerate(items)]
         answer = " ".join(f'A patient reports: {item["original_text"]} [{index + 1}].'
                           for index, item in enumerate(items))
-        answer += " Compare the mixed experiences and ask the clinic about explanations before booking."
+        if self.fixture.get("reviews"):
+            introduction = ("To help with your choice, consider these reports for "
+                            if payload["question"].startswith("How should")
+                            else "Here are mixed patient reports for ")
+            answer = introduction + owner + ". " + answer
+            answer += (
+                " Because clear explanations and respectful treatment matter to you, these mixed "
+                "reports reduce confidence that this clinic fits those priorities. The positive "
+                "account of the doctor's examination leaves the separate concern about the nurse "
+                "dismissing questions unresolved. Polite paperwork help describes a different "
+                "interaction. The report of feeling pressured is a reason to ask how the doctor "
+                "explains treatment options and whether you can take time to decide. Before "
+                "choosing, ask how staff handle questions; if their answers leave you uncomfortable, "
+                "compare another orthopedic clinic. These are individual patient experiences and "
+                "do not establish what your visit will be like."
+            )
+        else:
+            answer += " Compare the mixed experiences and ask the clinic about explanations before booking."
         return {"answer": answer, "assessments": [], "citations": citations}, None
 
     def translate(self, url, *, headers, json, timeout):
@@ -244,6 +266,8 @@ class FixtureApp:
 
     def provenance(self):
         return {"mode": "local_synthetic_api", "network_inference": False,
+                "answer_provider_revision": ("controlled-review-interpretation-v2"
+                                             if self.fixture.get("reviews") else "controlled-answer-fault-v1"),
                 "boundaries": ["geocoded extraction", "query embeddings", "index contents",
                                "semantic retrieval", "reranker", "answer model", "translation provider"],
                 "source_revision": self.index.review_source_sha256,

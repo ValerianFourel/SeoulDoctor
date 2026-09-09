@@ -54,7 +54,36 @@ class SearchRepairFixtureTests(unittest.TestCase):
         self.execute("fixed-10-first-page-reviews")
 
     def test_mixed_reviews_keep_doctor_and_nurse_originals(self):
-        self.execute("fixed-14-mixed-negative-evidence")
+        app, bodies = self.execute("fixed-14-mixed-negative-evidence")
+        self.assertEqual(app.provenance()["answer_provider_revision"], "controlled-review-interpretation-v2")
+        self.assertFalse(app.provenance()["network_inference"])
+        self.assertNotEqual(bodies[0]["response"], bodies[1]["response"])
+        for body in bodies:
+            reply = body["response"]
+            self.assertEqual(body["state"]["last_retrieval_metadata"]["answer"]["status"], "generated")
+            citations = [citation for card in body["results"] for citation in card["answer_citations"]]
+            self.assertEqual(len(citations), 3)
+            self.assertEqual(len({citation["place_id"] for citation in citations}), 1)
+            self.assertEqual({citation["original_excerpt"] for citation in citations}, set(app.fixture["reviews"]))
+            for citation in citations:
+                source = app.sources[citation["evidence_id"]]
+                self.assertEqual(citation["place_id"], source.facility_id)
+                self.assertEqual(citation["original_excerpt"], source.original_text)
+                self.assertEqual(reply.count(source.original_text), 1)
+            self.assertIn("reduce confidence that this clinic fits those priorities", reply)
+            self.assertIn("whether you can take time to decide", reply)
+            self.assertIn("compare another orthopedic clinic", reply)
+
+    def test_mixed_review_stub_requires_all_cited_reports_in_the_model_context(self):
+        scenario = next(case for case in expand_fixed(MANIFEST["fixed"])
+                        if case["id"] == "fixed-14-mixed-negative-evidence")
+        app = FixtureApp(scenario)
+        evidence = [{"place_id": source.facility_id, "evidence_id": source.evidence_id,
+                     "original_text": source.original_text} for source in app.sources.values()
+                    if "felt pressured" not in source.original_text]
+        with self.assertRaises(KeyError):
+            app.answer(messages=[{"content": json.dumps({"evidence": evidence,
+                "question": scenario["patient"]["messages"][1]})}])
 
     def test_fixture_phase_never_dispatches_to_supplied_public_url(self):
         scenario = next(case for case in MANIFEST["fixed"] if case["id"] == "fixed-09-specialty-only-reviews")
