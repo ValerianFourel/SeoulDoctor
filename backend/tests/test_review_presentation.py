@@ -196,6 +196,43 @@ class TranslationTests(unittest.TestCase):
         self.assertEqual(changed[0]["presentation"]["status"], "unavailable")
         self.assertEqual(changed[0]["text"], source)
 
+    def test_nonnumeric_pronoun_does_not_change_treatment_count(self):
+        from review_presentation import _numbers
+
+        source = (
+            "19차 치료를 받았습니다. 아픈 사람은 갈팡질팡이고 불안하게 됩니다."
+        )
+        for phrase in (
+            "causing one to waver",
+            "leading one to hesitate",
+            "forcing one to reconsider",
+        ):
+            with self.subTest(phrase=phrase):
+                faithful = f"I received my 19th treatment, {phrase} and feel anxious."
+                items, _ = self.prepare([source], [faithful])
+                self.assertEqual(items[0]["presentation"]["status"], "translated")
+
+        changed, _ = self.prepare(
+            [source],
+            ["I received my 18th treatment, causing one to waver and feel anxious."],
+        )
+        self.assertEqual(changed[0]["presentation"]["status"], "unavailable")
+
+        range_source = "1~2회 치료를 받았습니다."
+        ranged, _ = self.prepare([range_source], ["I received one to two treatments."])
+        self.assertEqual(ranged[0]["presentation"]["status"], "translated")
+        for phrase, counts in (
+            ("one to several treatments", ["1"]),
+            ("one to a few treatments", ["1"]),
+            ("one to a dozen treatments", ["1"]),
+            ("one to around five treatments", ["1", "5"]),
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(_numbers(phrase), counts)
+        self.assertEqual(_numbers("It causes one to two side effects."), ["1", "2"])
+        self.assertEqual(_numbers("It causes one to around five side effects."), ["1", "5"])
+        self.assertEqual(_numbers("It causes one to approximately five side effects."), ["1", "5"])
+
     def test_won_units_and_per_session_do_not_change_the_amount(self):
         examples = (
             ("테스트 하나 없이 1회에 22만원 냈어요.", "There wasn't a single test and I paid 220,000 won per session."),

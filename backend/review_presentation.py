@@ -100,6 +100,11 @@ _CARDINAL_WORD_PATTERN = re.compile(
     + r")\b|(?<![가-힣])(하나|둘|셋|넷)(?![가-힣])",
     re.IGNORECASE,
 )
+_CAUSATIVE_ONE_INFINITIVE_PATTERN = re.compile(
+    r"\b(?P<verb>caus(?:e|es|ed|ing)|forc(?:e|es|ed|ing)|lead(?:s|ing)?|led)"
+    r"(?P<spacing>\s+)one(?=\s+to\s+(?:waver|hesitate|reconsider)\b)",
+    re.I,
+)
 
 _ORDINAL_WORDS = {word: number for number, word in enumerate((
     "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth",
@@ -185,6 +190,7 @@ def _numbers(text):
     )
     normalized = _INDEFINITE_TIME_PATTERN.sub("1 ", normalized)
     normalized = _TIME_NUMBER_PATTERN.sub(counted_number, normalized)
+    normalized = _CAUSATIVE_ONE_INFINITIVE_PATTERN.sub(r"\g<verb>\g<spacing>", normalized)
     normalized = _NON_COUNT_ONE_PATTERN.sub("", normalized)
     normalized = re.sub(r"\b(not|never)(\s+even)?\s+once\b", r"\1 1 time", normalized, flags=re.I)
     normalized = _ORDINAL_PATTERN.sub(lambda match: str(_ORDINAL_WORDS[match.group(1).lower()]), normalized)

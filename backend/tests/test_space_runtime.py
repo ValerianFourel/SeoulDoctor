@@ -24,6 +24,12 @@ class SpaceDeploymentTests(unittest.TestCase):
         self.assertNotIn('uvicorn', lines[health + 1])
         self.assertIn('COPY --chown=user:user ncs-source.json /home/user/app/ncs-source.json', lines)
 
+    def test_container_pins_evaluated_answer_and_translation_models(self):
+        dockerfile = (ROOT / 'Dockerfile').read_text()
+        self.assertIn('LLM_ANSWER_MODEL=openai/gpt-4.1', dockerfile)
+        self.assertIn('REVIEW_TRANSLATION_PROVIDER=openrouter', dockerfile)
+        self.assertIn('REVIEW_TRANSLATION_MODEL=google/gemini-3.8-flash', dockerfile)
+
     def test_website_and_api_coexist_with_gpu_readiness(self):
         app = FastAPI()
         @app.get('/')
