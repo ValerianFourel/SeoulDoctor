@@ -264,3 +264,28 @@ control. Vercel CLI found no cached login, and the authorized environment has no
 `VERCEL_TOKEN`. A production frontend deployment remains blocked on that
 credential or a manual Vercel promotion. Do not infer a site deployment from the
 Hugging Face Space update.
+
+## Latest NCS checkpoint, 2026-09-09
+
+`20ee885713d8e373e4345fbc17278eea43eb7bca` raised the evaluator application
+timeout to 300 seconds and is the revision currently deployed in Space commit
+`fe159234509ceb056b7e4465f22911a90f0eeea1`. Its fresh fixed run completed all
+11 cases and 12 application calls. Source proof resolved all 239 surfaced evidence
+IDs. Independent review nevertheless failed on unavailable or unfaithful review
+translations, generic answer fallbacks, and clinician-qualification wording. See
+`.audit/ncs-conversation-20260909T124250Z/fixed-20ee8857-300s/`.
+
+The application repair is committed at `be2316bf9ca9236fc98b2f2594c686e110c7a16e`.
+It pins the evaluated answer and translation models in the production image,
+tightens evidence wording, and fixes a translation-number verifier edge case.
+Focused verification passed 138 tests and the frontend production build. The
+deployment-diagnostic commit is `f7dca8623bf075f1f982c1216fce8a8b70230284`,
+which adds an explicit deployment credential preflight.
+
+Deployment run `34369853140` proved that repository Actions secret `HF_TOKEN` is
+absent. The credential preflight failed and sync was skipped, so the Space still
+serves `20ee8857`. No `.env` or credential store may be read to work around this.
+Configure `HF_TOKEN` as an Actions secret with write access to the NCS Space, rerun
+the workflow, verify the exact source marker and GPU readiness, and only then run
+the unchanged 300-second fixed gate. Adaptive OpenRouter simulation remains barred
+until that gate and a fresh isolated judge both pass.

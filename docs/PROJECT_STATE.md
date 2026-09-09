@@ -1698,3 +1698,42 @@ Next action: provide an approved Vercel deployment credential or promote the NCS
 preview in Vercel, then investigate the remaining `명동` request latency and rerun
 the unchanged fixed gate. Only after it passes should the seven adaptive scenarios,
 live UI replay, Likert judging, and release verdict run.
+
+### Five-minute gate and inference-model repair, 2026-09-09
+
+The response allowance was raised from 240 to 300 seconds in `20ee8857`. That
+revision is deployed as Space commit `fe159234509ceb056b7e4465f22911a90f0eeea1`.
+Its fresh fixed gate completed all 11 cases and 12 application calls without an
+HTTP, timeout, or deterministic assertion failure. The 13 corrupted harness
+fixtures also completed, and source proof resolved all 239 surfaced evidence IDs
+without an ownership or exact-text error. The immutable run is under
+`.audit/ncs-conversation-20260909T124250Z/fixed-20ee8857-300s/`.
+
+Independent `gpt-6-astra` review still failed release admission. It found 36
+unavailable translations, two translations with changed voice or meaning, generic
+fallback answers in 9 of 10 search replies despite surfaced reviews, and wording
+that could imply an individual clinician qualification from a clinic department.
+No adaptive conversations or Likert scores were produced after that failed gate.
+
+Root fixed the identified production configuration drift in `be2316bf`: the
+Docker image now uses the previously evaluated answer and review-translation
+models, the answer prompt distinguishes a facility department from an individual
+clinician qualification, and translation validation handles bounded causative
+pronoun uses without losing numeric ranges. A focused set of 138 tests passed and
+the production frontend build passed. Independent comment review found no
+remaining issue in the scoped change. The complete backend discovery run stalled
+in an existing lifespan test and was interrupted; it is not recorded as passing.
+
+Deployment is blocked before this repair can be evaluated. Pushes `f30efd52` and
+`f7dca862` triggered Actions runs `34368224371` and `34369853140`. The second run
+proved that the repository Actions secret `HF_TOKEN` is absent: its explicit
+credential check failed and Space sync was skipped. The public Space source marker
+therefore remains `20ee8857`. The workflow now reports this cause directly instead
+of a generic exit code. The deployment-diagnostic commit is `f7dca862` on
+`fix-inference` and remote `ncs`.
+
+Next action: configure the repository Actions secret `HF_TOKEN` with write access
+to `ValerianFourel/SeoulDoctor-ncs-retriever`, rerun the deployment workflow, and
+wait for `/ncs-source.json` to match the exact `ncs` head. Then rerun the unchanged
+fixed gate with the 300-second application timeout and obtain a fresh isolated
+judge verdict before admitting the adaptive OpenRouter scenarios.
