@@ -152,7 +152,13 @@ async function main() {
       }
       await send('Find pediatric care');
       await page.getByText('Synthetic clinic', { exact: true }).waitFor();
-      await check(`${label} original visible alongside translation`, page.getByText(original, { exact: true }).isVisible());
+      await check(`${label} translation visible by default`, page.getByText('The doctor explained clearly.', { exact: true }).isVisible());
+      await check(`${label} translated original initially hidden`, page.getByText(original, { exact: true }).isHidden());
+      const firstTranslatedReview = page.locator(`[data-evidence-id="${reviews[0].evidence_id}"]`).first();
+      await firstTranslatedReview.getByText('Show original', { exact: true }).click();
+      await check(`${label} original revealed on click`, page.getByText(original, { exact: true }).isVisible());
+      await firstTranslatedReview.getByText('Show original', { exact: true }).click();
+      await check(`${label} original collapses again`, page.getByText(original, { exact: true }).isHidden());
       await check(`${label} three-word negative survives`, page.getByText('Nurse was rude.', { exact: true }).isVisible());
       await check(`${label} failed translation keeps original`, page.getByText('The nurse was rude.', { exact: true }).isVisible());
       if (before) {
@@ -169,6 +175,8 @@ async function main() {
       await page.screenshot({ path: path.join(outputDirectory, `${label}-originals.png`) });
       await panel.getByRole('button', { name: 'Next', exact: true }).click();
       await check(`${label} next page has seven`, panel.locator('article').count().then(count => count === 7));
+      await check(`${label} translated original stays hidden`, panel.getByText('간호사가 불친절했어요.', { exact: true }).isHidden());
+      await panel.locator(`[data-evidence-id="${reviews[4].evidence_id}"]`).getByText('Show original', { exact: true }).click();
       await check(`${label} three-word translation preserves original`, panel.getByText('간호사가 불친절했어요.', { exact: true }).isVisible());
       await check(`${label} three-word translation remains visible`, panel.getByText('Nurse was rude.', { exact: true }).isVisible());
       await check(`${label} review HTML stays text`, panel.locator('img').count().then(count => count === 0));
@@ -184,7 +192,7 @@ async function main() {
       await panel.getByRole('button', { name: 'Hide reviews', exact: true }).click();
       await panel.getByRole('button', { name: 'Show reviews', exact: true }).click();
       await send('fallback');
-      await check(`${label} fallback retains originals`, page.locator('section[data-facility-id="alpha"]').nth(1).getByText(original, { exact: true }).isVisible());
+      await check(`${label} fallback retains translation`, page.locator('section[data-facility-id="alpha"]').nth(1).getByText('The doctor explained clearly.', { exact: true }).isVisible());
       await send('한국어로 답해 주세요');
       const koreanPanel = page.locator('section[data-facility-id="alpha"]').nth(2);
       await check(`${label} Korean reply retains original`, koreanPanel.getByText(original, { exact: true }).isVisible());
